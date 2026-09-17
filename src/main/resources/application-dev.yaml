@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: ${DEV_DB_URL:jdbc:mysql://localhost:3306/meomuneum_dev}
+    username: ${DEV_DB_USERNAME:meomuneum_dev}
+    password: ${DEV_DB_PASSWORD}

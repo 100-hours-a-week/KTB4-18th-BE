@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: meomuneum-backend
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
