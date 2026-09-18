@@ -11,13 +11,13 @@ public class User {
     @Id
     private Long id;
 
-    @Column(name = "email")
+    @Column(name = "email", length = 40, nullable = false, unique = true)
     private String email;
 
-    @Column(name = "password_hash")
+    @Column(name = "password_hash", length = 255, nullable = false)
     private String passwordHash;
 
-    @Column(name = "nickname")
+    @Column(name = "nickname", length = 12, nullable = false)
     private String nickname;
 
     @Column(name = "birth_year")
@@ -27,14 +27,14 @@ public class User {
     @Column(name = "gender")
     private UserGender gender;
 
-    @Column(name = "profile_image_url")
+    @Column(name = "profile_image_url", length = 1000)
     private String profileImageUrl;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "role")
+    @Column(name = "role", length = 20, nullable = false)
     private UserRole role;
 
-    @Column(name = "created_at")
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at")
