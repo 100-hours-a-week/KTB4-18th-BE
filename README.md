@@ -122,3 +122,7 @@ gradle/wrapper/                    Gradle Wrapper
 - 테이블 검증 오류: 필요한 Flyway 마이그레이션이 있는지 확인합니다.
 - Java 버전 오류: JDK 25와 `JAVA_HOME` 또는 IDE의 Gradle JVM 설정을 확인합니다.
 - 포트 충돌: 기존 서버를 종료하거나 실행 인자에 `--server.port=8081`을 추가합니다.
+
+## 텍스트 음악 추천 기능
+
+텍스트 추천 API·결과 저장과 추천 카드·30초 미리 듣기가 추가되었습니다.
