@@ -48,13 +48,16 @@ class RecommendationApiTests {
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.data.items.length()").value(5))
                 .andExpect(jsonPath("$.data.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.data.items[0].music.preview_url").isNotEmpty());
-        long id = jdbc.queryForObject("SELECT MAX(id) FROM recommendation_sessions", Long.class);
+        long id = findRecommendationId(session);
         mvc.perform(get("/api/v1/recommendations/" + id).session(session))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].rank_no").value(1))
                 .andExpect(jsonPath("$.data.items[4].rank_no").value(5));
-        assertNull(jdbc.queryForObject("SELECT prompt FROM recommendation_sessions WHERE id = " + id + "", String.class));
-        assertNull(jdbc.queryForObject("SELECT user_id FROM recommendation_sessions WHERE id = " + id + "", Long.class));
-        assertNull(jdbc.queryForObject("SELECT region_id FROM recommendation_sessions WHERE id = " + id + "", Long.class));
+        assertNull(jdbc.queryForObject(
+                "SELECT prompt FROM recommendation_sessions WHERE id = ?", String.class, id));
+        assertNull(jdbc.queryForObject(
+                "SELECT user_id FROM recommendation_sessions WHERE id = ?", Long.class, id));
+        assertNull(jdbc.queryForObject(
+                "SELECT region_id FROM recommendation_sessions WHERE id = ?", Long.class, id));
     }
 
     @Test void rejectsBlankLongAndUnsupportedInputBeforeSaving() throws Exception {
@@ -72,7 +75,7 @@ class RecommendationApiTests {
         var owner = new MockHttpSession();
         mvc.perform(post("/api/v1/recommendations").session(owner).contentType("application/json").content(body("노래")))
                 .andExpect(status().isAccepted());
-        long id = jdbc.queryForObject("SELECT MAX(id) FROM recommendation_sessions", Long.class);
+        long id = findRecommendationId(owner);
         mvc.perform(get("/api/v1/recommendations/" + id).session(new MockHttpSession())).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/recommendations/" + id)).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/recommendations/999999").session(owner)).andExpect(status().isNotFound());
@@ -114,8 +117,25 @@ class RecommendationApiTests {
         assertEquals(beforeMusic, count("music"));
     }
 
-    // 테이블 이름은 이 테스트 안의 고정된 값만 전달합니다.
+    private long findRecommendationId(MockHttpSession session) {
+        Long id = jdbc.queryForObject("""
+                SELECT id FROM recommendation_sessions
+                WHERE guest_session_id = ? ORDER BY id DESC LIMIT 1
+                """, Long.class, session.getId());
+        assertNotNull(id, "현재 게스트 세션의 추천 결과가 저장되어야 합니다.");
+        return id;
+    }
+
     private int count(String table) {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
+        // 테이블명은 SQL 파라미터로 바인딩할 수 없으므로 허용된 쿼리만 선택합니다.
+        String sql = switch (table) {
+            case "recommendation_sessions" -> "SELECT COUNT(*) FROM recommendation_sessions";
+            case "recommendation_items" -> "SELECT COUNT(*) FROM recommendation_items";
+            case "music" -> "SELECT COUNT(*) FROM music";
+            default -> throw new IllegalArgumentException("지원하지 않는 테스트 테이블입니다.");
+        };
+        Integer result = jdbc.queryForObject(sql, Integer.class);
+        assertNotNull(result, "COUNT 쿼리는 결과를 반환해야 합니다.");
+        return result;
     }
 }

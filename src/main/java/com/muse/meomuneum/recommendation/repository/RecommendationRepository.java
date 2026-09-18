@@ -36,7 +36,11 @@ public class RecommendationRepository {
             statement.setTimestamp(6, Timestamp.from(now));
             return statement;
         }, keys);
-        return keys.getKey().longValue();
+        Number generatedId = keys.getKey();
+        if (generatedId == null) {
+            throw new RecommendationException(500, "추천 세션의 저장 ID를 확인할 수 없습니다.");
+        }
+        return generatedId.longValue();
     }
 
     public long saveMusic(TrackData track) {
@@ -47,8 +51,12 @@ public class RecommendationRepository {
                 ON DUPLICATE KEY UPDATE title = VALUES(title), artist_name = VALUES(artist_name),
                     album_cover_url = VALUES(album_cover_url), preview_url = VALUES(preview_url)
                 """, track.provider(), track.externalId(), track.title(), track.artist(), track.coverUrl(), track.previewUrl());
-        return jdbc.queryForObject("SELECT id FROM music WHERE provider = ? AND external_music_id = ?",
+        Long musicId = jdbc.queryForObject("SELECT id FROM music WHERE provider = ? AND external_music_id = ?",
                 Long.class, track.provider(), track.externalId());
+        if (musicId == null) {
+            throw new RecommendationException(500, "음악의 저장 ID를 확인할 수 없습니다.");
+        }
+        return musicId;
     }
 
     public void saveItem(long sessionId, long musicId, int rank) {
