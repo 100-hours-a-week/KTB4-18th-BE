@@ -11,6 +11,7 @@ import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -21,12 +22,14 @@ public class AuthService {
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refresh_token";
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final JwtProperties jwtProperties;
     private final RefreshTokenCookieFactory refreshTokenCookieFactory;
     private final UserAuthenticationService userAuthenticationService;
 
-    public AuthService(JwtTokenProvider jwtTokenProvider, RefreshTokenCookieFactory refreshTokenCookieFactory,
-            UserAuthenticationService userAuthenticationService) {
+    public AuthService(JwtTokenProvider jwtTokenProvider, JwtProperties jwtProperties,
+            RefreshTokenCookieFactory refreshTokenCookieFactory, UserAuthenticationService userAuthenticationService) {
         this.jwtTokenProvider = jwtTokenProvider;
+        this.jwtProperties = jwtProperties;
         this.refreshTokenCookieFactory = refreshTokenCookieFactory;
         this.userAuthenticationService = userAuthenticationService;
     }
@@ -51,7 +54,9 @@ public class AuthService {
     private TokenResponse issueTokens(User user, HttpHeaders headers) {
         String refreshToken = jwtTokenProvider.createRefreshToken(user);
         refreshTokenCookieFactory.addRefreshTokenCookie(headers, refreshToken);
-        return new TokenResponse(jwtTokenProvider.createAccessToken(user), 3600);
+        return new TokenResponse(
+                jwtTokenProvider.createAccessToken(user),
+                jwtProperties.accessTokenExpirationSeconds());
     }
 
     private String getRefreshToken(HttpServletRequest request) {

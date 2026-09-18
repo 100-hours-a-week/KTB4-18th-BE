@@ -1,11 +1,7 @@
 package com.muse.meomuneum.global.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.global.exception.ErrorCode;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
-import com.muse.meomuneum.global.response.ApiResponse;
-import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,11 +16,20 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
-import java.io.IOException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.global.exception.ErrorCode;
+import com.muse.meomuneum.global.exception.GlobalErrorCode;
+import com.muse.meomuneum.global.response.ApiResponse;
+import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
 public class SecurityConfig {
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        return new ObjectMapper();
+    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,

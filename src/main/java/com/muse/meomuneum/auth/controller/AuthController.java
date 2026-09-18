@@ -1,11 +1,11 @@
 package com.muse.meomuneum.auth.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,7 +21,6 @@ import com.muse.meomuneum.global.response.ApiResponse;
 
 @RestController
 @RequestMapping("/api/v1/auth")
-@Validated
 public class AuthController {
 
     private final AuthService authService;
@@ -33,45 +32,24 @@ public class AuthController {
     }
 
     @GetMapping("/token/csrf")
-    public ResponseEntity<
-            ApiResponse<CsrfTokenResponse>
-            > issueCsrfToken(HttpServletRequest request) {
-        CsrfTokenResponse response = new CsrfTokenResponse(
-                csrfTokenService.issueToken(request)
-        );
-        return ResponseEntity.
-                ok(ApiResponse
-                        .of("csrf token issued", response)
-                );
+    public ResponseEntity<ApiResponse<CsrfTokenResponse>> issueCsrfToken(HttpServletRequest request) {
+        CsrfTokenResponse response = new CsrfTokenResponse(csrfTokenService.issueToken(request));
+        return ResponseEntity.ok(ApiResponse.of("csrf token issued", response));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<
-            ApiResponse<TokenResponse>
-            > login(
-                    @RequestBody
-                    @Validated
-                    LoginRequest request,
-                    HttpServletRequest servletRequest
-    ) {
+    public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody LoginRequest request,
+            HttpServletRequest servletRequest) {
         HttpHeaders headers = new HttpHeaders();
-        TokenResponse tokenResponse = authService.login(
-                request, servletRequest, headers
-        );
-        return new ResponseEntity<>(ApiResponse.of(
-                "login success", tokenResponse
-        ), headers, HttpStatus.OK);
+        TokenResponse tokenResponse = authService.login(request, servletRequest, headers);
+        return new ResponseEntity<>(ApiResponse.of("login success", tokenResponse), headers, HttpStatus.OK);
     }
 
     @PostMapping("/token/refresh")
-    public ResponseEntity<
-            ApiResponse<TokenResponse>
-            > refresh(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<TokenResponse>> refresh(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
         TokenResponse tokenResponse = authService.refresh(request, headers);
-        return new ResponseEntity<>(ApiResponse.of(
-                "token refreshed", tokenResponse
-        ), headers, HttpStatus.OK);
+        return new ResponseEntity<>(ApiResponse.of("token refreshed", tokenResponse), headers, HttpStatus.OK);
     }
 
     @PostMapping("/logout")

@@ -6,7 +6,7 @@ import com.muse.meomuneum.global.exception.ErrorCode;
 
 public enum AuthErrorCode implements ErrorCode {
 
-    // login 관련 에러코드
+    // POST /api/v1/auth/login
     LOGIN_INVALID_REQUEST(
             "AUTH_LOGIN_400", HttpStatus.BAD_REQUEST, "invalid request"
     ),
@@ -17,7 +17,7 @@ public enum AuthErrorCode implements ErrorCode {
             "AUTH_LOGIN_500", HttpStatus.INTERNAL_SERVER_ERROR, "internal server error"
     ),
 
-    // refresh 관련 에러 코드
+    // POST /api/v1/auth/token/refresh
     REFRESH_INVALID_TOKEN(
             "AUTH_REFRESH_401", HttpStatus.UNAUTHORIZED, "invalid refresh token"
     ),
@@ -25,7 +25,7 @@ public enum AuthErrorCode implements ErrorCode {
             "AUTH_REFRESH_500", HttpStatus.INTERNAL_SERVER_ERROR, "internal server error"
     ),
 
-    // csrf 관련 에러코드
+    // GET /api/v1/auth/token/csrf
     CSRF_REQUEST_FAILED(
             "AUTH_CSRF_500", HttpStatus.INTERNAL_SERVER_ERROR, "request failed"
     );
