@@ -1,7 +1,11 @@
 package com.muse.meomuneum.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.global.exception.ErrorCode;
+import com.muse.meomuneum.global.exception.GlobalErrorCode;
+import com.muse.meomuneum.global.response.ApiResponse;
+import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
-import java.io.IOException;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,11 +20,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.global.exception.ErrorCode;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
-import com.muse.meomuneum.global.response.ApiResponse;
-import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
+import java.io.IOException;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
@@ -35,7 +35,12 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
             JwtAuthenticationFilter jwtAuthenticationFilter, ObjectMapper objectMapper) throws Exception {
         http.cors(Customizer.withDefaults())
-                .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository))
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(csrfTokenRepository)
+                        .ignoringRequestMatchers(
+                                "/api/v1/auth/login",
+                                "/api/v1/auth/token/refresh",
+                                "/api/v1/auth/logout"))
                 .sessionManagement(
                         session ->
                                 session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)

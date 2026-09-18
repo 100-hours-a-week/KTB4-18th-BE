@@ -20,6 +20,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.muse.meomuneum.auth.dto.TokenResponse;
+import com.muse.meomuneum.auth.exception.AuthErrorCode;
+import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
@@ -65,6 +67,19 @@ class AuthControllerTest {
                         .content("{\"email\":\"invalid-email\",\"password\":\"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void loginWithInvalidCredentialsReturnsSpecifiedError() throws Exception {
+        when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
+                .thenThrow(new AuthenticationFailedException(AuthErrorCode.LOGIN_INVALID_CREDENTIALS));
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"password\":\"incorrect-password\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("invalid credentials"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
