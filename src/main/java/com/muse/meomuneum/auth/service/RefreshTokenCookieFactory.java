@@ -21,7 +21,9 @@ public class RefreshTokenCookieFactory {
     }
 
     public void addRefreshTokenCookie(HttpHeaders headers, String refreshToken) {
-        headers.add(HttpHeaders.SET_COOKIE, buildCookie(refreshToken, jwtProperties.refreshTokenExpirationSeconds()).toString());
+        ResponseCookie refreshTokenCookie = buildCookie(
+                refreshToken, jwtProperties.refreshTokenExpirationSeconds());
+        headers.add(HttpHeaders.SET_COOKIE, refreshTokenCookie.toString());
     }
 
     public void deleteRefreshTokenCookie(HttpHeaders headers) {
