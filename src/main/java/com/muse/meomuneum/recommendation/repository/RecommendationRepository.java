@@ -50,7 +50,7 @@ public class RecommendationRepository {
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE title = VALUES(title), artist_name = VALUES(artist_name),
                     album_cover_url = VALUES(album_cover_url), preview_url = VALUES(preview_url)
-                """, track.provider(), track.externalId(), track.title(), track.artist(), track.coverUrl(), track.previewUrl());
+                """, track.provider(), track.externalId(), track.title(), track.artistName(), track.coverUrl(), track.previewUrl());
         Long musicId = jdbc.queryForObject("SELECT id FROM music WHERE provider = ? AND external_music_id = ?",
                 Long.class, track.provider(), track.externalId());
         if (musicId == null) {
