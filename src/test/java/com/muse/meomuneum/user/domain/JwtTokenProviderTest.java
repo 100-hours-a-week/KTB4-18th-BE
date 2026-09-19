@@ -7,6 +7,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
+import com.muse.meomuneum.global.security.RefreshTokenClaims;
 import com.muse.meomuneum.global.security.TokenClaims;
 
 class JwtTokenProviderTest {
@@ -27,9 +28,10 @@ class JwtTokenProviderTest {
     void createsAndParsesRefreshToken() {
         JwtTokenProvider tokenProvider = createTokenProvider();
 
-        Long userId = tokenProvider.parseRefreshToken(tokenProvider.createRefreshToken(createUser()));
+        RefreshTokenClaims claims = tokenProvider.parseRefreshToken(tokenProvider.createRefreshToken(createUser()));
 
-        assertThat(userId).isEqualTo(1L);
+        assertThat(claims.userId()).isEqualTo(1L);
+        assertThat(claims.expiresAt()).isAfter(java.time.Instant.now());
     }
 
     private JwtTokenProvider createTokenProvider() {

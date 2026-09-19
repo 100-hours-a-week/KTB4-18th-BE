@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.muse.meomuneum.auth.dto.CsrfTokenResponse;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
+import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.response.ApiResponse;
@@ -46,10 +47,18 @@ public class AuthController {
     }
 
     @PostMapping("/token/refresh")
-    public ResponseEntity<ApiResponse<TokenResponse>> refresh(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<?>> refresh(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
-        TokenResponse tokenResponse = authService.refresh(request, headers);
-        return new ResponseEntity<>(ApiResponse.of("token refreshed", tokenResponse), headers, HttpStatus.OK);
+        try {
+            TokenResponse tokenResponse = authService.refresh(request, headers);
+            return new ResponseEntity<>(ApiResponse.of("token refreshed", tokenResponse), headers, HttpStatus.OK);
+        } catch (AuthenticationFailedException exception) {
+            return new ResponseEntity<>(
+                    ApiResponse.failure(exception.getErrorCode().message()),
+                    headers,
+                    exception.getErrorCode().status()
+            );
+        }
     }
 
     @PostMapping("/logout")

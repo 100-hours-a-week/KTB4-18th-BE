@@ -61,8 +61,13 @@ public class JwtTokenProvider {
         return parseToken(token, ACCESS_TOKEN_TYPE, GlobalErrorCode.ACCESS_UNAUTHORIZED);
     }
 
-    public Long parseRefreshToken(String token) {
-        return parseToken(token, REFRESH_TOKEN_TYPE, AuthErrorCode.REFRESH_INVALID_TOKEN).userId();
+    public RefreshTokenClaims parseRefreshToken(String token) {
+        TokenClaims claims = parseToken(token, REFRESH_TOKEN_TYPE, AuthErrorCode.REFRESH_INVALID_TOKEN);
+        if (claims.expiresAt() == null) {
+            throw new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
+        }
+
+        return new RefreshTokenClaims(claims.userId(), claims.expiresAt());
     }
 
     private String createToken(User user, String type, long expirationSeconds) {
@@ -96,7 +101,7 @@ public class JwtTokenProvider {
                 throw new AuthenticationFailedException(errorCode);
             }
 
-            return new TokenClaims(Long.valueOf(jwt.getSubject()), roles);
+            return new TokenClaims(Long.valueOf(jwt.getSubject()), roles, jwt.getExpiresAt());
         } catch (BadJwtException | IllegalArgumentException exception) {
             throw new AuthenticationFailedException(errorCode);
         }
