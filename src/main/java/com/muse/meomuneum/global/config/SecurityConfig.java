@@ -1,9 +1,6 @@
 package com.muse.meomuneum.global.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
-import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
-import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,6 +15,11 @@ import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.global.exception.GlobalErrorCode;
+import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
+import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
+
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
 public class SecurityConfig {
@@ -29,24 +31,35 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
-            JwtAuthenticationFilter jwtAuthenticationFilter, SecurityErrorResponseWriter errorResponseWriter)
+            JwtAuthenticationFilter jwtAuthenticationFilter, SecurityErrorResponseWriter errorResponseWriter,
+            @Value("${recommendation.allow-guests:false}") boolean allowGuests)
             throws Exception {
+        String[] csrfIgnoredPaths = allowGuests
+                ? new String[] {
+                        "/api/v1/auth/login",
+                        "/api/v1/auth/logout",
+                        "/api/v1/recommendations",
+                        "/api/v1/recommendations/**"
+                }
+                : new String[] {"/api/v1/auth/login", "/api/v1/auth/logout"};
+
         http.cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .ignoringRequestMatchers(
-                                "/api/v1/auth/login",
-                                "/api/v1/auth/logout"))
+                        .ignoringRequestMatchers(csrfIgnoredPaths))
                 .sessionManagement(
                         session ->
                                 session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
                 )
-                .authorizeHttpRequests(
-                        authorize ->
-                                authorize.requestMatchers("/api/v1/auth/**").permitAll()
-                        .anyRequest().authenticated()
-                )
+                .authorizeHttpRequests(authorize -> {
+                    if (allowGuests) {
+                        authorize.requestMatchers("/api/v1/recommendations", "/api/v1/recommendations/**")
+                                .permitAll();
+                    }
+                    authorize.requestMatchers("/api/v1/auth/**").permitAll()
+                            .anyRequest().authenticated();
+                })
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint((
                                 request, response, authException

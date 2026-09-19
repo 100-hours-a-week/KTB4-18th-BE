@@ -1,6 +1,8 @@
 package com.muse.meomuneum.recommendation.exception;
 
 import com.muse.meomuneum.recommendation.controller.RecommendationController;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -8,6 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice(assignableTypes = RecommendationController.class)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class RecommendationExceptionHandler {
     @ExceptionHandler(RecommendationException.class)
     public ResponseEntity<RecommendationController.ApiResponse<Void>> handle(RecommendationException exception) {
