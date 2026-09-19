@@ -3,3 +3,7 @@ spring:
     url: ${DEV_DB_URL:jdbc:mysql://localhost:3306/meomuneum_dev}
     username: ${DEV_DB_USERNAME:meomuneum_dev}
     password: ${DEV_DB_PASSWORD}
+
+# 로그인 구현 전 로컬 샘플 추천만 비로그인 접근 허용
+recommendation:
+  allow-guests: true
