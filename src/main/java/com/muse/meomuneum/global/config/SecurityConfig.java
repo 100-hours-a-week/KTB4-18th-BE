@@ -18,6 +18,7 @@ import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.global.exception.GlobalErrorCode;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
+import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 
 @Configuration
@@ -31,17 +32,15 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
-            JwtAuthenticationFilter jwtAuthenticationFilter, SecurityErrorResponseWriter errorResponseWriter,
+            JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests)
             throws Exception {
-        String[] csrfIgnoredPaths = allowGuests
-                ? new String[] {
-                        "/api/v1/auth/login",
-                        "/api/v1/auth/logout",
-                        "/api/v1/recommendations",
-                        "/api/v1/recommendations/**"
-                }
-                : new String[] {"/api/v1/auth/login", "/api/v1/auth/logout"};
+        String[] csrfIgnoredPaths = {
+                "/api/v1/auth/login",
+                "/api/v1/auth/logout",
+                "/api/v1/recommendations",
+                "/api/v1/recommendations/**"
+        };
 
         http.cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf
@@ -67,7 +66,10 @@ public class SecurityConfig {
                         .accessDeniedHandler((
                                 request, response, accessDeniedException
                         ) -> errorResponseWriter.write(response, GlobalErrorCode.ACCESS_DENIED)))
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(
+                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter),
+                        UsernamePasswordAuthenticationFilter.class
+                );
         return http.build();
     }
 
