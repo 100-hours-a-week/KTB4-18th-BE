@@ -12,6 +12,7 @@ import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /** SQL을 모아 둔 클래스입니다. 모든 쿼리는 파라미터 바인딩을 사용합니다. */
 @Repository
@@ -20,20 +21,48 @@ public class RecommendationRepository {
 
     public RecommendationRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
+    public List<String> findPrompts(String conversationKey, String guestSessionId, Long userId) {
+        if (userId != null) {
+            return jdbc.queryForList("""
+                    SELECT prompt FROM recommendation_sessions
+                    WHERE conversation_key = ? AND user_id = ? AND status = 'COMPLETED' AND prompt IS NOT NULL
+                    ORDER BY id
+                    """, String.class, conversationKey, userId);
+        }
+        return jdbc.queryForList("""
+                SELECT prompt FROM recommendation_sessions
+                WHERE conversation_key = ? AND guest_session_id = ? AND status = 'COMPLETED' AND prompt IS NOT NULL
+                ORDER BY id
+                """, String.class, conversationKey, guestSessionId);
+    }
+
+    @Transactional
+    public RecommendationResponse saveCompleted(RecommendationRequest request, String guestSessionId, Long userId,
+                                                List<TrackData> tracks) {
+        long id = createSession(request, userId == null ? guestSessionId : null, userId, Instant.now());
+        for (int i = 0; i < tracks.size(); i++) {
+            saveItem(id, saveMusic(tracks.get(i)), i + 1);
+        }
+        Instant completedAt = Instant.now();
+        complete(id, completedAt);
+        return new RecommendationResponse(id, "COMPLETED", request.conversation_key(), findItems(id), completedAt);
+    }
+
     public long createSession(RecommendationRequest request, String guestSessionId, Long userId, Instant now) {
         var keys = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO recommendation_sessions
-                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, 'PROCESSING', ?)
+                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'PROCESSING', ?)
                     """, new String[]{"id"});
             statement.setObject(1, userId);
             statement.setString(2, guestSessionId);
             statement.setString(3, request.trigger_type());
             statement.setString(4, request.input_type());
             statement.setString(5, request.conversation_key());
-            statement.setTimestamp(6, Timestamp.from(now));
+            statement.setString(6, request.prompt().trim());
+            statement.setTimestamp(7, Timestamp.from(now));
             return statement;
         }, keys);
         Number generatedId = keys.getKey();

@@ -9,3 +9,8 @@ spring:
 
   flyway:
     enabled: true
+
+recommendation:
+  itunes:
+    country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
+    timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
