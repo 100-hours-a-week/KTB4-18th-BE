@@ -1,0 +1,56 @@
+package com.muse.meomuneum.user.service;
+
+import java.util.List;
+import java.util.Locale;
+
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import com.muse.meomuneum.auth.exception.AuthErrorCode;
+import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.auth.service.LoginAttemptStore;
+import com.muse.meomuneum.user.domain.User;
+import com.muse.meomuneum.user.repository.UserRepository;
+
+@Service
+public class UserAuthenticationService {
+
+    private final PasswordEncoder passwordEncoder;
+    private final UserRepository userRepository;
+    private final LoginAttemptStore loginAttemptStore;
+
+    public UserAuthenticationService(PasswordEncoder passwordEncoder, UserRepository userRepository,
+            LoginAttemptStore loginAttemptStore) {
+        this.passwordEncoder = passwordEncoder;
+        this.userRepository = userRepository;
+        this.loginAttemptStore = loginAttemptStore;
+    }
+
+    public User authenticate(String email, String password) {
+        String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
+        if (loginAttemptStore.isBlocked(normalizedEmail)) {
+            throw invalidCredentials();
+        }
+
+        List<User> users = userRepository.findAllByEmailAndDeletedAtIsNull(normalizedEmail);
+
+        if (users.size() != 1 || !passwordEncoder.matches(password, users.getFirst().getPasswordHash())) {
+            if (users.size() == 1) {
+                loginAttemptStore.recordFailure(normalizedEmail);
+            }
+            throw invalidCredentials();
+        }
+
+        loginAttemptStore.clearAfterSuccessfulLogin(normalizedEmail);
+        return users.getFirst();
+    }
+
+    public User findActiveUser(Long userId) {
+        return userRepository.findByIdAndDeletedAtIsNull(userId)
+                .orElseThrow(() -> new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN));
+    }
+
+    private AuthenticationFailedException invalidCredentials() {
+        return new AuthenticationFailedException(AuthErrorCode.LOGIN_INVALID_CREDENTIALS);
+    }
+}

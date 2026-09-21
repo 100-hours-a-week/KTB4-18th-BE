@@ -5,5 +5,9 @@ spring:
     password: ${TEST_DB_PASSWORD}
 
 auth:
-  token:
+  jwt:
+    issuer: project-api
+    audience: project-api
     secret: test-only-auth-token-secret-that-is-not-used-outside-tests
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
