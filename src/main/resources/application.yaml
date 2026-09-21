@@ -9,3 +9,9 @@ spring:
 
   flyway:
     enabled: true
+
+auth:
+  token:
+    secret: ${AUTH_TOKEN_SECRET}
+    access-expiration-seconds: 3600
+    refresh-expiration-seconds: 1209600

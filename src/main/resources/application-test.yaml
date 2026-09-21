@@ -3,3 +3,7 @@ spring:
     url: ${TEST_DB_URL:jdbc:mysql://localhost:3306/meomuneum_test}
     username: ${TEST_DB_USERNAME:meomuneum_test}
     password: ${TEST_DB_PASSWORD}
+
+auth:
+  token:
+    secret: test-only-auth-token-secret-that-is-not-used-outside-tests
