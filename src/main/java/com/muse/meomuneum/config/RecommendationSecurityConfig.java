@@ -13,7 +13,8 @@ public class RecommendationSecurityConfig {
     @Order(1)
     SecurityFilterChain recommendationSecurity(HttpSecurity http,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests) throws Exception {
-        http.securityMatcher("/api/v1/recommendations", "/api/v1/recommendations/**");
+        http.securityMatcher("/api/v1/recommendations", "/api/v1/recommendations/**",
+                "/api/v1/speech-transcriptions");
         if (allowGuests) {
             // dev 프로필의 로컬 개발에만 사용합니다. 운영 기본값은 false입니다.
             http.csrf(csrf -> csrf.disable());

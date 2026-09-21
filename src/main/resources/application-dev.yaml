@@ -7,3 +7,8 @@ spring:
 # 로그인 구현 전 로컬 추천 개발에만 비로그인 접근 허용
 recommendation:
   allow-guests: true
+
+speech:
+  transcription:
+    provider: ${SPEECH_TRANSCRIPTION_PROVIDER:stub}
+    stub-transcript: ${SPEECH_TRANSCRIPTION_STUB_TRANSCRIPT:비 올 때 듣기 좋은 노래를 추천해줘}

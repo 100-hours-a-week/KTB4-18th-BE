@@ -10,7 +10,16 @@ spring:
   flyway:
     enabled: true
 
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+
 recommendation:
   itunes:
     country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
     timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
+
+speech:
+  transcription:
+    provider: ${SPEECH_TRANSCRIPTION_PROVIDER:unavailable}
