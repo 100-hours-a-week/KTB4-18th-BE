@@ -7,6 +7,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
@@ -17,7 +18,11 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class UserAuthenticationServiceTest {
@@ -51,6 +56,19 @@ class UserAuthenticationServiceTest {
 
         clock.advanceSeconds(301);
         assertThat(loginAttemptStore.isBlocked("member@example.com")).isFalse();
+    }
+
+    @Test
+    void comparesDummyBcryptHashWhenActiveUserDoesNotExist() {
+        UserRepository userRepository = mock(UserRepository.class);
+        PasswordEncoder passwordEncoder = spy(new BCryptPasswordEncoder());
+        UserAuthenticationService service = new UserAuthenticationService(
+                passwordEncoder, userRepository, new LoginAttemptStore(Clock.systemUTC()));
+        when(userRepository.findAllByEmailAndDeletedAtIsNull("not-found@example.com")).thenReturn(List.of());
+
+        assertInvalidCredentials(() -> service.authenticate("not-found@example.com", "password"));
+
+        verify(passwordEncoder).matches(eq("password"), anyString());
     }
 
     private void assertInvalidCredentials(Runnable invocation) {

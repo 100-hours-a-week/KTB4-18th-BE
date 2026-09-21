@@ -15,6 +15,8 @@ import com.muse.meomuneum.user.repository.UserRepository;
 @Service
 public class UserAuthenticationService {
 
+    private static final String DUMMY_PASSWORD_HASH = "$2y$10$SBVBLUI02S31J/CFRlWncuSz.VlzZged/4rQfB9KXFeF.6daJ/yze";
+
     private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
     private final LoginAttemptStore loginAttemptStore;
@@ -34,7 +36,10 @@ public class UserAuthenticationService {
 
         List<User> users = userRepository.findAllByEmailAndDeletedAtIsNull(normalizedEmail);
 
-        if (users.size() != 1 || !passwordEncoder.matches(password, users.getFirst().getPasswordHash())) {
+        String passwordHash = users.size() == 1 ? users.getFirst().getPasswordHash() : DUMMY_PASSWORD_HASH;
+        boolean passwordMatches = passwordEncoder.matches(password, passwordHash);
+
+        if (users.size() != 1 || !passwordMatches) {
             if (users.size() == 1) {
                 loginAttemptStore.recordFailure(normalizedEmail);
             }
