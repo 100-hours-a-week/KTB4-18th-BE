@@ -32,7 +32,7 @@ public class RecommendationSecurityConfig {
 
     // 추천 외의 경로를 실수로 공개하지 않습니다. 향후 팀의 인증 설정과 통합하세요.
     @Bean
-    @Order(2)
+    @Order(3)
     SecurityFilterChain otherEndpoints(HttpSecurity http) throws Exception {
         return http.authorizeHttpRequests(auth -> auth.anyRequest().authenticated()).build();
     }
