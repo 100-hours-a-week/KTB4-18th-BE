@@ -4,6 +4,6 @@ spring:
     username: ${DEV_DB_USERNAME:meomuneum_dev}
     password: ${DEV_DB_PASSWORD}
 
-# 로그인 구현 전 로컬 샘플 추천만 비로그인 접근 허용
+# 로그인 구현 전 로컬 추천 개발에만 비로그인 접근 허용
 recommendation:
   allow-guests: true

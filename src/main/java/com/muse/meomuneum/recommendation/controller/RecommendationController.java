@@ -6,6 +6,7 @@ import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.service.RecommendationService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -25,8 +26,7 @@ public class RecommendationController {
     public ResponseEntity<ApiResponse<RecommendationResponse>> create(@Valid @RequestBody RecommendationRequest body,
                                                                       HttpServletRequest request, Authentication authentication) {
         var result = service.create(body, request.getSession().getId(), users.resolve(authentication));
-        // 샘플은 즉시 완료됩니다. 실제 비동기 AI 연동 시 PROCESSING 반환 및 작업 분리를 구현합니다.
-        return ResponseEntity.accepted().body(new ApiResponse<>("recommendation completed", result));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new ApiResponse<>("recommendation completed", result));
     }
 
     @GetMapping("/{recommendation_id}")

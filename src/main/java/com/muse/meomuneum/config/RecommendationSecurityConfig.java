@@ -15,7 +15,7 @@ public class RecommendationSecurityConfig {
             @Value("${recommendation.allow-guests:false}") boolean allowGuests) throws Exception {
         http.securityMatcher("/api/v1/recommendations", "/api/v1/recommendations/**");
         if (allowGuests) {
-            // dev 프로필의 샘플 개발에만 사용합니다. 운영 기본값은 false입니다.
+            // dev 프로필의 로컬 개발에만 사용합니다. 운영 기본값은 false입니다.
             http.csrf(csrf -> csrf.disable());
             http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
         } else {
