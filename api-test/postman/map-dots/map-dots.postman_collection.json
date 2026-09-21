@@ -1,0 +1,29 @@
+{
+  "info": {
+    "name": "Main Map Dots API contract verification",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "001 - Map dots - 200",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "http://127.0.0.1:8081/api/v1/map-dots"
+      }
+    },
+    {
+      "name": "002 - Map dots ETag revalidation - 304",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "If-None-Match",
+            "value": "\"2026-09-07\""
+          }
+        ],
+        "url": "http://127.0.0.1:8081/api/v1/map-dots"
+      }
+    }
+  ]
+}
