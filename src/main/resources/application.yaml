@@ -27,3 +27,8 @@ auth:
     secret: ${AUTH_JWT_SECRET}
     access-token-expiration-seconds: 3600
     refresh-token-expiration-seconds: 1209600
+
+recommendation:
+  itunes:
+    country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
+    timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}

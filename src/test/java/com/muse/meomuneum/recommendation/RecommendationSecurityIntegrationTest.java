@@ -106,7 +106,7 @@ class RecommendationSecurityIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(recommendationRequest()))
-                .andExpect(status().isAccepted())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("recommendation completed"));
     }
 
