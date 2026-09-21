@@ -2,6 +2,14 @@ spring:
   application:
     name: meomuneum-backend
 
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: true
+        path: /api/v1/auth
+
   jpa:
     hibernate:
       ddl-auto: validate
@@ -9,6 +17,16 @@ spring:
 
   flyway:
     enabled: true
+
+auth:
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  jwt:
+    issuer: ${AUTH_JWT_ISSUER:project-api}
+    audience: ${AUTH_JWT_AUDIENCE:project-api}
+    secret: ${AUTH_JWT_SECRET}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
 
 recommendation:
   itunes:
