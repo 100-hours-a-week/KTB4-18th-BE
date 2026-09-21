@@ -1,6 +1,6 @@
 package com.muse.meomuneum.recommendation.service;
 
-import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -19,6 +19,9 @@ import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 
 @Service
 public class RecommendationService {
+    private static final int MAX_CONTEXT_LENGTH = 250;
+    private static final int MAX_HISTORY_COUNT = 10;
+
     private final RecommendationProvider provider;
     private final RecommendationRepository repository;
     private final MeterRegistry meterRegistry;
@@ -34,8 +37,7 @@ public class RecommendationService {
         var requestTimer = Timer.start(meterRegistry);
         String outcome = "failure";
         try {
-            var prompts = new ArrayList<>(repository.findPrompts(request.conversation_key(), guestSessionId, userId));
-            prompts.add(request.prompt().trim());
+            var prompts = buildProviderPrompts(request, guestSessionId, userId);
             var providerTimer = Timer.start(meterRegistry);
             String providerOutcome = "failure";
             List<TrackData> tracks;
@@ -69,6 +71,40 @@ public class RecommendationService {
             requestTimer.stop(Timer.builder("recommendation.request.duration")
                     .tag("outcome", outcome).register(meterRegistry));
         }
+    }
+
+    private List<String> buildProviderPrompts(RecommendationRequest request, String guestSessionId, Long userId) {
+        String currentPrompt = takeLast(request.prompt().trim(), MAX_CONTEXT_LENGTH);
+        var prompts = new ArrayDeque<String>();
+        prompts.addFirst(currentPrompt);
+
+        int remainingLength = MAX_CONTEXT_LENGTH - currentPrompt.length();
+        if (remainingLength <= 1) {
+            return List.copyOf(prompts);
+        }
+
+        var recentPrompts = repository.findRecentPrompts(
+                request.conversation_key(), guestSessionId, userId, MAX_HISTORY_COUNT);
+        for (String prompt : recentPrompts) {
+            String trimmedPrompt = prompt.trim();
+            if (trimmedPrompt.isEmpty()) {
+                continue;
+            }
+
+            int availableLength = remainingLength - 1;
+            if (availableLength <= 0) {
+                break;
+            }
+
+            String includedPrompt = takeLast(trimmedPrompt, availableLength);
+            prompts.addFirst(includedPrompt);
+            remainingLength -= includedPrompt.length() + 1;
+        }
+        return List.copyOf(prompts);
+    }
+
+    private String takeLast(String value, int maxLength) {
+        return value.length() <= maxLength ? value : value.substring(value.length() - maxLength);
     }
 
     @Transactional(readOnly = true)

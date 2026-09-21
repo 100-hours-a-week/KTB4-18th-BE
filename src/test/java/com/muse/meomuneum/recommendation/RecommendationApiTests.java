@@ -87,6 +87,48 @@ class RecommendationApiTests {
         assertEquals(java.util.List.of("비 오는 밤", "드라이브"), prompts.getAllValues().get(1));
     }
 
+    @Test void limitsPreviousPromptsBeforeBuildingProviderContext() throws Exception {
+        var session = new MockHttpSession();
+        String conversationKey = "550e8400-e29b-41d4-a716-446655440000";
+        for (int i = 0; i < 12; i++) {
+            jdbc.update("""
+                    INSERT INTO recommendation_sessions
+                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status)
+                    VALUES (NULL, ?, 'CHATBOT', 'TEXT', ?, ?, 'COMPLETED')
+                    """, session.getId(), conversationKey, "history-" + i);
+        }
+        clearInvocations(provider);
+
+        mvc.perform(post("/api/v1/recommendations").session(session)
+                .contentType("application/json").content(body("current")))
+                .andExpect(status().isCreated());
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(provider).recommend(prompts.capture());
+        assertEquals(java.util.List.of("history-2", "history-3", "history-4", "history-5", "history-6",
+                "history-7", "history-8", "history-9", "history-10", "history-11", "current"),
+                prompts.getValue());
+        assertTrue(String.join(" ", prompts.getValue()).length() <= 250);
+    }
+
+    @Test void skipsPreviousPromptsWhenCurrentPromptFillsContext() throws Exception {
+        var session = new MockHttpSession();
+        jdbc.update("""
+                INSERT INTO recommendation_sessions
+                (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status)
+                VALUES (NULL, ?, 'CHATBOT', 'TEXT', ?, 'previous', 'COMPLETED')
+                """, session.getId(), "550e8400-e29b-41d4-a716-446655440000");
+        clearInvocations(provider);
+
+        mvc.perform(post("/api/v1/recommendations").session(session)
+                .contentType("application/json").content(body("a".repeat(300))))
+                .andExpect(status().isCreated());
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(provider).recommend(prompts.capture());
+        assertEquals(java.util.List.of("a".repeat(250)), prompts.getValue());
+    }
+
     @Test void emptySearchReturns503WithoutSavingSession() throws Exception {
         when(provider.recommend(anyList())).thenReturn(java.util.List.of());
         int before = count("recommendation_sessions");

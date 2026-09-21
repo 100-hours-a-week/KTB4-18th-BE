@@ -17,23 +17,29 @@ import org.springframework.transaction.annotation.Transactional;
 /** SQL을 모아 둔 클래스입니다. 모든 쿼리는 파라미터 바인딩을 사용합니다. */
 @Repository
 public class RecommendationRepository {
+    private static final int MAX_PROMPT_LENGTH = 250;
+
     private final JdbcTemplate jdbc;
 
     public RecommendationRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
-    public List<String> findPrompts(String conversationKey, String guestSessionId, Long userId) {
+    public List<String> findRecentPrompts(String conversationKey, String guestSessionId, Long userId, int limit) {
         if (userId != null) {
             return jdbc.queryForList("""
-                    SELECT prompt FROM recommendation_sessions
-                    WHERE conversation_key = ? AND user_id = ? AND status = 'COMPLETED' AND prompt IS NOT NULL
-                    ORDER BY id
-                    """, String.class, conversationKey, userId);
+                    SELECT RIGHT(prompt, ?) FROM recommendation_sessions
+                    WHERE conversation_key = ? AND user_id = ? AND status = 'COMPLETED'
+                        AND prompt IS NOT NULL AND TRIM(prompt) <> ''
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """, String.class, MAX_PROMPT_LENGTH, conversationKey, userId, limit);
         }
         return jdbc.queryForList("""
-                SELECT prompt FROM recommendation_sessions
-                WHERE conversation_key = ? AND guest_session_id = ? AND status = 'COMPLETED' AND prompt IS NOT NULL
-                ORDER BY id
-                """, String.class, conversationKey, guestSessionId);
+                SELECT RIGHT(prompt, ?) FROM recommendation_sessions
+                WHERE conversation_key = ? AND guest_session_id = ? AND status = 'COMPLETED'
+                    AND prompt IS NOT NULL AND TRIM(prompt) <> ''
+                ORDER BY id DESC
+                LIMIT ?
+                """, String.class, MAX_PROMPT_LENGTH, conversationKey, guestSessionId, limit);
     }
 
     @Transactional
