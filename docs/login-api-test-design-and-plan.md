@@ -1,5 +1,7 @@
 # 로그인 API 미검증 항목 테스트 설계·기획서
 
+> ⚠️ 이 문서의 이전 테스트 클래스 경로는 `origin/dev` 통합 전 기준입니다. 현재 테스트 결과와 경로는 [origin/dev 통합 및 로그인 API 검증 보고서](auth-login-origin-dev-integration-test-report.md)를 기준으로 확인합니다.
+
 ## 1. 문서 목적
 
 `POST /api/v1/auth/login` 구현에서 아직 런타임 또는 API 계층까지 완전히 확인하지 못한 항목을 자동 테스트로 보완한다.

@@ -1,5 +1,7 @@
 # 로그인 실패 잠금 정책 설계
 
+> ⚠️ 이 문서의 이전 구현 경로는 `origin/dev` 통합 전 기준입니다. 현재 구현은 `auth/service/LoginAttemptStore`와 `user/service/UserAuthenticationService`이며, 최신 검증은 [origin/dev 통합 및 로그인 API 검증 보고서](auth-login-origin-dev-integration-test-report.md)를 기준으로 확인합니다.
+
 ## 목적
 
 이메일 전송이나 비밀번호 재설정 수단이 없는 현재 단계에서는 두 번째 실패 후 영구 잠금을 사용하지 않는다. 대신 활성 계정의 비밀번호 불일치가 10회 누적될 때마다 일시 잠금을 적용하고, 반복될수록 대기 시간을 두 배로 늘린다.

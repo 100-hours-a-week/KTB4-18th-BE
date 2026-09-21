@@ -1,5 +1,7 @@
 # 이메일·비밀번호 로그인 API 테스트 실행 리포트
 
+> ⚠️ 이 문서는 `origin/dev` 통합 전 실행 이력입니다. 최신 실행 결과는 [origin/dev 통합 및 로그인 API 검증 보고서](auth-login-origin-dev-integration-test-report.md)를 기준으로 확인합니다.
+
 ## 1. 범위
 
 - API: `POST /api/v1/auth/login`

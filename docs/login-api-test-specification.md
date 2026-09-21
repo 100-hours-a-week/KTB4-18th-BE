@@ -1,5 +1,7 @@
 # 이메일·비밀번호 로그인 API 테스트 명세서
 
+> ⚠️ 이 문서의 이전 테스트 클래스 경로는 `origin/dev` 통합 전 기준입니다. 현재 테스트 결과와 경로는 [origin/dev 통합 및 로그인 API 검증 보고서](auth-login-origin-dev-integration-test-report.md)를 기준으로 확인합니다.
+
 ## 1. 테스트 대상
 
 - API: `POST /api/v1/auth/login`
