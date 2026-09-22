@@ -3,9 +3,7 @@ package com.muse.meomuneum.user.signup.repository;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -26,14 +24,22 @@ public class SignupRepository {
         return count != null && count > 0;
     }
 
-    public List<Term> findTermsByIds(Collection<Long> ids, Instant now) {
-        String placeholders = String.join(", ", ids.stream().map(id -> "?").toList());
+    public List<Term> findCurrentSignupTerms(Instant now) {
         return jdbc.query("""
-                SELECT id, type
-                FROM terms
-                WHERE id IN (%s) AND effective_at <= ?
-                """.formatted(placeholders), (row, index) -> new Term(row.getLong("id"), row.getString("type")),
-                values(ids, now));
+                SELECT t.id, t.type, t.is_required
+                FROM terms t
+                WHERE t.type IN ('SERVICE', 'PROFILE', 'AIPERSONAL', 'LOCATIONTERMS', 'LOCATION')
+                    AND t.effective_at <= ?
+                    AND t.effective_at = (
+                        SELECT MAX(current_terms.effective_at)
+                        FROM terms current_terms
+                        WHERE current_terms.type = t.type
+                            AND current_terms.effective_at <= ?
+                    )
+                """, (row, index) -> new Term(
+                row.getLong("id"),
+                row.getString("type"),
+                row.getBoolean("is_required")), Timestamp.from(now), Timestamp.from(now));
     }
 
     public long createUser(
@@ -73,15 +79,5 @@ public class SignupRepository {
                 """, userId, termsId, Timestamp.from(now));
     }
 
-    private Object[] values(Collection<Long> ids, Instant now) {
-        Object[] values = new Object[ids.size() + 1];
-        int index = 0;
-        for (Long id : ids) {
-            values[index++] = id;
-        }
-        values[index] = Timestamp.from(now);
-        return values;
-    }
-
-    public record Term(long id, String type) {}
+    public record Term(long id, String type, boolean required) {}
 }

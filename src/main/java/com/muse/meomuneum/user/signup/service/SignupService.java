@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.Year;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -11,6 +12,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,25 +59,52 @@ public class SignupService {
         }
 
         Instant now = clock.instant();
-        Map<Long, SignupRepository.Term> termsById = signupRepository.findTermsByIds(requestedTermsIds, now).stream()
+        List<SignupRepository.Term> currentTerms = signupRepository.findCurrentSignupTerms(now);
+        validateCurrentTerms(currentTerms);
+
+        Map<Long, SignupRepository.Term> termsById = currentTerms.stream()
+                .filter(term -> requestedTermsIds.contains(term.id()))
                 .collect(Collectors.toMap(SignupRepository.Term::id, Function.identity()));
         if (termsById.size() != requestedTermsIds.size() || termsById.values().stream()
                 .anyMatch(term -> !SIGNUP_TERMS_TYPES.contains(term.type()))) {
             throw new InvalidSignupRequestException();
         }
-        if (termsById.values().stream().noneMatch(term -> SERVICE.equals(term.type()))) {
+        Set<Long> requiredTermsIds = currentTerms.stream()
+                .filter(SignupRepository.Term::required)
+                .map(SignupRepository.Term::id)
+                .collect(Collectors.toSet());
+        if (requiredTermsIds.isEmpty()) {
+            throw new IllegalStateException("Current required terms are missing");
+        }
+        if (!requestedTermsIds.containsAll(requiredTermsIds)) {
             throw new InvalidSignupRequestException();
         }
 
-        long userId = signupRepository.createUser(
-                email,
-                passwordEncoder.encode(request.password()),
-                request.nickname().trim(),
-                request.birthYear(),
-                request.gender(),
-                now);
+        long userId = createUser(request, email, now);
         requestedTermsIds.forEach(termsId -> signupRepository.createTermsAgreement(userId, termsId, now));
         return userId;
+    }
+
+    private void validateCurrentTerms(List<SignupRepository.Term> currentTerms) {
+        Map<String, Long> currentTermsCountByType = currentTerms.stream()
+                .collect(Collectors.groupingBy(SignupRepository.Term::type, Collectors.counting()));
+        if (currentTermsCountByType.values().stream().anyMatch(count -> count != 1)) {
+            throw new IllegalStateException("Current terms are ambiguous");
+        }
+    }
+
+    private long createUser(SignupRequest request, String email, Instant now) {
+        try {
+            return signupRepository.createUser(
+                    email,
+                    passwordEncoder.encode(request.password()),
+                    request.nickname().trim(),
+                    request.birthYear(),
+                    request.gender(),
+                    now);
+        } catch (DuplicateKeyException exception) {
+            throw new DuplicateEmailException();
+        }
     }
 
     private void validateBirthYear(Short birthYear) {
