@@ -56,8 +56,7 @@ public class SecurityConfig {
                     if (allowGuests) {
                         authorize.requestMatchers(
                                 "/api/v1/recommendations",
-                                "/api/v1/recommendations/**",
-                                "/api/v1/speech-transcriptions"
+                                "/api/v1/recommendations/**"
                         ).permitAll();
                     }
                     authorize.requestMatchers("/api/v1/auth/**").permitAll()
