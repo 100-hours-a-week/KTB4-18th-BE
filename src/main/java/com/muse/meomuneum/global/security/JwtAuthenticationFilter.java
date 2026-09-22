@@ -1,7 +1,8 @@
 package com.muse.meomuneum.global.security;
 
-import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
+import java.io.IOException;
+import java.util.List;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,8 +12,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
-import java.util.List;
+import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -52,7 +52,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         if (!authorization.startsWith(BEARER_PREFIX)) {
-            writeUnauthorizedResponse(response);
+            writeUnauthorizedResponse(request, response);
             return;
         }
 
@@ -60,7 +60,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             claims = jwtTokenProvider.parseAccessToken(authorization.substring(BEARER_PREFIX.length()));
         } catch (AuthenticationFailedException exception) {
-            writeUnauthorizedResponse(response);
+            writeUnauthorizedResponse(request, response);
             return;
         }
 
@@ -73,8 +73,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private void writeUnauthorizedResponse(HttpServletResponse response) throws IOException {
+    private void writeUnauthorizedResponse(HttpServletRequest request, HttpServletResponse response) throws IOException {
         SecurityContextHolder.clearContext();
-        errorResponseWriter.write(response, GlobalErrorCode.ACCESS_UNAUTHORIZED);
+        errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_UNAUTHORIZED);
     }
 }

@@ -6,7 +6,11 @@ spring:
 
 auth:
   jwt:
-    secret: ${TEST_AUTH_JWT_SECRET:test-only-jwt-signing-secret-at-least-32-bytes}
+    issuer: project-api
+    audience: project-api
+    secret: ${TEST_AUTH_JWT_SECRET:test-only-auth-token-secret-that-is-not-used-outside-tests}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
 
 speech:
   transcription:

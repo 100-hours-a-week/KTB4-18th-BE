@@ -1,18 +1,19 @@
-package com.muse.meomuneum.global.exception;
+package com.muse.meomuneum.global.security;
 
 import org.springframework.http.HttpStatus;
 
-public enum GlobalErrorCode implements ErrorCode {
+import com.muse.meomuneum.global.exception.ErrorCode;
 
-    INTERNAL_SERVER_ERROR(
-            "GLOBAL_500", HttpStatus.INTERNAL_SERVER_ERROR, "internal server error"
-    );
+public enum SecurityErrorCode implements ErrorCode {
+
+    ACCESS_UNAUTHORIZED("SECURITY_401", HttpStatus.UNAUTHORIZED, "unauthorized"),
+    ACCESS_DENIED("SECURITY_403", HttpStatus.FORBIDDEN, "request rejected");
 
     private final String code;
     private final String message;
     private final HttpStatus status;
 
-    GlobalErrorCode(String code, HttpStatus status, String message) {
+    SecurityErrorCode(String code, HttpStatus status, String message) {
         this.code = code;
         this.status = status;
         this.message = message;

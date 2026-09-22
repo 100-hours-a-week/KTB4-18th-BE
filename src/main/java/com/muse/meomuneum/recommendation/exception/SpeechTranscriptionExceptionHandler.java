@@ -36,10 +36,4 @@ public class SpeechTranscriptionExceptionHandler {
                 .body(new SpeechTranscriptionController.ApiResponse<>("음성 파일을 선택해 주세요.", null));
     }
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<SpeechTranscriptionController.ApiResponse<Void>> unexpected(Exception exception) {
-        return ResponseEntity.internalServerError()
-                .body(new SpeechTranscriptionController.ApiResponse<>(
-                        "음성을 변환하지 못했습니다. 잠시 후 다시 시도해 주세요.", null));
-    }
 }

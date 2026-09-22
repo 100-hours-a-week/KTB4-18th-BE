@@ -27,7 +27,6 @@ import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.exception.ErrorCode;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
 import com.muse.meomuneum.user.domain.User;
 
 @Component
@@ -58,7 +57,7 @@ public class JwtTokenProvider {
     }
 
     public TokenClaims parseAccessToken(String token) {
-        return parseToken(token, ACCESS_TOKEN_TYPE, GlobalErrorCode.ACCESS_UNAUTHORIZED);
+        return parseToken(token, ACCESS_TOKEN_TYPE, SecurityErrorCode.ACCESS_UNAUTHORIZED);
     }
 
     public RefreshTokenClaims parseRefreshToken(String token) {

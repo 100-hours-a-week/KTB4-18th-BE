@@ -24,6 +24,7 @@ import org.springframework.mock.web.MockHttpSession;
 
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
+import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
@@ -40,7 +41,7 @@ class AuthControllerTest {
         authService = mock(AuthService.class);
         csrfTokenService = mock(CsrfTokenService.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, csrfTokenService))
-                .setControllerAdvice(new GlobalExceptionHandler())
+                .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler())
                 .build();
     }
 
@@ -74,15 +75,38 @@ class AuthControllerTest {
     }
 
     @Test
+    void loginWithMalformedJsonReturnsSpecifiedError() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("invalid request"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
     void loginWithInvalidCredentialsReturnsSpecifiedError() throws Exception {
         when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
-                .thenThrow(new AuthenticationFailedException(AuthErrorCode.LOGIN_INVALID_CREDENTIALS));
+                .thenThrow(new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS));
 
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"user@example.com\",\"password\":\"incorrect-password\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("invalid credentials"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void loginWithUnexpectedFailureReturnsGlobalInternalServerError() throws Exception {
+        when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
+                .thenThrow(new IllegalStateException("unexpected failure"));
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.message").value("internal server error"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
