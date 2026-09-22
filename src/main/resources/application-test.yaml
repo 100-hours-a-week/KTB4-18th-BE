@@ -3,3 +3,12 @@ spring:
     url: ${TEST_DB_URL:jdbc:mysql://localhost:3306/meomuneum_test}
     username: ${TEST_DB_USERNAME:meomuneum_test}
     password: ${TEST_DB_PASSWORD}
+
+auth:
+  jwt:
+    secret: ${TEST_AUTH_JWT_SECRET:test-only-jwt-signing-secret-at-least-32-bytes}
+
+speech:
+  transcription:
+    provider: stub
+    stub-transcript: 비 올 때 듣기 좋은 노래를 추천해줘
