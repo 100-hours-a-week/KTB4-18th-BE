@@ -39,7 +39,8 @@ public class SecurityConfig {
                 "/api/v1/auth/login",
                 "/api/v1/auth/logout",
                 "/api/v1/recommendations",
-                "/api/v1/recommendations/**"
+                "/api/v1/recommendations/**",
+                "/api/v1/speech-transcriptions"
         };
 
         http.cors(Customizer.withDefaults())
@@ -53,8 +54,10 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(authorize -> {
                     if (allowGuests) {
-                        authorize.requestMatchers("/api/v1/recommendations", "/api/v1/recommendations/**")
-                                .permitAll();
+                        authorize.requestMatchers(
+                                "/api/v1/recommendations",
+                                "/api/v1/recommendations/**"
+                        ).permitAll();
                     }
                     authorize.requestMatchers("/api/v1/auth/**").permitAll()
                             .anyRequest().authenticated();

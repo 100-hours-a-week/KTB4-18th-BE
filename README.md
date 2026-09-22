@@ -61,6 +61,10 @@ set +a
 | `test` | `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD` | URL: `jdbc:mysql://localhost:3306/meomuneum_test`, 사용자: `meomuneum_test`; 비밀번호 필수 |
 | `prod` | `PROD_DB_URL`, `PROD_DB_USERNAME`, `PROD_DB_PASSWORD` | 모두 필수 |
 
+음성 전사는 `SPEECH_TRANSCRIPTION_PROVIDER`로 제공자를 선택합니다. `dev` 프로필의 기본값은
+프론트엔드 흐름 확인용 `stub`이며 `SPEECH_TRANSCRIPTION_STUB_TRANSCRIPT`의 문장을 반환합니다.
+운영 기본값은 `unavailable`이고 AI 팀의 실제 계약을 연결하기 전에는 502를 반환합니다.
+
 `.env`는 Git 제외 대상입니다. 실제 비밀번호를 예시 파일이나 YAML에 기록하지 마세요. 운영 환경에서는 배포 환경의 환경변수 또는 비밀값 관리 기능으로 값을 주입하고 `SPRING_PROFILES_ACTIVE=prod`를 설정합니다.
 
 ## 설치 및 개발 실행
@@ -141,3 +145,30 @@ AI 팀 연동 전에는 이 문장들을 합쳐 iTunes Search API에서 직접 �
 측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
 각각 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다.
 첫 추천 결과는 POST 응답으로 받고, GET은 저장된 결과 재조회에 사용합니다.
+
+## 음성 전사 기능
+
+`POST /api/v1/speech-transcriptions`는 `multipart/form-data`의 `audio` 파일을 받습니다.
+WebM 또는 MP4만 허용하며 최대 10MB, 최대 60초로 제한합니다. 파일 시그니처와 컨테이너의
+재생 시간을 서버에서 검증하며 원본 음성과 transcript를 저장하지 않습니다. 전사 성공 응답의
+`data.transcript`는 프론트엔드 입력창에 표시되고 사용자가 확인·수정한 뒤 별도 추천 요청의
+`prompt`와 `input_type=VOICE`로 전달됩니다.
+
+AI 팀 연동 전에는 `SpeechToTextProvider`의 개발용 대역을 사용합니다. 실제 AI 연동 시에는
+이 인터페이스의 운영 어댑터를 추가하고 URL·인증 정보·제한 시간을 환경 변수로 주입합니다.
+
+전사 실패 응답은 공통 `{ message, data }` 형식을 유지하며 `data`는 `null`입니다. 별도의
+Custom Code를 추가하지 않고 다음 HTTP 상태를 프론트엔드의 복구 동작 판별 코드로 사용합니다.
+
+| 상태 | 조건 | 클라이언트 처리 |
+| --- | --- | --- |
+| `400 Bad Request` | 파일 누락, 지원하지 않는 형식, 손상된 파일, 60초 초과 | 다시 녹음 |
+| `413 Payload Too Large` | 10MB 초과 | 더 짧게 다시 녹음 |
+| `502 Bad Gateway` | 전사 서비스 장애, 전사 결과 없음 | 동일 녹음 재시도 또는 텍스트 입력 |
+| `504 Gateway Timeout` | 전사 서비스 제한 시간 초과 | 동일 녹음 재시도 또는 텍스트 입력 |
+| `500 Internal Server Error` | 분류되지 않은 서버 오류 | 재시도 또는 텍스트 입력 |
+
+전사 API는 음성과 transcript를 저장하지 않으며 추천 서비스나 추천 저장소를 호출하지 않습니다.
+전사 성공 후 사용자가 transcript를 확인·수정하고 별도의 추천 요청을 보내야만 추천 세션과
+추천곡이 저장됩니다. 따라서 전사 실패 응답에서는 추천 세션, prompt, 추천곡 저장이 발생하지
+않습니다.
