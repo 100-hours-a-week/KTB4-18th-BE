@@ -1,5 +1,7 @@
 package com.muse.meomuneum.recommendation.exception;
 
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -10,6 +12,7 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
 import com.muse.meomuneum.recommendation.controller.SpeechTranscriptionController;
 
 @RestControllerAdvice(assignableTypes = SpeechTranscriptionController.class)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class SpeechTranscriptionExceptionHandler {
     @ExceptionHandler(SpeechTranscriptionException.class)
     public ResponseEntity<SpeechTranscriptionController.ApiResponse<Void>> handle(
