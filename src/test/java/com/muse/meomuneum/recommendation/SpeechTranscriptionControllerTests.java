@@ -15,6 +15,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 import com.muse.meomuneum.recommendation.controller.SpeechTranscriptionController;
 import com.muse.meomuneum.recommendation.dto.response.SpeechTranscriptionResponse;
 import com.muse.meomuneum.recommendation.exception.SpeechTranscriptionException;
@@ -31,7 +32,7 @@ class SpeechTranscriptionControllerTests {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.standaloneSetup(new SpeechTranscriptionController(service))
-                .setControllerAdvice(new SpeechTranscriptionExceptionHandler())
+                .setControllerAdvice(new SpeechTranscriptionExceptionHandler(), new GlobalExceptionHandler())
                 .build();
     }
 
@@ -95,8 +96,7 @@ class SpeechTranscriptionControllerTests {
 
         mvc.perform(multipart("/api/v1/speech-transcriptions").file(audio))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.message")
-                        .value("음성을 변환하지 못했습니다. 잠시 후 다시 시도해 주세요."))
+                .andExpect(jsonPath("$.message").value("internal server error"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
@@ -106,7 +106,7 @@ class SpeechTranscriptionControllerTests {
                 new AudioMetadataInspector(), new StubSpeechToTextProvider("비 오는 날 드라이브 음악"));
         var integratedMvc = MockMvcBuilders
                 .standaloneSetup(new SpeechTranscriptionController(integratedService))
-                .setControllerAdvice(new SpeechTranscriptionExceptionHandler())
+                .setControllerAdvice(new SpeechTranscriptionExceptionHandler(), new GlobalExceptionHandler())
                 .build();
         var audio = new MockMultipartFile(
                 "audio", "voice.webm", "audio/webm", AudioMetadataInspectorTests.webm(30f));
@@ -122,7 +122,7 @@ class SpeechTranscriptionControllerTests {
                 new AudioMetadataInspector(), new StubSpeechToTextProvider("사용되지 않는 문장"));
         var integratedMvc = MockMvcBuilders
                 .standaloneSetup(new SpeechTranscriptionController(integratedService))
-                .setControllerAdvice(new SpeechTranscriptionExceptionHandler())
+                .setControllerAdvice(new SpeechTranscriptionExceptionHandler(), new GlobalExceptionHandler())
                 .build();
         var audio = new MockMultipartFile(
                 "audio", "voice.mp4", "audio/mp4", AudioMetadataInspectorTests.mp4(60_001));
