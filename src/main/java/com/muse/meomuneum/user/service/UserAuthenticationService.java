@@ -8,7 +8,6 @@ import org.springframework.stereotype.Service;
 
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.auth.service.LoginAttemptStore;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.repository.UserRepository;
 
@@ -19,34 +18,23 @@ public class UserAuthenticationService {
 
     private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
-    private final LoginAttemptStore loginAttemptStore;
 
-    public UserAuthenticationService(PasswordEncoder passwordEncoder, UserRepository userRepository,
-            LoginAttemptStore loginAttemptStore) {
+    public UserAuthenticationService(PasswordEncoder passwordEncoder, UserRepository userRepository) {
         this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
-        this.loginAttemptStore = loginAttemptStore;
     }
 
     public User authenticate(String email, String password) {
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
-        if (loginAttemptStore.isBlocked(normalizedEmail)) {
-            throw invalidCredentials();
-        }
-
         List<User> users = userRepository.findAllByEmailAndDeletedAtIsNull(normalizedEmail);
 
         String passwordHash = users.size() == 1 ? users.getFirst().getPasswordHash() : DUMMY_PASSWORD_HASH;
         boolean passwordMatches = passwordEncoder.matches(password, passwordHash);
 
         if (users.size() != 1 || !passwordMatches) {
-            if (users.size() == 1) {
-                loginAttemptStore.recordFailure(normalizedEmail);
-            }
             throw invalidCredentials();
         }
 
-        loginAttemptStore.clearAfterSuccessfulLogin(normalizedEmail);
         return users.getFirst();
     }
 
