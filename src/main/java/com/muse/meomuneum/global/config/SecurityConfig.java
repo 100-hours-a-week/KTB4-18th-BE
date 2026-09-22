@@ -16,10 +16,10 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
+import com.muse.meomuneum.global.security.SecurityErrorCode;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
@@ -65,10 +65,10 @@ public class SecurityConfig {
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint((
                                 request, response, authException
-                        ) -> errorResponseWriter.write(response, GlobalErrorCode.ACCESS_UNAUTHORIZED))
+                        ) -> errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_UNAUTHORIZED))
                         .accessDeniedHandler((
                                 request, response, accessDeniedException
-                        ) -> errorResponseWriter.write(response, GlobalErrorCode.ACCESS_DENIED)))
+                        ) -> errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_DENIED)))
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter),
                         UsernamePasswordAuthenticationFilter.class

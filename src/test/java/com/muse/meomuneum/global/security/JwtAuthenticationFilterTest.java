@@ -39,7 +39,6 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
-import com.muse.meomuneum.global.exception.GlobalErrorCode;
 
 class JwtAuthenticationFilterTest {
 
@@ -97,7 +96,7 @@ class JwtAuthenticationFilterTest {
         request.addHeader("Authorization", "Bearer malformed-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(jwtTokenProvider.parseAccessToken("malformed-token"))
-                .thenThrow(new AuthenticationFailedException(GlobalErrorCode.ACCESS_UNAUTHORIZED));
+                .thenThrow(new AuthenticationFailedException(SecurityErrorCode.ACCESS_UNAUTHORIZED));
 
         jwtAuthenticationFilter.doFilter(request, response, filterChain);
 
@@ -112,7 +111,7 @@ class JwtAuthenticationFilterTest {
         request.addHeader("Authorization", "Bearer ");
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(jwtTokenProvider.parseAccessToken(""))
-                .thenThrow(new AuthenticationFailedException(GlobalErrorCode.ACCESS_UNAUTHORIZED));
+                .thenThrow(new AuthenticationFailedException(SecurityErrorCode.ACCESS_UNAUTHORIZED));
 
         jwtAuthenticationFilter.doFilter(request, response, filterChain);
 
