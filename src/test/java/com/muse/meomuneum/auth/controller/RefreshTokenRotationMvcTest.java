@@ -21,6 +21,7 @@ import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.auth.service.RefreshTokenCookieFactory;
 import com.muse.meomuneum.auth.service.RefreshTokenSessionService;
+import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -56,7 +57,7 @@ class RefreshTokenRotationMvcTest {
                 userAuthenticationService
         );
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, mock(CsrfTokenService.class)))
-                .setControllerAdvice(new GlobalExceptionHandler())
+                .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler())
                 .build();
     }
 

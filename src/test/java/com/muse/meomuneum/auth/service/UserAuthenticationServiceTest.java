@@ -52,6 +52,6 @@ class UserAuthenticationServiceTest {
         assertThatThrownBy(invocation::run)
                 .isInstanceOf(AuthenticationFailedException.class)
                 .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
-                .isEqualTo(AuthErrorCode.LOGIN_INVALID_CREDENTIALS);
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
     }
 }

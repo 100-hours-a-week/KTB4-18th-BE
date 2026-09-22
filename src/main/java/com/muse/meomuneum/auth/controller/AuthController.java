@@ -16,6 +16,7 @@ import com.muse.meomuneum.auth.dto.CsrfTokenResponse;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.auth.response.AuthSuccessCode;
 import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.response.ApiResponse;
@@ -43,7 +44,10 @@ public class AuthController {
             HttpServletRequest servletRequest) {
         HttpHeaders headers = new HttpHeaders();
         TokenResponse tokenResponse = authService.login(request, servletRequest, headers);
-        return new ResponseEntity<>(ApiResponse.of("login success", tokenResponse), headers, HttpStatus.OK);
+        return new ResponseEntity<>(
+                ApiResponse.success(AuthSuccessCode.LOGIN_SUCCESS, tokenResponse),
+                headers,
+                AuthSuccessCode.LOGIN_SUCCESS.status());
     }
 
     @PostMapping("/token/refresh")

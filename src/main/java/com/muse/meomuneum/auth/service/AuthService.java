@@ -4,6 +4,9 @@ import java.util.Arrays;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 
@@ -11,6 +14,7 @@ import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.auth.response.AuthSuccessCode;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.RefreshTokenClaims;
@@ -21,6 +25,7 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 public class AuthService {
 
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refresh_token";
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
@@ -42,7 +47,15 @@ public class AuthService {
         User user = userAuthenticationService.authenticate(request.email(), request.password());
         servletRequest.getSession(true);
         servletRequest.changeSessionId();
-        return issueTokens(user, servletRequest, headers);
+        TokenResponse response = issueTokens(user, servletRequest, headers);
+        log.info(
+                "event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
+                AuthSuccessCode.LOGIN_SUCCESS.code(),
+                AuthSuccessCode.LOGIN_SUCCESS.status().value(),
+                user.getId(),
+                MDC.get("requestId")
+        );
+        return response;
     }
 
     public TokenResponse refresh(HttpServletRequest request, HttpHeaders headers) {

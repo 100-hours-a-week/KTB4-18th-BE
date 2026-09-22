@@ -2,40 +2,35 @@ package com.muse.meomuneum.global.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.security.access.AccessDeniedException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import com.muse.meomuneum.auth.exception.AuthErrorCode;
-import com.muse.meomuneum.auth.exception.AuthErrorCodeResolver;
-import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.response.ApiResponse;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
-    public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception exception) {
-        return toErrorResponse(AuthErrorCode.LOGIN_INVALID_REQUEST);
-    }
-
-    @ExceptionHandler(AuthenticationFailedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleAuthenticationFailure(AuthenticationFailedException exception) {
-        return toErrorResponse(exception.getErrorCode());
-    }
-
-    @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleRejectedRequest(AccessDeniedException exception) {
-        return toErrorResponse(GlobalErrorCode.ACCESS_DENIED);
-    }
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleUnexpectedException(Exception exception,
             HttpServletRequest request) {
-        return toErrorResponse(AuthErrorCodeResolver.resolveInternalServerError(request));
+        log.error(
+                "event=unexpected_server_error domainCode={} httpStatus={} method={} path={} requestId={} "
+                        + "exceptionType={}",
+                GlobalErrorCode.INTERNAL_SERVER_ERROR.code(),
+                GlobalErrorCode.INTERNAL_SERVER_ERROR.status().value(),
+                request.getMethod(),
+                request.getRequestURI(),
+                MDC.get("requestId"),
+                exception.getClass().getSimpleName(),
+                exception
+        );
+        return toErrorResponse(GlobalErrorCode.INTERNAL_SERVER_ERROR);
     }
 
     private ResponseEntity<ApiResponse<Void>> toErrorResponse(ErrorCode errorCode) {

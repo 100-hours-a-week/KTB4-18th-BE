@@ -44,6 +44,6 @@ public class UserAuthenticationService {
     }
 
     private AuthenticationFailedException invalidCredentials() {
-        return new AuthenticationFailedException(AuthErrorCode.LOGIN_INVALID_CREDENTIALS);
+        return new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS);
     }
 }
