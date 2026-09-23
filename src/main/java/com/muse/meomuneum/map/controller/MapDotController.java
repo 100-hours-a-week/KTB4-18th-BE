@@ -1,5 +1,6 @@
 package com.muse.meomuneum.map.controller;
 
+import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.map.catalog.MapZoneCatalog;
 import java.util.Arrays;
 import java.util.List;
@@ -43,8 +44,6 @@ public class MapDotController {
     private String quoted(String value) {
         return '"' + value + '"';
     }
-
-    public record ApiResponse<T>(String message, T data) {}
 
     public record MapDotsResponse(List<MapDotResponse> items) {}
 

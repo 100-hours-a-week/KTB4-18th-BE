@@ -3,3 +3,16 @@ spring:
     url: ${TEST_DB_URL:jdbc:mysql://localhost:3306/meomuneum_test}
     username: ${TEST_DB_USERNAME:meomuneum_test}
     password: ${TEST_DB_PASSWORD}
+
+auth:
+  jwt:
+    issuer: project-api
+    audience: project-api
+    secret: ${TEST_AUTH_JWT_SECRET:test-only-auth-token-secret-that-is-not-used-outside-tests}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
+
+speech:
+  transcription:
+    provider: stub
+    stub-transcript: 비 올 때 듣기 좋은 노래를 추천해줘

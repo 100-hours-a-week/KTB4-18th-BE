@@ -1,6 +1,6 @@
 # Meomuneum Backend
 
-Meomuneum 프로젝트의 서버 애플리케이션입니다. Spring Boot 기반으로 API와 데이터 저장, 인증 기능을 개발하기 위한 초기 프로젝트입니다. 현재는 애플리케이션 진입점, 환경별 설정과 컨텍스트 로딩 테스트가 준비되어 있으며 서비스별 API는 아직 구현되지 않았습니다.
+Meomuneum 프로젝트의 서버 애플리케이션입니다. Spring Boot 기반이며 추천 API를 개발 중입니다. 환경별 설정과 추천 결과 저장·조회 기능이 준비되어 있습니다.
 
 ## 기술 및 실행 환경
 
@@ -60,6 +60,10 @@ set +a
 | `dev` | `DEV_DB_URL`, `DEV_DB_USERNAME`, `DEV_DB_PASSWORD` | URL: `jdbc:mysql://localhost:3306/meomuneum_dev`, 사용자: `meomuneum_dev`; 비밀번호 필수 |
 | `test` | `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD` | URL: `jdbc:mysql://localhost:3306/meomuneum_test`, 사용자: `meomuneum_test`; 비밀번호 필수 |
 | `prod` | `PROD_DB_URL`, `PROD_DB_USERNAME`, `PROD_DB_PASSWORD` | 모두 필수 |
+
+음성 전사는 `SPEECH_TRANSCRIPTION_PROVIDER`로 제공자를 선택합니다. `dev` 프로필의 기본값은
+프론트엔드 흐름 확인용 `stub`이며 `SPEECH_TRANSCRIPTION_STUB_TRANSCRIPT`의 문장을 반환합니다.
+운영 기본값은 `unavailable`이고 AI 팀의 실제 계약을 연결하기 전에는 502를 반환합니다.
 
 `.env`는 Git 제외 대상입니다. 실제 비밀번호를 예시 파일이나 YAML에 기록하지 마세요. 운영 환경에서는 배포 환경의 환경변수 또는 비밀값 관리 기능으로 값을 주입하고 `SPRING_PROFILES_ACTIVE=prod`를 설정합니다.
 
@@ -125,9 +129,51 @@ gradle/wrapper/                    Gradle Wrapper
 
 ## 텍스트 음악 추천 기능
 
-텍스트 추천 API·결과 저장과 추천 카드·30초 미리 듣기가 추가되었습니다.
+`POST /api/v1/recommendations`는 `TEXT`와 STT 전사문인 `VOICE`를 같은 경로로 처리합니다.
+같은 소유자의 `conversation_key`에 속한 완료된 이전 요청의 `prompt`를 읽고,
+각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다.
+AI 팀 연동 전에는 이 문장들을 합쳐 iTunes Search API에서 직접 검색합니다.
+이 임시 검색은 감정·상황을 AI로 해석하지 않으며 긴 대화는 최근 250자만 검색어로 사용합니다.
+
+검색에서 중복을 제거한 1~5곡을 얻으면 모두 저장한 뒤 `201 Created`와
+`COMPLETED` 응답으로 반환합니다. 0곡 또는 iTunes 장애는 `503 Service Unavailable`,
+요청 제한 시간 초과는 `504 Gateway Timeout`으로 반환합니다. DB 저장 실패는
+`500 Internal Server Error`이며 부분 저장은 트랜잭션으로 롤백합니다.
+기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
+기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
+실제 API 확인 시 `KR` 스토어는 검색 결과가 없었고 `US` 스토어에서는 한국어 곡도 검색됐습니다.
+측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
+각각 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다.
+첫 추천 결과는 POST 응답으로 받고, GET은 저장된 결과 재조회에 사용합니다.
+
+## 음성 전사 기능
+
+`POST /api/v1/speech-transcriptions`는 `multipart/form-data`의 `audio` 파일을 받습니다.
+WebM 또는 MP4만 허용하며 최대 10MB, 최대 60초로 제한합니다. 파일 시그니처와 컨테이너의
+재생 시간을 서버에서 검증하며 원본 음성과 transcript를 저장하지 않습니다. 전사 성공 응답의
+`data.transcript`는 프론트엔드 입력창에 표시되고 사용자가 확인·수정한 뒤 별도 추천 요청의
+`prompt`와 `input_type=VOICE`로 전달됩니다.
+
+AI 팀 연동 전에는 `SpeechToTextProvider`의 개발용 대역을 사용합니다. 실제 AI 연동 시에는
+이 인터페이스의 운영 어댑터를 추가하고 URL·인증 정보·제한 시간을 환경 변수로 주입합니다.
+
+전사 실패 응답은 공통 `{ message, data }` 형식을 유지하며 `data`는 `null`입니다. 별도의
+Custom Code를 추가하지 않고 다음 HTTP 상태를 프론트엔드의 복구 동작 판별 코드로 사용합니다.
+
+| 상태 | 조건 | 클라이언트 처리 |
+| --- | --- | --- |
+| `400 Bad Request` | 파일 누락, 지원하지 않는 형식, 손상된 파일, 60초 초과 | 다시 녹음 |
+| `413 Payload Too Large` | 10MB 초과 | 더 짧게 다시 녹음 |
+| `502 Bad Gateway` | 전사 서비스 장애, 전사 결과 없음 | 동일 녹음 재시도 또는 텍스트 입력 |
+| `504 Gateway Timeout` | 전사 서비스 제한 시간 초과 | 동일 녹음 재시도 또는 텍스트 입력 |
+| `500 Internal Server Error` | 분류되지 않은 서버 오류 | 재시도 또는 텍스트 입력 |
+
+전사 API는 음성과 transcript를 저장하지 않으며 추천 서비스나 추천 저장소를 호출하지 않습니다.
+전사 성공 후 사용자가 transcript를 확인·수정하고 별도의 추천 요청을 보내야만 추천 세션과
+추천곡이 저장됩니다. 따라서 전사 실패 응답에서는 추천 세션, prompt, 추천곡 저장이 발생하지
+않습니다.
 
 ## 메인페이지 지도 기능
 
 읽기 전용 도트 지도 API와 1,050개 구역 좌표 카탈로그는 [MAP_GUIDE.md](MAP_GUIDE.md)에 정리되어 있습니다.
-이 기능은 DB나 Flyway 마이그레이션을 변경하지 않습니다.
+이 기능은 지도 도메인의 DB나 Flyway 마이그레이션을 변경하지 않습니다.
