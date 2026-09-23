@@ -1,7 +1,0 @@
-HTTP/1.1 304 
-ETag: "2026-09-07"
-X-Content-Type-Options: nosniff
-X-XSS-Protection: 0
-X-Frame-Options: DENY
-Date: Mon, 21 Sep 2026 09:50:37 GMT
-
