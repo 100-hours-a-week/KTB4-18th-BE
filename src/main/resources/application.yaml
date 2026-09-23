@@ -39,3 +39,12 @@ recommendation:
 speech:
   transcription:
     provider: ${SPEECH_TRANSCRIPTION_PROVIDER:unavailable}
+
+location:
+  token:
+    secret: ${LOCATION_TOKEN_SECRET}
+  reverse-geocoding:
+    base-url: ${LOCATION_REVERSE_GEOCODING_BASE_URL:https://dapi.kakao.com}
+    rest-api-key: ${LOCATION_KAKAO_REST_API_KEY:}
+    connect-timeout: ${LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
