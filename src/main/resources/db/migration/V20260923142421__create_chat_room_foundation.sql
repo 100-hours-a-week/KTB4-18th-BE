@@ -1,0 +1,46 @@
+CREATE TABLE `regions` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `code` VARCHAR(30) NOT NULL,
+    `name` VARCHAR(50) NOT NULL,
+    `level` VARCHAR(20) NOT NULL,
+    `parent_id` BIGINT NULL,
+    `is_active` BOOLEAN NOT NULL DEFAULT TRUE,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NULL,
+    CONSTRAINT `PK_REGIONS` PRIMARY KEY (`id`),
+    CONSTRAINT `UK_REGIONS_CODE` UNIQUE (`code`),
+    CONSTRAINT `FK_REGIONS_PARENT` FOREIGN KEY (`parent_id`) REFERENCES `regions` (`id`),
+    INDEX `IDX_REGIONS_LEVEL_ACTIVE` (`level`, `is_active`),
+    INDEX `IDX_REGIONS_PARENT` (`parent_id`)
+);
+
+CREATE TABLE `chat_rooms` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `region_id` BIGINT NOT NULL,
+    `capacity` INT NOT NULL DEFAULT 25,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NULL,
+    CONSTRAINT `PK_CHAT_ROOMS` PRIMARY KEY (`id`),
+    CONSTRAINT `UK_CHAT_ROOMS_REGION` UNIQUE (`region_id`),
+    CONSTRAINT `FK_CHAT_ROOMS_REGION` FOREIGN KEY (`region_id`) REFERENCES `regions` (`id`),
+    CONSTRAINT `CK_CHAT_ROOMS_CAPACITY` CHECK (`capacity` > 0),
+    INDEX `IDX_CHAT_ROOMS_STATUS` (`status`)
+);
+
+CREATE TABLE `chat_room_members` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `room_id` BIGINT NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `deleted_at` DATETIME NULL,
+    `active_user_id` BIGINT GENERATED ALWAYS AS (
+        CASE WHEN `deleted_at` IS NULL THEN `user_id` ELSE NULL END
+    ) STORED,
+    CONSTRAINT `PK_CHAT_ROOM_MEMBERS` PRIMARY KEY (`id`),
+    CONSTRAINT `UK_CHAT_ROOM_MEMBERS_ACTIVE_USER` UNIQUE (`active_user_id`),
+    CONSTRAINT `FK_CHAT_ROOM_MEMBERS_USER` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`),
+    CONSTRAINT `FK_CHAT_ROOM_MEMBERS_ROOM` FOREIGN KEY (`room_id`) REFERENCES `chat_rooms` (`id`),
+    INDEX `IDX_CHAT_ROOM_MEMBERS_USER_HISTORY` (`user_id`, `deleted_at`),
+    INDEX `IDX_CHAT_ROOM_MEMBERS_ROOM_ACTIVE` (`room_id`, `deleted_at`)
+);
