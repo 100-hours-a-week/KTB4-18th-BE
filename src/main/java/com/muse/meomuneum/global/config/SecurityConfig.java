@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -40,7 +41,8 @@ public class SecurityConfig {
                 "/api/v1/auth/logout",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
-                "/api/v1/speech-transcriptions"
+                "/api/v1/speech-transcriptions",
+                "/api/v1/users/signup"
         };
 
         http.cors(Customizer.withDefaults())
@@ -59,8 +61,9 @@ public class SecurityConfig {
                                 "/api/v1/recommendations/**"
                         ).permitAll();
                     }
-                    authorize.requestMatchers(
-                                    "/api/v1/auth/**",
+                    authorize.requestMatchers("/api/v1/auth/**").permitAll()
+                            .requestMatchers(HttpMethod.POST, "/api/v1/users/signup").permitAll()
+                            .requestMatchers(
                                     "/api/v1/map-dots",
                                     "/api/v1/map-dots/**"
                             ).permitAll()
