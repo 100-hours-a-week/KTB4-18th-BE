@@ -6,8 +6,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.IntStream;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
@@ -15,12 +17,18 @@ import tools.jackson.databind.ObjectMapper;
 public class MapZoneCatalog {
     private static final int EXPECTED_ZONE_COUNT = 1050;
     private static final String CATALOG_RESOURCE_PATH = "map-zones.json";
+    private static final Pattern MAP_DOT_CODE_PATTERN = Pattern.compile("^KR-COAST-(\\d{4})$");
 
     private final MapZoneCatalogDocument catalog;
 
+    @Autowired
     public MapZoneCatalog(ObjectMapper objectMapper) {
-        this.catalog = load(objectMapper);
-        validate(catalog);
+        this(load(objectMapper));
+    }
+
+    MapZoneCatalog(MapZoneCatalogDocument catalog) {
+        this.catalog = catalog;
+        validate(this.catalog);
     }
 
     public String version() {
@@ -31,13 +39,10 @@ public class MapZoneCatalog {
         return catalog.zones();
     }
 
-    /**
-     * 지도 응답에서 사용하는 도트 식별자 목록이다. DB의 map_dots 테이블을 추가하지 않는
-     * 현재 범위에서는 좌표 카탈로그의 고정 순서를 식별자로 사용한다.
-     */
+    /** 지도 코드의 불변 숫자 suffix를 도트 식별자로 사용한다. */
     public List<MapDot> mapDots() {
-        return IntStream.range(0, catalog.zones().size())
-                .mapToObj(index -> new MapDot(index + 1L, catalog.zones().get(index).code()))
+        return catalog.zones().stream()
+                .map(zone -> new MapDot(mapDotIdFromCode(zone.code()), zone.code()))
                 .toList();
     }
 
@@ -47,7 +52,7 @@ public class MapZoneCatalog {
                 .findFirst();
     }
 
-    private MapZoneCatalogDocument load(ObjectMapper objectMapper) {
+    private static MapZoneCatalogDocument load(ObjectMapper objectMapper) {
         try (InputStream inputStream = new ClassPathResource(CATALOG_RESOURCE_PATH).getInputStream()) {
             return objectMapper.readValue(inputStream, MapZoneCatalogDocument.class);
         } catch (IOException exception) {
@@ -65,14 +70,18 @@ public class MapZoneCatalog {
 
         Set<String> codes = new HashSet<>();
         Set<String> gridPositions = new HashSet<>();
+        Set<Long> mapDotIds = new HashSet<>();
         for (MapZone zone : document.zones()) {
-            validateZone(zone, codes, gridPositions);
+            validateZone(zone, codes, gridPositions, mapDotIds);
         }
     }
 
-    private void validateZone(MapZone zone, Set<String> codes, Set<String> gridPositions) {
+    private void validateZone(MapZone zone, Set<String> codes, Set<String> gridPositions, Set<Long> mapDotIds) {
         if (zone.code() == null || zone.code().isBlank() || !codes.add(zone.code())) {
             throw new IllegalStateException("지도 구역 코드가 비어 있거나 중복되었습니다.");
+        }
+        if (!mapDotIds.add(mapDotIdFromCode(zone.code()))) {
+            throw new IllegalStateException("지도 도트 ID가 중복되었습니다.");
         }
         if (zone.gridRow() < 0 || zone.gridColumn() < 0
                 || !gridPositions.add(zone.gridRow() + ":" + zone.gridColumn())) {
@@ -86,6 +95,19 @@ public class MapZoneCatalog {
                 || !contains(zone, zone.center().latitude(), zone.center().longitude())) {
             throw new IllegalStateException("지도 구역 경계 또는 중심 좌표가 올바르지 않습니다.");
         }
+    }
+
+    private long mapDotIdFromCode(String code) {
+        Matcher matcher = MAP_DOT_CODE_PATTERN.matcher(code);
+        if (!matcher.matches()) {
+            throw new IllegalStateException("지도 구역 코드 형식이 올바르지 않습니다.");
+        }
+
+        long mapDotId = Long.parseLong(matcher.group(1));
+        if (mapDotId < 1 || mapDotId > EXPECTED_ZONE_COUNT) {
+            throw new IllegalStateException("지도 도트 ID 범위가 올바르지 않습니다.");
+        }
+        return mapDotId;
     }
 
     private boolean isValidCoordinate(Coordinate coordinate) {
