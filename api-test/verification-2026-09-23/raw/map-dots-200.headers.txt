@@ -1,0 +1,16 @@
+HTTP/1.1 200 
+X-Request-Id: b1099397-ac09-438e-b4f3-2190456e4f59
+Vary: Origin
+Vary: Access-Control-Request-Method
+Vary: Access-Control-Request-Headers
+ETag: "2026-09-07"
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 0
+Cache-Control: no-cache, no-store, max-age=0, must-revalidate
+Pragma: no-cache
+Expires: 0
+X-Frame-Options: DENY
+Content-Type: application/json
+Transfer-Encoding: chunked
+Date: Wed, 23 Sep 2026 07:35:41 GMT
+
