@@ -38,7 +38,7 @@ class MapDotSecurityIntegrationTest {
     @BeforeEach
     void setUp() {
         when(catalog.version()).thenReturn("2026-09-07");
-        when(catalog.mapDots()).thenReturn(List.of(new MapZoneCatalog.MapDot(1L, "KR-COAST-5X5-0001")));
+        when(catalog.mapDots()).thenReturn(List.of(new MapZoneCatalog.MapDot(1L, "KR-COAST-0001")));
     }
 
     @Test
@@ -46,7 +46,7 @@ class MapDotSecurityIntegrationTest {
         mockMvc.perform(get("/api/v1/map-dots"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("map dots retrieved"))
-                .andExpect(jsonPath("$.data.items[0].code").value("KR-COAST-5X5-0001"));
+                .andExpect(jsonPath("$.data.items[0].code").value("KR-COAST-0001"));
     }
 
     @TestConfiguration

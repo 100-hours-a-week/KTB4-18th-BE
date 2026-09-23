@@ -24,13 +24,13 @@ class MapZoneCatalogTests {
     void derivesStableMapDotIdsFromTheCatalogOrder() {
         assertEquals(1050, catalog.mapDots().size());
         assertEquals(1, catalog.mapDots().getFirst().mapDotId());
-        assertEquals("KR-COAST-5X5-0001", catalog.mapDots().getFirst().code());
+        assertEquals("KR-COAST-0001", catalog.mapDots().getFirst().code());
     }
 
     @Test
     void findsTheContainingZoneUsingNorthWestAndSouthEastCorners() {
         assertEquals(
-                "KR-COAST-5X5-0001",
+                "KR-COAST-0001",
                 catalog.findContaining(38.4684909, 128.3049316).orElseThrow().code()
         );
         assertFalse(catalog.findContaining(0, 0).isPresent());

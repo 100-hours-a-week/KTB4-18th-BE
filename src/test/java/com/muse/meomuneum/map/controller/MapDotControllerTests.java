@@ -29,7 +29,7 @@ class MapDotControllerTests {
                 .andExpect(jsonPath("$.message").value("map dots retrieved"))
                 .andExpect(jsonPath("$.data.items.length()").value(1050))
                 .andExpect(jsonPath("$.data.items[0].map_dot_id").value(1))
-                .andExpect(jsonPath("$.data.items[0].code").value("KR-COAST-5X5-0001"))
+                .andExpect(jsonPath("$.data.items[0].code").value("KR-COAST-0001"))
                 .andExpect(jsonPath("$.data.items[0].album_cover_url").isEmpty())
                 .andExpect(jsonPath("$.data.items[0].latest_recorded_at").isEmpty());
     }

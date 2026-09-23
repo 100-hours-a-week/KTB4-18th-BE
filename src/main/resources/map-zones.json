@@ -2,7 +2,7 @@
   "version": "2026-09-07",
   "zones": [
     {
-      "code": "KR-COAST-5X5-0001",
+      "code": "KR-COAST-0001",
       "gridRow": 36,
       "gridColumn": 39,
       "regions": [
@@ -22,7 +22,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0002",
+      "code": "KR-COAST-0002",
       "gridRow": 36,
       "gridColumn": 40,
       "regions": [
@@ -42,7 +42,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0003",
+      "code": "KR-COAST-0003",
       "gridRow": 37,
       "gridColumn": 39,
       "regions": [
@@ -62,7 +62,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0004",
+      "code": "KR-COAST-0004",
       "gridRow": 37,
       "gridColumn": 40,
       "regions": [
@@ -82,7 +82,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0005",
+      "code": "KR-COAST-0005",
       "gridRow": 38,
       "gridColumn": 29,
       "regions": [
@@ -102,7 +102,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0006",
+      "code": "KR-COAST-0006",
       "gridRow": 38,
       "gridColumn": 30,
       "regions": [
@@ -122,7 +122,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0007",
+      "code": "KR-COAST-0007",
       "gridRow": 38,
       "gridColumn": 31,
       "regions": [
@@ -142,7 +142,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0008",
+      "code": "KR-COAST-0008",
       "gridRow": 38,
       "gridColumn": 32,
       "regions": [
@@ -162,7 +162,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0009",
+      "code": "KR-COAST-0009",
       "gridRow": 38,
       "gridColumn": 33,
       "regions": [
@@ -182,7 +182,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0010",
+      "code": "KR-COAST-0010",
       "gridRow": 38,
       "gridColumn": 34,
       "regions": [
@@ -202,7 +202,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0011",
+      "code": "KR-COAST-0011",
       "gridRow": 38,
       "gridColumn": 35,
       "regions": [
@@ -222,7 +222,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0012",
+      "code": "KR-COAST-0012",
       "gridRow": 38,
       "gridColumn": 37,
       "regions": [
@@ -242,7 +242,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0013",
+      "code": "KR-COAST-0013",
       "gridRow": 38,
       "gridColumn": 38,
       "regions": [
@@ -262,7 +262,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0014",
+      "code": "KR-COAST-0014",
       "gridRow": 38,
       "gridColumn": 39,
       "regions": [
@@ -282,7 +282,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0015",
+      "code": "KR-COAST-0015",
       "gridRow": 38,
       "gridColumn": 40,
       "regions": [
@@ -302,7 +302,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0016",
+      "code": "KR-COAST-0016",
       "gridRow": 38,
       "gridColumn": 41,
       "regions": [
@@ -322,7 +322,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0017",
+      "code": "KR-COAST-0017",
       "gridRow": 39,
       "gridColumn": 27,
       "regions": [
@@ -342,7 +342,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0018",
+      "code": "KR-COAST-0018",
       "gridRow": 39,
       "gridColumn": 28,
       "regions": [
@@ -362,7 +362,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0019",
+      "code": "KR-COAST-0019",
       "gridRow": 39,
       "gridColumn": 29,
       "regions": [
@@ -382,7 +382,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0020",
+      "code": "KR-COAST-0020",
       "gridRow": 39,
       "gridColumn": 30,
       "regions": [
@@ -402,7 +402,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0021",
+      "code": "KR-COAST-0021",
       "gridRow": 39,
       "gridColumn": 31,
       "regions": [
@@ -422,7 +422,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0022",
+      "code": "KR-COAST-0022",
       "gridRow": 39,
       "gridColumn": 32,
       "regions": [
@@ -442,7 +442,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0023",
+      "code": "KR-COAST-0023",
       "gridRow": 39,
       "gridColumn": 33,
       "regions": [
@@ -462,7 +462,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0024",
+      "code": "KR-COAST-0024",
       "gridRow": 39,
       "gridColumn": 34,
       "regions": [
@@ -482,7 +482,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0025",
+      "code": "KR-COAST-0025",
       "gridRow": 39,
       "gridColumn": 35,
       "regions": [
@@ -502,7 +502,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0026",
+      "code": "KR-COAST-0026",
       "gridRow": 39,
       "gridColumn": 36,
       "regions": [
@@ -522,7 +522,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0027",
+      "code": "KR-COAST-0027",
       "gridRow": 39,
       "gridColumn": 37,
       "regions": [
@@ -542,7 +542,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0028",
+      "code": "KR-COAST-0028",
       "gridRow": 39,
       "gridColumn": 38,
       "regions": [
@@ -562,7 +562,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0029",
+      "code": "KR-COAST-0029",
       "gridRow": 39,
       "gridColumn": 39,
       "regions": [
@@ -582,7 +582,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0030",
+      "code": "KR-COAST-0030",
       "gridRow": 39,
       "gridColumn": 40,
       "regions": [
@@ -603,7 +603,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0031",
+      "code": "KR-COAST-0031",
       "gridRow": 39,
       "gridColumn": 41,
       "regions": [
@@ -623,7 +623,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0032",
+      "code": "KR-COAST-0032",
       "gridRow": 40,
       "gridColumn": 27,
       "regions": [
@@ -643,7 +643,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0033",
+      "code": "KR-COAST-0033",
       "gridRow": 40,
       "gridColumn": 28,
       "regions": [
@@ -663,7 +663,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0034",
+      "code": "KR-COAST-0034",
       "gridRow": 40,
       "gridColumn": 29,
       "regions": [
@@ -683,7 +683,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0035",
+      "code": "KR-COAST-0035",
       "gridRow": 40,
       "gridColumn": 30,
       "regions": [
@@ -703,7 +703,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0036",
+      "code": "KR-COAST-0036",
       "gridRow": 40,
       "gridColumn": 31,
       "regions": [
@@ -723,7 +723,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0037",
+      "code": "KR-COAST-0037",
       "gridRow": 40,
       "gridColumn": 32,
       "regions": [
@@ -743,7 +743,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0038",
+      "code": "KR-COAST-0038",
       "gridRow": 40,
       "gridColumn": 33,
       "regions": [
@@ -763,7 +763,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0039",
+      "code": "KR-COAST-0039",
       "gridRow": 40,
       "gridColumn": 34,
       "regions": [
@@ -783,7 +783,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0040",
+      "code": "KR-COAST-0040",
       "gridRow": 40,
       "gridColumn": 35,
       "regions": [
@@ -803,7 +803,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0041",
+      "code": "KR-COAST-0041",
       "gridRow": 40,
       "gridColumn": 36,
       "regions": [
@@ -823,7 +823,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0042",
+      "code": "KR-COAST-0042",
       "gridRow": 40,
       "gridColumn": 37,
       "regions": [
@@ -843,7 +843,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0043",
+      "code": "KR-COAST-0043",
       "gridRow": 40,
       "gridColumn": 38,
       "regions": [
@@ -863,7 +863,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0044",
+      "code": "KR-COAST-0044",
       "gridRow": 40,
       "gridColumn": 39,
       "regions": [
@@ -883,7 +883,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0045",
+      "code": "KR-COAST-0045",
       "gridRow": 40,
       "gridColumn": 40,
       "regions": [
@@ -903,7 +903,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0046",
+      "code": "KR-COAST-0046",
       "gridRow": 40,
       "gridColumn": 41,
       "regions": [
@@ -923,7 +923,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0047",
+      "code": "KR-COAST-0047",
       "gridRow": 41,
       "gridColumn": 26,
       "regions": [
@@ -943,7 +943,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0048",
+      "code": "KR-COAST-0048",
       "gridRow": 41,
       "gridColumn": 27,
       "regions": [
@@ -963,7 +963,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0049",
+      "code": "KR-COAST-0049",
       "gridRow": 41,
       "gridColumn": 28,
       "regions": [
@@ -983,7 +983,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0050",
+      "code": "KR-COAST-0050",
       "gridRow": 41,
       "gridColumn": 29,
       "regions": [
@@ -1003,7 +1003,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0051",
+      "code": "KR-COAST-0051",
       "gridRow": 41,
       "gridColumn": 30,
       "regions": [
@@ -1023,7 +1023,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0052",
+      "code": "KR-COAST-0052",
       "gridRow": 41,
       "gridColumn": 31,
       "regions": [
@@ -1043,7 +1043,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0053",
+      "code": "KR-COAST-0053",
       "gridRow": 41,
       "gridColumn": 32,
       "regions": [
@@ -1063,7 +1063,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0054",
+      "code": "KR-COAST-0054",
       "gridRow": 41,
       "gridColumn": 33,
       "regions": [
@@ -1083,7 +1083,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0055",
+      "code": "KR-COAST-0055",
       "gridRow": 41,
       "gridColumn": 34,
       "regions": [
@@ -1103,7 +1103,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0056",
+      "code": "KR-COAST-0056",
       "gridRow": 41,
       "gridColumn": 35,
       "regions": [
@@ -1123,7 +1123,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0057",
+      "code": "KR-COAST-0057",
       "gridRow": 41,
       "gridColumn": 36,
       "regions": [
@@ -1143,7 +1143,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0058",
+      "code": "KR-COAST-0058",
       "gridRow": 41,
       "gridColumn": 37,
       "regions": [
@@ -1163,7 +1163,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0059",
+      "code": "KR-COAST-0059",
       "gridRow": 41,
       "gridColumn": 38,
       "regions": [
@@ -1183,7 +1183,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0060",
+      "code": "KR-COAST-0060",
       "gridRow": 41,
       "gridColumn": 39,
       "regions": [
@@ -1203,7 +1203,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0061",
+      "code": "KR-COAST-0061",
       "gridRow": 41,
       "gridColumn": 40,
       "regions": [
@@ -1223,7 +1223,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0062",
+      "code": "KR-COAST-0062",
       "gridRow": 41,
       "gridColumn": 41,
       "regions": [
@@ -1243,7 +1243,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0063",
+      "code": "KR-COAST-0063",
       "gridRow": 41,
       "gridColumn": 42,
       "regions": [
@@ -1263,7 +1263,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0064",
+      "code": "KR-COAST-0064",
       "gridRow": 42,
       "gridColumn": 6,
       "regions": [
@@ -1283,7 +1283,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0065",
+      "code": "KR-COAST-0065",
       "gridRow": 42,
       "gridColumn": 25,
       "regions": [
@@ -1303,7 +1303,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0066",
+      "code": "KR-COAST-0066",
       "gridRow": 42,
       "gridColumn": 26,
       "regions": [
@@ -1323,7 +1323,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0067",
+      "code": "KR-COAST-0067",
       "gridRow": 42,
       "gridColumn": 27,
       "regions": [
@@ -1343,7 +1343,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0068",
+      "code": "KR-COAST-0068",
       "gridRow": 42,
       "gridColumn": 28,
       "regions": [
@@ -1363,7 +1363,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0069",
+      "code": "KR-COAST-0069",
       "gridRow": 42,
       "gridColumn": 29,
       "regions": [
@@ -1383,7 +1383,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0070",
+      "code": "KR-COAST-0070",
       "gridRow": 42,
       "gridColumn": 30,
       "regions": [
@@ -1403,7 +1403,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0071",
+      "code": "KR-COAST-0071",
       "gridRow": 42,
       "gridColumn": 31,
       "regions": [
@@ -1423,7 +1423,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0072",
+      "code": "KR-COAST-0072",
       "gridRow": 42,
       "gridColumn": 32,
       "regions": [
@@ -1443,7 +1443,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0073",
+      "code": "KR-COAST-0073",
       "gridRow": 42,
       "gridColumn": 33,
       "regions": [
@@ -1463,7 +1463,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0074",
+      "code": "KR-COAST-0074",
       "gridRow": 42,
       "gridColumn": 34,
       "regions": [
@@ -1483,7 +1483,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0075",
+      "code": "KR-COAST-0075",
       "gridRow": 42,
       "gridColumn": 35,
       "regions": [
@@ -1503,7 +1503,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0076",
+      "code": "KR-COAST-0076",
       "gridRow": 42,
       "gridColumn": 36,
       "regions": [
@@ -1523,7 +1523,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0077",
+      "code": "KR-COAST-0077",
       "gridRow": 42,
       "gridColumn": 37,
       "regions": [
@@ -1543,7 +1543,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0078",
+      "code": "KR-COAST-0078",
       "gridRow": 42,
       "gridColumn": 38,
       "regions": [
@@ -1563,7 +1563,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0079",
+      "code": "KR-COAST-0079",
       "gridRow": 42,
       "gridColumn": 39,
       "regions": [
@@ -1583,7 +1583,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0080",
+      "code": "KR-COAST-0080",
       "gridRow": 42,
       "gridColumn": 40,
       "regions": [
@@ -1603,7 +1603,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0081",
+      "code": "KR-COAST-0081",
       "gridRow": 42,
       "gridColumn": 41,
       "regions": [
@@ -1623,7 +1623,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0082",
+      "code": "KR-COAST-0082",
       "gridRow": 42,
       "gridColumn": 42,
       "regions": [
@@ -1643,7 +1643,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0083",
+      "code": "KR-COAST-0083",
       "gridRow": 42,
       "gridColumn": 43,
       "regions": [
@@ -1663,7 +1663,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0084",
+      "code": "KR-COAST-0084",
       "gridRow": 43,
       "gridColumn": 25,
       "regions": [
@@ -1683,7 +1683,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0085",
+      "code": "KR-COAST-0085",
       "gridRow": 43,
       "gridColumn": 26,
       "regions": [
@@ -1703,7 +1703,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0086",
+      "code": "KR-COAST-0086",
       "gridRow": 43,
       "gridColumn": 27,
       "regions": [
@@ -1723,7 +1723,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0087",
+      "code": "KR-COAST-0087",
       "gridRow": 43,
       "gridColumn": 28,
       "regions": [
@@ -1743,7 +1743,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0088",
+      "code": "KR-COAST-0088",
       "gridRow": 43,
       "gridColumn": 29,
       "regions": [
@@ -1763,7 +1763,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0089",
+      "code": "KR-COAST-0089",
       "gridRow": 43,
       "gridColumn": 30,
       "regions": [
@@ -1783,7 +1783,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0090",
+      "code": "KR-COAST-0090",
       "gridRow": 43,
       "gridColumn": 31,
       "regions": [
@@ -1803,7 +1803,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0091",
+      "code": "KR-COAST-0091",
       "gridRow": 43,
       "gridColumn": 32,
       "regions": [
@@ -1823,7 +1823,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0092",
+      "code": "KR-COAST-0092",
       "gridRow": 43,
       "gridColumn": 33,
       "regions": [
@@ -1843,7 +1843,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0093",
+      "code": "KR-COAST-0093",
       "gridRow": 43,
       "gridColumn": 34,
       "regions": [
@@ -1863,7 +1863,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0094",
+      "code": "KR-COAST-0094",
       "gridRow": 43,
       "gridColumn": 35,
       "regions": [
@@ -1883,7 +1883,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0095",
+      "code": "KR-COAST-0095",
       "gridRow": 43,
       "gridColumn": 36,
       "regions": [
@@ -1903,7 +1903,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0096",
+      "code": "KR-COAST-0096",
       "gridRow": 43,
       "gridColumn": 37,
       "regions": [
@@ -1923,7 +1923,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0097",
+      "code": "KR-COAST-0097",
       "gridRow": 43,
       "gridColumn": 38,
       "regions": [
@@ -1943,7 +1943,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0098",
+      "code": "KR-COAST-0098",
       "gridRow": 43,
       "gridColumn": 39,
       "regions": [
@@ -1963,7 +1963,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0099",
+      "code": "KR-COAST-0099",
       "gridRow": 43,
       "gridColumn": 40,
       "regions": [
@@ -1983,7 +1983,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0100",
+      "code": "KR-COAST-0100",
       "gridRow": 43,
       "gridColumn": 41,
       "regions": [
@@ -2003,7 +2003,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0101",
+      "code": "KR-COAST-0101",
       "gridRow": 43,
       "gridColumn": 42,
       "regions": [
@@ -2023,7 +2023,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0102",
+      "code": "KR-COAST-0102",
       "gridRow": 43,
       "gridColumn": 43,
       "regions": [
@@ -2043,7 +2043,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0103",
+      "code": "KR-COAST-0103",
       "gridRow": 44,
       "gridColumn": 20,
       "regions": [
@@ -2063,7 +2063,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0104",
+      "code": "KR-COAST-0104",
       "gridRow": 44,
       "gridColumn": 22,
       "regions": [
@@ -2083,7 +2083,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0105",
+      "code": "KR-COAST-0105",
       "gridRow": 44,
       "gridColumn": 23,
       "regions": [
@@ -2103,7 +2103,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0106",
+      "code": "KR-COAST-0106",
       "gridRow": 44,
       "gridColumn": 24,
       "regions": [
@@ -2123,7 +2123,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0107",
+      "code": "KR-COAST-0107",
       "gridRow": 44,
       "gridColumn": 25,
       "regions": [
@@ -2144,7 +2144,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0108",
+      "code": "KR-COAST-0108",
       "gridRow": 44,
       "gridColumn": 26,
       "regions": [
@@ -2164,7 +2164,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0109",
+      "code": "KR-COAST-0109",
       "gridRow": 44,
       "gridColumn": 27,
       "regions": [
@@ -2184,7 +2184,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0110",
+      "code": "KR-COAST-0110",
       "gridRow": 44,
       "gridColumn": 28,
       "regions": [
@@ -2204,7 +2204,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0111",
+      "code": "KR-COAST-0111",
       "gridRow": 44,
       "gridColumn": 29,
       "regions": [
@@ -2224,7 +2224,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0112",
+      "code": "KR-COAST-0112",
       "gridRow": 44,
       "gridColumn": 30,
       "regions": [
@@ -2244,7 +2244,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0113",
+      "code": "KR-COAST-0113",
       "gridRow": 44,
       "gridColumn": 31,
       "regions": [
@@ -2264,7 +2264,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0114",
+      "code": "KR-COAST-0114",
       "gridRow": 44,
       "gridColumn": 32,
       "regions": [
@@ -2284,7 +2284,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0115",
+      "code": "KR-COAST-0115",
       "gridRow": 44,
       "gridColumn": 33,
       "regions": [
@@ -2304,7 +2304,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0116",
+      "code": "KR-COAST-0116",
       "gridRow": 44,
       "gridColumn": 34,
       "regions": [
@@ -2324,7 +2324,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0117",
+      "code": "KR-COAST-0117",
       "gridRow": 44,
       "gridColumn": 35,
       "regions": [
@@ -2344,7 +2344,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0118",
+      "code": "KR-COAST-0118",
       "gridRow": 44,
       "gridColumn": 36,
       "regions": [
@@ -2364,7 +2364,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0119",
+      "code": "KR-COAST-0119",
       "gridRow": 44,
       "gridColumn": 37,
       "regions": [
@@ -2384,7 +2384,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0120",
+      "code": "KR-COAST-0120",
       "gridRow": 44,
       "gridColumn": 38,
       "regions": [
@@ -2404,7 +2404,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0121",
+      "code": "KR-COAST-0121",
       "gridRow": 44,
       "gridColumn": 39,
       "regions": [
@@ -2424,7 +2424,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0122",
+      "code": "KR-COAST-0122",
       "gridRow": 44,
       "gridColumn": 40,
       "regions": [
@@ -2444,7 +2444,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0123",
+      "code": "KR-COAST-0123",
       "gridRow": 44,
       "gridColumn": 41,
       "regions": [
@@ -2464,7 +2464,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0124",
+      "code": "KR-COAST-0124",
       "gridRow": 44,
       "gridColumn": 42,
       "regions": [
@@ -2484,7 +2484,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0125",
+      "code": "KR-COAST-0125",
       "gridRow": 44,
       "gridColumn": 43,
       "regions": [
@@ -2504,7 +2504,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0126",
+      "code": "KR-COAST-0126",
       "gridRow": 44,
       "gridColumn": 44,
       "regions": [
@@ -2524,7 +2524,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0127",
+      "code": "KR-COAST-0127",
       "gridRow": 45,
       "gridColumn": 21,
       "regions": [
@@ -2544,7 +2544,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0128",
+      "code": "KR-COAST-0128",
       "gridRow": 45,
       "gridColumn": 22,
       "regions": [
@@ -2564,7 +2564,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0129",
+      "code": "KR-COAST-0129",
       "gridRow": 45,
       "gridColumn": 23,
       "regions": [
@@ -2584,7 +2584,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0130",
+      "code": "KR-COAST-0130",
       "gridRow": 45,
       "gridColumn": 24,
       "regions": [
@@ -2604,7 +2604,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0131",
+      "code": "KR-COAST-0131",
       "gridRow": 45,
       "gridColumn": 25,
       "regions": [
@@ -2624,7 +2624,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0132",
+      "code": "KR-COAST-0132",
       "gridRow": 45,
       "gridColumn": 26,
       "regions": [
@@ -2645,7 +2645,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0133",
+      "code": "KR-COAST-0133",
       "gridRow": 45,
       "gridColumn": 27,
       "regions": [
@@ -2666,7 +2666,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0134",
+      "code": "KR-COAST-0134",
       "gridRow": 45,
       "gridColumn": 28,
       "regions": [
@@ -2687,7 +2687,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0135",
+      "code": "KR-COAST-0135",
       "gridRow": 45,
       "gridColumn": 29,
       "regions": [
@@ -2707,7 +2707,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0136",
+      "code": "KR-COAST-0136",
       "gridRow": 45,
       "gridColumn": 30,
       "regions": [
@@ -2727,7 +2727,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0137",
+      "code": "KR-COAST-0137",
       "gridRow": 45,
       "gridColumn": 31,
       "regions": [
@@ -2747,7 +2747,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0138",
+      "code": "KR-COAST-0138",
       "gridRow": 45,
       "gridColumn": 32,
       "regions": [
@@ -2767,7 +2767,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0139",
+      "code": "KR-COAST-0139",
       "gridRow": 45,
       "gridColumn": 33,
       "regions": [
@@ -2787,7 +2787,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0140",
+      "code": "KR-COAST-0140",
       "gridRow": 45,
       "gridColumn": 34,
       "regions": [
@@ -2807,7 +2807,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0141",
+      "code": "KR-COAST-0141",
       "gridRow": 45,
       "gridColumn": 35,
       "regions": [
@@ -2827,7 +2827,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0142",
+      "code": "KR-COAST-0142",
       "gridRow": 45,
       "gridColumn": 36,
       "regions": [
@@ -2847,7 +2847,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0143",
+      "code": "KR-COAST-0143",
       "gridRow": 45,
       "gridColumn": 37,
       "regions": [
@@ -2867,7 +2867,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0144",
+      "code": "KR-COAST-0144",
       "gridRow": 45,
       "gridColumn": 38,
       "regions": [
@@ -2887,7 +2887,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0145",
+      "code": "KR-COAST-0145",
       "gridRow": 45,
       "gridColumn": 39,
       "regions": [
@@ -2907,7 +2907,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0146",
+      "code": "KR-COAST-0146",
       "gridRow": 45,
       "gridColumn": 40,
       "regions": [
@@ -2927,7 +2927,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0147",
+      "code": "KR-COAST-0147",
       "gridRow": 45,
       "gridColumn": 41,
       "regions": [
@@ -2947,7 +2947,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0148",
+      "code": "KR-COAST-0148",
       "gridRow": 45,
       "gridColumn": 42,
       "regions": [
@@ -2967,7 +2967,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0149",
+      "code": "KR-COAST-0149",
       "gridRow": 45,
       "gridColumn": 43,
       "regions": [
@@ -2987,7 +2987,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0150",
+      "code": "KR-COAST-0150",
       "gridRow": 45,
       "gridColumn": 44,
       "regions": [
@@ -3007,7 +3007,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0151",
+      "code": "KR-COAST-0151",
       "gridRow": 45,
       "gridColumn": 45,
       "regions": [
@@ -3027,7 +3027,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0152",
+      "code": "KR-COAST-0152",
       "gridRow": 46,
       "gridColumn": 22,
       "regions": [
@@ -3047,7 +3047,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0153",
+      "code": "KR-COAST-0153",
       "gridRow": 46,
       "gridColumn": 24,
       "regions": [
@@ -3068,7 +3068,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0154",
+      "code": "KR-COAST-0154",
       "gridRow": 46,
       "gridColumn": 25,
       "regions": [
@@ -3089,7 +3089,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0155",
+      "code": "KR-COAST-0155",
       "gridRow": 46,
       "gridColumn": 26,
       "regions": [
@@ -3111,7 +3111,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0156",
+      "code": "KR-COAST-0156",
       "gridRow": 46,
       "gridColumn": 27,
       "regions": [
@@ -3134,7 +3134,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0157",
+      "code": "KR-COAST-0157",
       "gridRow": 46,
       "gridColumn": 28,
       "regions": [
@@ -3156,7 +3156,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0158",
+      "code": "KR-COAST-0158",
       "gridRow": 46,
       "gridColumn": 29,
       "regions": [
@@ -3177,7 +3177,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0159",
+      "code": "KR-COAST-0159",
       "gridRow": 46,
       "gridColumn": 30,
       "regions": [
@@ -3197,7 +3197,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0160",
+      "code": "KR-COAST-0160",
       "gridRow": 46,
       "gridColumn": 31,
       "regions": [
@@ -3217,7 +3217,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0161",
+      "code": "KR-COAST-0161",
       "gridRow": 46,
       "gridColumn": 32,
       "regions": [
@@ -3237,7 +3237,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0162",
+      "code": "KR-COAST-0162",
       "gridRow": 46,
       "gridColumn": 33,
       "regions": [
@@ -3257,7 +3257,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0163",
+      "code": "KR-COAST-0163",
       "gridRow": 46,
       "gridColumn": 34,
       "regions": [
@@ -3277,7 +3277,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0164",
+      "code": "KR-COAST-0164",
       "gridRow": 46,
       "gridColumn": 35,
       "regions": [
@@ -3297,7 +3297,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0165",
+      "code": "KR-COAST-0165",
       "gridRow": 46,
       "gridColumn": 36,
       "regions": [
@@ -3317,7 +3317,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0166",
+      "code": "KR-COAST-0166",
       "gridRow": 46,
       "gridColumn": 37,
       "regions": [
@@ -3337,7 +3337,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0167",
+      "code": "KR-COAST-0167",
       "gridRow": 46,
       "gridColumn": 38,
       "regions": [
@@ -3357,7 +3357,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0168",
+      "code": "KR-COAST-0168",
       "gridRow": 46,
       "gridColumn": 39,
       "regions": [
@@ -3377,7 +3377,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0169",
+      "code": "KR-COAST-0169",
       "gridRow": 46,
       "gridColumn": 40,
       "regions": [
@@ -3397,7 +3397,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0170",
+      "code": "KR-COAST-0170",
       "gridRow": 46,
       "gridColumn": 41,
       "regions": [
@@ -3417,7 +3417,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0171",
+      "code": "KR-COAST-0171",
       "gridRow": 46,
       "gridColumn": 42,
       "regions": [
@@ -3437,7 +3437,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0172",
+      "code": "KR-COAST-0172",
       "gridRow": 46,
       "gridColumn": 43,
       "regions": [
@@ -3457,7 +3457,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0173",
+      "code": "KR-COAST-0173",
       "gridRow": 46,
       "gridColumn": 44,
       "regions": [
@@ -3477,7 +3477,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0174",
+      "code": "KR-COAST-0174",
       "gridRow": 46,
       "gridColumn": 45,
       "regions": [
@@ -3497,7 +3497,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0175",
+      "code": "KR-COAST-0175",
       "gridRow": 46,
       "gridColumn": 46,
       "regions": [
@@ -3517,7 +3517,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0176",
+      "code": "KR-COAST-0176",
       "gridRow": 47,
       "gridColumn": 22,
       "regions": [
@@ -3537,7 +3537,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0177",
+      "code": "KR-COAST-0177",
       "gridRow": 47,
       "gridColumn": 23,
       "regions": [
@@ -3557,7 +3557,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0178",
+      "code": "KR-COAST-0178",
       "gridRow": 47,
       "gridColumn": 24,
       "regions": [
@@ -3579,7 +3579,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0179",
+      "code": "KR-COAST-0179",
       "gridRow": 47,
       "gridColumn": 25,
       "regions": [
@@ -3600,7 +3600,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0180",
+      "code": "KR-COAST-0180",
       "gridRow": 47,
       "gridColumn": 26,
       "regions": [
@@ -3623,7 +3623,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0181",
+      "code": "KR-COAST-0181",
       "gridRow": 47,
       "gridColumn": 27,
       "regions": [
@@ -3646,7 +3646,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0182",
+      "code": "KR-COAST-0182",
       "gridRow": 47,
       "gridColumn": 28,
       "regions": [
@@ -3667,7 +3667,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0183",
+      "code": "KR-COAST-0183",
       "gridRow": 47,
       "gridColumn": 29,
       "regions": [
@@ -3688,7 +3688,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0184",
+      "code": "KR-COAST-0184",
       "gridRow": 47,
       "gridColumn": 30,
       "regions": [
@@ -3708,7 +3708,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0185",
+      "code": "KR-COAST-0185",
       "gridRow": 47,
       "gridColumn": 31,
       "regions": [
@@ -3728,7 +3728,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0186",
+      "code": "KR-COAST-0186",
       "gridRow": 47,
       "gridColumn": 32,
       "regions": [
@@ -3748,7 +3748,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0187",
+      "code": "KR-COAST-0187",
       "gridRow": 47,
       "gridColumn": 33,
       "regions": [
@@ -3768,7 +3768,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0188",
+      "code": "KR-COAST-0188",
       "gridRow": 47,
       "gridColumn": 34,
       "regions": [
@@ -3788,7 +3788,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0189",
+      "code": "KR-COAST-0189",
       "gridRow": 47,
       "gridColumn": 35,
       "regions": [
@@ -3808,7 +3808,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0190",
+      "code": "KR-COAST-0190",
       "gridRow": 47,
       "gridColumn": 36,
       "regions": [
@@ -3828,7 +3828,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0191",
+      "code": "KR-COAST-0191",
       "gridRow": 47,
       "gridColumn": 37,
       "regions": [
@@ -3848,7 +3848,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0192",
+      "code": "KR-COAST-0192",
       "gridRow": 47,
       "gridColumn": 38,
       "regions": [
@@ -3868,7 +3868,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0193",
+      "code": "KR-COAST-0193",
       "gridRow": 47,
       "gridColumn": 39,
       "regions": [
@@ -3888,7 +3888,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0194",
+      "code": "KR-COAST-0194",
       "gridRow": 47,
       "gridColumn": 40,
       "regions": [
@@ -3908,7 +3908,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0195",
+      "code": "KR-COAST-0195",
       "gridRow": 47,
       "gridColumn": 41,
       "regions": [
@@ -3928,7 +3928,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0196",
+      "code": "KR-COAST-0196",
       "gridRow": 47,
       "gridColumn": 42,
       "regions": [
@@ -3948,7 +3948,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0197",
+      "code": "KR-COAST-0197",
       "gridRow": 47,
       "gridColumn": 43,
       "regions": [
@@ -3968,7 +3968,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0198",
+      "code": "KR-COAST-0198",
       "gridRow": 47,
       "gridColumn": 44,
       "regions": [
@@ -3988,7 +3988,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0199",
+      "code": "KR-COAST-0199",
       "gridRow": 47,
       "gridColumn": 45,
       "regions": [
@@ -4008,7 +4008,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0200",
+      "code": "KR-COAST-0200",
       "gridRow": 47,
       "gridColumn": 46,
       "regions": [
@@ -4028,7 +4028,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0201",
+      "code": "KR-COAST-0201",
       "gridRow": 47,
       "gridColumn": 62,
       "regions": [
@@ -4048,7 +4048,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0202",
+      "code": "KR-COAST-0202",
       "gridRow": 48,
       "gridColumn": 22,
       "regions": [
@@ -4068,7 +4068,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0203",
+      "code": "KR-COAST-0203",
       "gridRow": 48,
       "gridColumn": 24,
       "regions": [
@@ -4089,7 +4089,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0204",
+      "code": "KR-COAST-0204",
       "gridRow": 48,
       "gridColumn": 25,
       "regions": [
@@ -4110,7 +4110,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0205",
+      "code": "KR-COAST-0205",
       "gridRow": 48,
       "gridColumn": 26,
       "regions": [
@@ -4131,7 +4131,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0206",
+      "code": "KR-COAST-0206",
       "gridRow": 48,
       "gridColumn": 27,
       "regions": [
@@ -4152,7 +4152,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0207",
+      "code": "KR-COAST-0207",
       "gridRow": 48,
       "gridColumn": 28,
       "regions": [
@@ -4173,7 +4173,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0208",
+      "code": "KR-COAST-0208",
       "gridRow": 48,
       "gridColumn": 29,
       "regions": [
@@ -4194,7 +4194,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0209",
+      "code": "KR-COAST-0209",
       "gridRow": 48,
       "gridColumn": 30,
       "regions": [
@@ -4214,7 +4214,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0210",
+      "code": "KR-COAST-0210",
       "gridRow": 48,
       "gridColumn": 31,
       "regions": [
@@ -4234,7 +4234,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0211",
+      "code": "KR-COAST-0211",
       "gridRow": 48,
       "gridColumn": 32,
       "regions": [
@@ -4254,7 +4254,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0212",
+      "code": "KR-COAST-0212",
       "gridRow": 48,
       "gridColumn": 33,
       "regions": [
@@ -4274,7 +4274,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0213",
+      "code": "KR-COAST-0213",
       "gridRow": 48,
       "gridColumn": 34,
       "regions": [
@@ -4294,7 +4294,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0214",
+      "code": "KR-COAST-0214",
       "gridRow": 48,
       "gridColumn": 35,
       "regions": [
@@ -4314,7 +4314,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0215",
+      "code": "KR-COAST-0215",
       "gridRow": 48,
       "gridColumn": 36,
       "regions": [
@@ -4334,7 +4334,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0216",
+      "code": "KR-COAST-0216",
       "gridRow": 48,
       "gridColumn": 37,
       "regions": [
@@ -4354,7 +4354,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0217",
+      "code": "KR-COAST-0217",
       "gridRow": 48,
       "gridColumn": 38,
       "regions": [
@@ -4374,7 +4374,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0218",
+      "code": "KR-COAST-0218",
       "gridRow": 48,
       "gridColumn": 39,
       "regions": [
@@ -4394,7 +4394,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0219",
+      "code": "KR-COAST-0219",
       "gridRow": 48,
       "gridColumn": 40,
       "regions": [
@@ -4414,7 +4414,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0220",
+      "code": "KR-COAST-0220",
       "gridRow": 48,
       "gridColumn": 41,
       "regions": [
@@ -4434,7 +4434,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0221",
+      "code": "KR-COAST-0221",
       "gridRow": 48,
       "gridColumn": 42,
       "regions": [
@@ -4454,7 +4454,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0222",
+      "code": "KR-COAST-0222",
       "gridRow": 48,
       "gridColumn": 43,
       "regions": [
@@ -4474,7 +4474,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0223",
+      "code": "KR-COAST-0223",
       "gridRow": 48,
       "gridColumn": 44,
       "regions": [
@@ -4494,7 +4494,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0224",
+      "code": "KR-COAST-0224",
       "gridRow": 48,
       "gridColumn": 45,
       "regions": [
@@ -4514,7 +4514,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0225",
+      "code": "KR-COAST-0225",
       "gridRow": 48,
       "gridColumn": 46,
       "regions": [
@@ -4534,7 +4534,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0226",
+      "code": "KR-COAST-0226",
       "gridRow": 48,
       "gridColumn": 47,
       "regions": [
@@ -4554,7 +4554,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0227",
+      "code": "KR-COAST-0227",
       "gridRow": 49,
       "gridColumn": 25,
       "regions": [
@@ -4574,7 +4574,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0228",
+      "code": "KR-COAST-0228",
       "gridRow": 49,
       "gridColumn": 26,
       "regions": [
@@ -4595,7 +4595,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0229",
+      "code": "KR-COAST-0229",
       "gridRow": 49,
       "gridColumn": 27,
       "regions": [
@@ -4616,7 +4616,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0230",
+      "code": "KR-COAST-0230",
       "gridRow": 49,
       "gridColumn": 28,
       "regions": [
@@ -4636,7 +4636,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0231",
+      "code": "KR-COAST-0231",
       "gridRow": 49,
       "gridColumn": 29,
       "regions": [
@@ -4656,7 +4656,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0232",
+      "code": "KR-COAST-0232",
       "gridRow": 49,
       "gridColumn": 30,
       "regions": [
@@ -4676,7 +4676,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0233",
+      "code": "KR-COAST-0233",
       "gridRow": 49,
       "gridColumn": 31,
       "regions": [
@@ -4696,7 +4696,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0234",
+      "code": "KR-COAST-0234",
       "gridRow": 49,
       "gridColumn": 32,
       "regions": [
@@ -4716,7 +4716,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0235",
+      "code": "KR-COAST-0235",
       "gridRow": 49,
       "gridColumn": 33,
       "regions": [
@@ -4736,7 +4736,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0236",
+      "code": "KR-COAST-0236",
       "gridRow": 49,
       "gridColumn": 34,
       "regions": [
@@ -4756,7 +4756,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0237",
+      "code": "KR-COAST-0237",
       "gridRow": 49,
       "gridColumn": 35,
       "regions": [
@@ -4776,7 +4776,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0238",
+      "code": "KR-COAST-0238",
       "gridRow": 49,
       "gridColumn": 36,
       "regions": [
@@ -4796,7 +4796,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0239",
+      "code": "KR-COAST-0239",
       "gridRow": 49,
       "gridColumn": 37,
       "regions": [
@@ -4816,7 +4816,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0240",
+      "code": "KR-COAST-0240",
       "gridRow": 49,
       "gridColumn": 38,
       "regions": [
@@ -4836,7 +4836,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0241",
+      "code": "KR-COAST-0241",
       "gridRow": 49,
       "gridColumn": 39,
       "regions": [
@@ -4856,7 +4856,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0242",
+      "code": "KR-COAST-0242",
       "gridRow": 49,
       "gridColumn": 40,
       "regions": [
@@ -4876,7 +4876,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0243",
+      "code": "KR-COAST-0243",
       "gridRow": 49,
       "gridColumn": 41,
       "regions": [
@@ -4896,7 +4896,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0244",
+      "code": "KR-COAST-0244",
       "gridRow": 49,
       "gridColumn": 42,
       "regions": [
@@ -4916,7 +4916,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0245",
+      "code": "KR-COAST-0245",
       "gridRow": 49,
       "gridColumn": 43,
       "regions": [
@@ -4936,7 +4936,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0246",
+      "code": "KR-COAST-0246",
       "gridRow": 49,
       "gridColumn": 44,
       "regions": [
@@ -4956,7 +4956,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0247",
+      "code": "KR-COAST-0247",
       "gridRow": 49,
       "gridColumn": 45,
       "regions": [
@@ -4976,7 +4976,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0248",
+      "code": "KR-COAST-0248",
       "gridRow": 49,
       "gridColumn": 46,
       "regions": [
@@ -4996,7 +4996,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0249",
+      "code": "KR-COAST-0249",
       "gridRow": 49,
       "gridColumn": 47,
       "regions": [
@@ -5016,7 +5016,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0250",
+      "code": "KR-COAST-0250",
       "gridRow": 50,
       "gridColumn": 19,
       "regions": [
@@ -5036,7 +5036,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0251",
+      "code": "KR-COAST-0251",
       "gridRow": 50,
       "gridColumn": 21,
       "regions": [
@@ -5056,7 +5056,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0252",
+      "code": "KR-COAST-0252",
       "gridRow": 50,
       "gridColumn": 22,
       "regions": [
@@ -5076,7 +5076,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0253",
+      "code": "KR-COAST-0253",
       "gridRow": 50,
       "gridColumn": 24,
       "regions": [
@@ -5096,7 +5096,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0254",
+      "code": "KR-COAST-0254",
       "gridRow": 50,
       "gridColumn": 25,
       "regions": [
@@ -5116,7 +5116,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0255",
+      "code": "KR-COAST-0255",
       "gridRow": 50,
       "gridColumn": 26,
       "regions": [
@@ -5136,7 +5136,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0256",
+      "code": "KR-COAST-0256",
       "gridRow": 50,
       "gridColumn": 27,
       "regions": [
@@ -5157,7 +5157,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0257",
+      "code": "KR-COAST-0257",
       "gridRow": 50,
       "gridColumn": 28,
       "regions": [
@@ -5178,7 +5178,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0258",
+      "code": "KR-COAST-0258",
       "gridRow": 50,
       "gridColumn": 29,
       "regions": [
@@ -5198,7 +5198,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0259",
+      "code": "KR-COAST-0259",
       "gridRow": 50,
       "gridColumn": 30,
       "regions": [
@@ -5218,7 +5218,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0260",
+      "code": "KR-COAST-0260",
       "gridRow": 50,
       "gridColumn": 31,
       "regions": [
@@ -5238,7 +5238,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0261",
+      "code": "KR-COAST-0261",
       "gridRow": 50,
       "gridColumn": 32,
       "regions": [
@@ -5258,7 +5258,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0262",
+      "code": "KR-COAST-0262",
       "gridRow": 50,
       "gridColumn": 33,
       "regions": [
@@ -5278,7 +5278,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0263",
+      "code": "KR-COAST-0263",
       "gridRow": 50,
       "gridColumn": 34,
       "regions": [
@@ -5298,7 +5298,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0264",
+      "code": "KR-COAST-0264",
       "gridRow": 50,
       "gridColumn": 35,
       "regions": [
@@ -5318,7 +5318,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0265",
+      "code": "KR-COAST-0265",
       "gridRow": 50,
       "gridColumn": 36,
       "regions": [
@@ -5338,7 +5338,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0266",
+      "code": "KR-COAST-0266",
       "gridRow": 50,
       "gridColumn": 37,
       "regions": [
@@ -5358,7 +5358,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0267",
+      "code": "KR-COAST-0267",
       "gridRow": 50,
       "gridColumn": 38,
       "regions": [
@@ -5378,7 +5378,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0268",
+      "code": "KR-COAST-0268",
       "gridRow": 50,
       "gridColumn": 39,
       "regions": [
@@ -5398,7 +5398,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0269",
+      "code": "KR-COAST-0269",
       "gridRow": 50,
       "gridColumn": 40,
       "regions": [
@@ -5418,7 +5418,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0270",
+      "code": "KR-COAST-0270",
       "gridRow": 50,
       "gridColumn": 41,
       "regions": [
@@ -5438,7 +5438,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0271",
+      "code": "KR-COAST-0271",
       "gridRow": 50,
       "gridColumn": 42,
       "regions": [
@@ -5458,7 +5458,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0272",
+      "code": "KR-COAST-0272",
       "gridRow": 50,
       "gridColumn": 43,
       "regions": [
@@ -5478,7 +5478,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0273",
+      "code": "KR-COAST-0273",
       "gridRow": 50,
       "gridColumn": 44,
       "regions": [
@@ -5498,7 +5498,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0274",
+      "code": "KR-COAST-0274",
       "gridRow": 50,
       "gridColumn": 45,
       "regions": [
@@ -5518,7 +5518,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0275",
+      "code": "KR-COAST-0275",
       "gridRow": 50,
       "gridColumn": 46,
       "regions": [
@@ -5538,7 +5538,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0276",
+      "code": "KR-COAST-0276",
       "gridRow": 50,
       "gridColumn": 47,
       "regions": [
@@ -5558,7 +5558,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0277",
+      "code": "KR-COAST-0277",
       "gridRow": 50,
       "gridColumn": 48,
       "regions": [
@@ -5578,7 +5578,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0278",
+      "code": "KR-COAST-0278",
       "gridRow": 51,
       "gridColumn": 19,
       "regions": [
@@ -5598,7 +5598,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0279",
+      "code": "KR-COAST-0279",
       "gridRow": 51,
       "gridColumn": 25,
       "regions": [
@@ -5618,7 +5618,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0280",
+      "code": "KR-COAST-0280",
       "gridRow": 51,
       "gridColumn": 26,
       "regions": [
@@ -5638,7 +5638,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0281",
+      "code": "KR-COAST-0281",
       "gridRow": 51,
       "gridColumn": 27,
       "regions": [
@@ -5659,7 +5659,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0282",
+      "code": "KR-COAST-0282",
       "gridRow": 51,
       "gridColumn": 28,
       "regions": [
@@ -5679,7 +5679,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0283",
+      "code": "KR-COAST-0283",
       "gridRow": 51,
       "gridColumn": 29,
       "regions": [
@@ -5699,7 +5699,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0284",
+      "code": "KR-COAST-0284",
       "gridRow": 51,
       "gridColumn": 30,
       "regions": [
@@ -5719,7 +5719,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0285",
+      "code": "KR-COAST-0285",
       "gridRow": 51,
       "gridColumn": 31,
       "regions": [
@@ -5739,7 +5739,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0286",
+      "code": "KR-COAST-0286",
       "gridRow": 51,
       "gridColumn": 32,
       "regions": [
@@ -5759,7 +5759,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0287",
+      "code": "KR-COAST-0287",
       "gridRow": 51,
       "gridColumn": 33,
       "regions": [
@@ -5779,7 +5779,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0288",
+      "code": "KR-COAST-0288",
       "gridRow": 51,
       "gridColumn": 34,
       "regions": [
@@ -5799,7 +5799,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0289",
+      "code": "KR-COAST-0289",
       "gridRow": 51,
       "gridColumn": 35,
       "regions": [
@@ -5819,7 +5819,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0290",
+      "code": "KR-COAST-0290",
       "gridRow": 51,
       "gridColumn": 36,
       "regions": [
@@ -5839,7 +5839,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0291",
+      "code": "KR-COAST-0291",
       "gridRow": 51,
       "gridColumn": 37,
       "regions": [
@@ -5859,7 +5859,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0292",
+      "code": "KR-COAST-0292",
       "gridRow": 51,
       "gridColumn": 38,
       "regions": [
@@ -5879,7 +5879,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0293",
+      "code": "KR-COAST-0293",
       "gridRow": 51,
       "gridColumn": 39,
       "regions": [
@@ -5899,7 +5899,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0294",
+      "code": "KR-COAST-0294",
       "gridRow": 51,
       "gridColumn": 40,
       "regions": [
@@ -5919,7 +5919,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0295",
+      "code": "KR-COAST-0295",
       "gridRow": 51,
       "gridColumn": 41,
       "regions": [
@@ -5939,7 +5939,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0296",
+      "code": "KR-COAST-0296",
       "gridRow": 51,
       "gridColumn": 42,
       "regions": [
@@ -5959,7 +5959,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0297",
+      "code": "KR-COAST-0297",
       "gridRow": 51,
       "gridColumn": 43,
       "regions": [
@@ -5979,7 +5979,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0298",
+      "code": "KR-COAST-0298",
       "gridRow": 51,
       "gridColumn": 44,
       "regions": [
@@ -5999,7 +5999,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0299",
+      "code": "KR-COAST-0299",
       "gridRow": 51,
       "gridColumn": 45,
       "regions": [
@@ -6019,7 +6019,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0300",
+      "code": "KR-COAST-0300",
       "gridRow": 51,
       "gridColumn": 46,
       "regions": [
@@ -6039,7 +6039,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0301",
+      "code": "KR-COAST-0301",
       "gridRow": 51,
       "gridColumn": 47,
       "regions": [
@@ -6059,7 +6059,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0302",
+      "code": "KR-COAST-0302",
       "gridRow": 51,
       "gridColumn": 48,
       "regions": [
@@ -6079,7 +6079,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0303",
+      "code": "KR-COAST-0303",
       "gridRow": 52,
       "gridColumn": 25,
       "regions": [
@@ -6099,7 +6099,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0304",
+      "code": "KR-COAST-0304",
       "gridRow": 52,
       "gridColumn": 26,
       "regions": [
@@ -6119,7 +6119,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0305",
+      "code": "KR-COAST-0305",
       "gridRow": 52,
       "gridColumn": 27,
       "regions": [
@@ -6139,7 +6139,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0306",
+      "code": "KR-COAST-0306",
       "gridRow": 52,
       "gridColumn": 28,
       "regions": [
@@ -6159,7 +6159,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0307",
+      "code": "KR-COAST-0307",
       "gridRow": 52,
       "gridColumn": 29,
       "regions": [
@@ -6179,7 +6179,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0308",
+      "code": "KR-COAST-0308",
       "gridRow": 52,
       "gridColumn": 30,
       "regions": [
@@ -6199,7 +6199,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0309",
+      "code": "KR-COAST-0309",
       "gridRow": 52,
       "gridColumn": 31,
       "regions": [
@@ -6219,7 +6219,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0310",
+      "code": "KR-COAST-0310",
       "gridRow": 52,
       "gridColumn": 32,
       "regions": [
@@ -6239,7 +6239,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0311",
+      "code": "KR-COAST-0311",
       "gridRow": 52,
       "gridColumn": 33,
       "regions": [
@@ -6259,7 +6259,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0312",
+      "code": "KR-COAST-0312",
       "gridRow": 52,
       "gridColumn": 34,
       "regions": [
@@ -6279,7 +6279,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0313",
+      "code": "KR-COAST-0313",
       "gridRow": 52,
       "gridColumn": 35,
       "regions": [
@@ -6299,7 +6299,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0314",
+      "code": "KR-COAST-0314",
       "gridRow": 52,
       "gridColumn": 36,
       "regions": [
@@ -6319,7 +6319,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0315",
+      "code": "KR-COAST-0315",
       "gridRow": 52,
       "gridColumn": 37,
       "regions": [
@@ -6339,7 +6339,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0316",
+      "code": "KR-COAST-0316",
       "gridRow": 52,
       "gridColumn": 38,
       "regions": [
@@ -6359,7 +6359,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0317",
+      "code": "KR-COAST-0317",
       "gridRow": 52,
       "gridColumn": 39,
       "regions": [
@@ -6379,7 +6379,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0318",
+      "code": "KR-COAST-0318",
       "gridRow": 52,
       "gridColumn": 40,
       "regions": [
@@ -6399,7 +6399,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0319",
+      "code": "KR-COAST-0319",
       "gridRow": 52,
       "gridColumn": 41,
       "regions": [
@@ -6419,7 +6419,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0320",
+      "code": "KR-COAST-0320",
       "gridRow": 52,
       "gridColumn": 42,
       "regions": [
@@ -6439,7 +6439,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0321",
+      "code": "KR-COAST-0321",
       "gridRow": 52,
       "gridColumn": 43,
       "regions": [
@@ -6459,7 +6459,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0322",
+      "code": "KR-COAST-0322",
       "gridRow": 52,
       "gridColumn": 44,
       "regions": [
@@ -6479,7 +6479,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0323",
+      "code": "KR-COAST-0323",
       "gridRow": 52,
       "gridColumn": 45,
       "regions": [
@@ -6499,7 +6499,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0324",
+      "code": "KR-COAST-0324",
       "gridRow": 52,
       "gridColumn": 46,
       "regions": [
@@ -6519,7 +6519,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0325",
+      "code": "KR-COAST-0325",
       "gridRow": 52,
       "gridColumn": 47,
       "regions": [
@@ -6539,7 +6539,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0326",
+      "code": "KR-COAST-0326",
       "gridRow": 52,
       "gridColumn": 48,
       "regions": [
@@ -6559,7 +6559,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0327",
+      "code": "KR-COAST-0327",
       "gridRow": 53,
       "gridColumn": 22,
       "regions": [
@@ -6579,7 +6579,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0328",
+      "code": "KR-COAST-0328",
       "gridRow": 53,
       "gridColumn": 23,
       "regions": [
@@ -6599,7 +6599,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0329",
+      "code": "KR-COAST-0329",
       "gridRow": 53,
       "gridColumn": 24,
       "regions": [
@@ -6619,7 +6619,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0330",
+      "code": "KR-COAST-0330",
       "gridRow": 53,
       "gridColumn": 26,
       "regions": [
@@ -6639,7 +6639,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0331",
+      "code": "KR-COAST-0331",
       "gridRow": 53,
       "gridColumn": 27,
       "regions": [
@@ -6659,7 +6659,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0332",
+      "code": "KR-COAST-0332",
       "gridRow": 53,
       "gridColumn": 28,
       "regions": [
@@ -6679,7 +6679,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0333",
+      "code": "KR-COAST-0333",
       "gridRow": 53,
       "gridColumn": 29,
       "regions": [
@@ -6699,7 +6699,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0334",
+      "code": "KR-COAST-0334",
       "gridRow": 53,
       "gridColumn": 30,
       "regions": [
@@ -6719,7 +6719,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0335",
+      "code": "KR-COAST-0335",
       "gridRow": 53,
       "gridColumn": 31,
       "regions": [
@@ -6739,7 +6739,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0336",
+      "code": "KR-COAST-0336",
       "gridRow": 53,
       "gridColumn": 32,
       "regions": [
@@ -6759,7 +6759,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0337",
+      "code": "KR-COAST-0337",
       "gridRow": 53,
       "gridColumn": 33,
       "regions": [
@@ -6779,7 +6779,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0338",
+      "code": "KR-COAST-0338",
       "gridRow": 53,
       "gridColumn": 34,
       "regions": [
@@ -6799,7 +6799,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0339",
+      "code": "KR-COAST-0339",
       "gridRow": 53,
       "gridColumn": 35,
       "regions": [
@@ -6819,7 +6819,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0340",
+      "code": "KR-COAST-0340",
       "gridRow": 53,
       "gridColumn": 36,
       "regions": [
@@ -6839,7 +6839,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0341",
+      "code": "KR-COAST-0341",
       "gridRow": 53,
       "gridColumn": 37,
       "regions": [
@@ -6859,7 +6859,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0342",
+      "code": "KR-COAST-0342",
       "gridRow": 53,
       "gridColumn": 38,
       "regions": [
@@ -6879,7 +6879,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0343",
+      "code": "KR-COAST-0343",
       "gridRow": 53,
       "gridColumn": 39,
       "regions": [
@@ -6899,7 +6899,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0344",
+      "code": "KR-COAST-0344",
       "gridRow": 53,
       "gridColumn": 40,
       "regions": [
@@ -6919,7 +6919,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0345",
+      "code": "KR-COAST-0345",
       "gridRow": 53,
       "gridColumn": 41,
       "regions": [
@@ -6939,7 +6939,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0346",
+      "code": "KR-COAST-0346",
       "gridRow": 53,
       "gridColumn": 42,
       "regions": [
@@ -6959,7 +6959,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0347",
+      "code": "KR-COAST-0347",
       "gridRow": 53,
       "gridColumn": 43,
       "regions": [
@@ -6979,7 +6979,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0348",
+      "code": "KR-COAST-0348",
       "gridRow": 53,
       "gridColumn": 44,
       "regions": [
@@ -6999,7 +6999,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0349",
+      "code": "KR-COAST-0349",
       "gridRow": 53,
       "gridColumn": 45,
       "regions": [
@@ -7019,7 +7019,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0350",
+      "code": "KR-COAST-0350",
       "gridRow": 53,
       "gridColumn": 46,
       "regions": [
@@ -7039,7 +7039,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0351",
+      "code": "KR-COAST-0351",
       "gridRow": 53,
       "gridColumn": 47,
       "regions": [
@@ -7059,7 +7059,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0352",
+      "code": "KR-COAST-0352",
       "gridRow": 53,
       "gridColumn": 48,
       "regions": [
@@ -7079,7 +7079,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0353",
+      "code": "KR-COAST-0353",
       "gridRow": 53,
       "gridColumn": 49,
       "regions": [
@@ -7099,7 +7099,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0354",
+      "code": "KR-COAST-0354",
       "gridRow": 54,
       "gridColumn": 20,
       "regions": [
@@ -7119,7 +7119,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0355",
+      "code": "KR-COAST-0355",
       "gridRow": 54,
       "gridColumn": 22,
       "regions": [
@@ -7139,7 +7139,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0356",
+      "code": "KR-COAST-0356",
       "gridRow": 54,
       "gridColumn": 23,
       "regions": [
@@ -7159,7 +7159,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0357",
+      "code": "KR-COAST-0357",
       "gridRow": 54,
       "gridColumn": 24,
       "regions": [
@@ -7179,7 +7179,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0358",
+      "code": "KR-COAST-0358",
       "gridRow": 54,
       "gridColumn": 25,
       "regions": [
@@ -7199,7 +7199,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0359",
+      "code": "KR-COAST-0359",
       "gridRow": 54,
       "gridColumn": 27,
       "regions": [
@@ -7219,7 +7219,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0360",
+      "code": "KR-COAST-0360",
       "gridRow": 54,
       "gridColumn": 28,
       "regions": [
@@ -7239,7 +7239,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0361",
+      "code": "KR-COAST-0361",
       "gridRow": 54,
       "gridColumn": 29,
       "regions": [
@@ -7259,7 +7259,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0362",
+      "code": "KR-COAST-0362",
       "gridRow": 54,
       "gridColumn": 30,
       "regions": [
@@ -7279,7 +7279,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0363",
+      "code": "KR-COAST-0363",
       "gridRow": 54,
       "gridColumn": 31,
       "regions": [
@@ -7299,7 +7299,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0364",
+      "code": "KR-COAST-0364",
       "gridRow": 54,
       "gridColumn": 32,
       "regions": [
@@ -7319,7 +7319,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0365",
+      "code": "KR-COAST-0365",
       "gridRow": 54,
       "gridColumn": 33,
       "regions": [
@@ -7339,7 +7339,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0366",
+      "code": "KR-COAST-0366",
       "gridRow": 54,
       "gridColumn": 34,
       "regions": [
@@ -7359,7 +7359,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0367",
+      "code": "KR-COAST-0367",
       "gridRow": 54,
       "gridColumn": 35,
       "regions": [
@@ -7379,7 +7379,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0368",
+      "code": "KR-COAST-0368",
       "gridRow": 54,
       "gridColumn": 36,
       "regions": [
@@ -7399,7 +7399,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0369",
+      "code": "KR-COAST-0369",
       "gridRow": 54,
       "gridColumn": 37,
       "regions": [
@@ -7419,7 +7419,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0370",
+      "code": "KR-COAST-0370",
       "gridRow": 54,
       "gridColumn": 38,
       "regions": [
@@ -7439,7 +7439,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0371",
+      "code": "KR-COAST-0371",
       "gridRow": 54,
       "gridColumn": 39,
       "regions": [
@@ -7459,7 +7459,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0372",
+      "code": "KR-COAST-0372",
       "gridRow": 54,
       "gridColumn": 40,
       "regions": [
@@ -7479,7 +7479,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0373",
+      "code": "KR-COAST-0373",
       "gridRow": 54,
       "gridColumn": 41,
       "regions": [
@@ -7499,7 +7499,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0374",
+      "code": "KR-COAST-0374",
       "gridRow": 54,
       "gridColumn": 42,
       "regions": [
@@ -7519,7 +7519,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0375",
+      "code": "KR-COAST-0375",
       "gridRow": 54,
       "gridColumn": 43,
       "regions": [
@@ -7539,7 +7539,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0376",
+      "code": "KR-COAST-0376",
       "gridRow": 54,
       "gridColumn": 44,
       "regions": [
@@ -7559,7 +7559,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0377",
+      "code": "KR-COAST-0377",
       "gridRow": 54,
       "gridColumn": 45,
       "regions": [
@@ -7579,7 +7579,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0378",
+      "code": "KR-COAST-0378",
       "gridRow": 54,
       "gridColumn": 46,
       "regions": [
@@ -7599,7 +7599,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0379",
+      "code": "KR-COAST-0379",
       "gridRow": 54,
       "gridColumn": 47,
       "regions": [
@@ -7619,7 +7619,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0380",
+      "code": "KR-COAST-0380",
       "gridRow": 54,
       "gridColumn": 48,
       "regions": [
@@ -7639,7 +7639,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0381",
+      "code": "KR-COAST-0381",
       "gridRow": 54,
       "gridColumn": 49,
       "regions": [
@@ -7659,7 +7659,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0382",
+      "code": "KR-COAST-0382",
       "gridRow": 55,
       "gridColumn": 20,
       "regions": [
@@ -7679,7 +7679,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0383",
+      "code": "KR-COAST-0383",
       "gridRow": 55,
       "gridColumn": 22,
       "regions": [
@@ -7699,7 +7699,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0384",
+      "code": "KR-COAST-0384",
       "gridRow": 55,
       "gridColumn": 23,
       "regions": [
@@ -7719,7 +7719,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0385",
+      "code": "KR-COAST-0385",
       "gridRow": 55,
       "gridColumn": 24,
       "regions": [
@@ -7739,7 +7739,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0386",
+      "code": "KR-COAST-0386",
       "gridRow": 55,
       "gridColumn": 25,
       "regions": [
@@ -7759,7 +7759,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0387",
+      "code": "KR-COAST-0387",
       "gridRow": 55,
       "gridColumn": 26,
       "regions": [
@@ -7779,7 +7779,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0388",
+      "code": "KR-COAST-0388",
       "gridRow": 55,
       "gridColumn": 27,
       "regions": [
@@ -7799,7 +7799,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0389",
+      "code": "KR-COAST-0389",
       "gridRow": 55,
       "gridColumn": 28,
       "regions": [
@@ -7819,7 +7819,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0390",
+      "code": "KR-COAST-0390",
       "gridRow": 55,
       "gridColumn": 29,
       "regions": [
@@ -7839,7 +7839,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0391",
+      "code": "KR-COAST-0391",
       "gridRow": 55,
       "gridColumn": 30,
       "regions": [
@@ -7859,7 +7859,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0392",
+      "code": "KR-COAST-0392",
       "gridRow": 55,
       "gridColumn": 31,
       "regions": [
@@ -7879,7 +7879,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0393",
+      "code": "KR-COAST-0393",
       "gridRow": 55,
       "gridColumn": 32,
       "regions": [
@@ -7899,7 +7899,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0394",
+      "code": "KR-COAST-0394",
       "gridRow": 55,
       "gridColumn": 33,
       "regions": [
@@ -7919,7 +7919,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0395",
+      "code": "KR-COAST-0395",
       "gridRow": 55,
       "gridColumn": 34,
       "regions": [
@@ -7939,7 +7939,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0396",
+      "code": "KR-COAST-0396",
       "gridRow": 55,
       "gridColumn": 35,
       "regions": [
@@ -7959,7 +7959,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0397",
+      "code": "KR-COAST-0397",
       "gridRow": 55,
       "gridColumn": 36,
       "regions": [
@@ -7979,7 +7979,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0398",
+      "code": "KR-COAST-0398",
       "gridRow": 55,
       "gridColumn": 37,
       "regions": [
@@ -7999,7 +7999,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0399",
+      "code": "KR-COAST-0399",
       "gridRow": 55,
       "gridColumn": 38,
       "regions": [
@@ -8019,7 +8019,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0400",
+      "code": "KR-COAST-0400",
       "gridRow": 55,
       "gridColumn": 39,
       "regions": [
@@ -8039,7 +8039,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0401",
+      "code": "KR-COAST-0401",
       "gridRow": 55,
       "gridColumn": 40,
       "regions": [
@@ -8059,7 +8059,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0402",
+      "code": "KR-COAST-0402",
       "gridRow": 55,
       "gridColumn": 41,
       "regions": [
@@ -8079,7 +8079,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0403",
+      "code": "KR-COAST-0403",
       "gridRow": 55,
       "gridColumn": 42,
       "regions": [
@@ -8099,7 +8099,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0404",
+      "code": "KR-COAST-0404",
       "gridRow": 55,
       "gridColumn": 43,
       "regions": [
@@ -8119,7 +8119,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0405",
+      "code": "KR-COAST-0405",
       "gridRow": 55,
       "gridColumn": 44,
       "regions": [
@@ -8139,7 +8139,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0406",
+      "code": "KR-COAST-0406",
       "gridRow": 55,
       "gridColumn": 45,
       "regions": [
@@ -8159,7 +8159,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0407",
+      "code": "KR-COAST-0407",
       "gridRow": 55,
       "gridColumn": 46,
       "regions": [
@@ -8179,7 +8179,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0408",
+      "code": "KR-COAST-0408",
       "gridRow": 55,
       "gridColumn": 47,
       "regions": [
@@ -8199,7 +8199,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0409",
+      "code": "KR-COAST-0409",
       "gridRow": 55,
       "gridColumn": 48,
       "regions": [
@@ -8219,7 +8219,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0410",
+      "code": "KR-COAST-0410",
       "gridRow": 55,
       "gridColumn": 49,
       "regions": [
@@ -8239,7 +8239,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0411",
+      "code": "KR-COAST-0411",
       "gridRow": 56,
       "gridColumn": 20,
       "regions": [
@@ -8259,7 +8259,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0412",
+      "code": "KR-COAST-0412",
       "gridRow": 56,
       "gridColumn": 21,
       "regions": [
@@ -8279,7 +8279,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0413",
+      "code": "KR-COAST-0413",
       "gridRow": 56,
       "gridColumn": 22,
       "regions": [
@@ -8299,7 +8299,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0414",
+      "code": "KR-COAST-0414",
       "gridRow": 56,
       "gridColumn": 23,
       "regions": [
@@ -8319,7 +8319,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0415",
+      "code": "KR-COAST-0415",
       "gridRow": 56,
       "gridColumn": 24,
       "regions": [
@@ -8339,7 +8339,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0416",
+      "code": "KR-COAST-0416",
       "gridRow": 56,
       "gridColumn": 25,
       "regions": [
@@ -8359,7 +8359,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0417",
+      "code": "KR-COAST-0417",
       "gridRow": 56,
       "gridColumn": 26,
       "regions": [
@@ -8379,7 +8379,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0418",
+      "code": "KR-COAST-0418",
       "gridRow": 56,
       "gridColumn": 27,
       "regions": [
@@ -8399,7 +8399,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0419",
+      "code": "KR-COAST-0419",
       "gridRow": 56,
       "gridColumn": 28,
       "regions": [
@@ -8419,7 +8419,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0420",
+      "code": "KR-COAST-0420",
       "gridRow": 56,
       "gridColumn": 29,
       "regions": [
@@ -8439,7 +8439,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0421",
+      "code": "KR-COAST-0421",
       "gridRow": 56,
       "gridColumn": 30,
       "regions": [
@@ -8459,7 +8459,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0422",
+      "code": "KR-COAST-0422",
       "gridRow": 56,
       "gridColumn": 31,
       "regions": [
@@ -8479,7 +8479,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0423",
+      "code": "KR-COAST-0423",
       "gridRow": 56,
       "gridColumn": 32,
       "regions": [
@@ -8499,7 +8499,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0424",
+      "code": "KR-COAST-0424",
       "gridRow": 56,
       "gridColumn": 33,
       "regions": [
@@ -8519,7 +8519,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0425",
+      "code": "KR-COAST-0425",
       "gridRow": 56,
       "gridColumn": 34,
       "regions": [
@@ -8539,7 +8539,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0426",
+      "code": "KR-COAST-0426",
       "gridRow": 56,
       "gridColumn": 35,
       "regions": [
@@ -8559,7 +8559,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0427",
+      "code": "KR-COAST-0427",
       "gridRow": 56,
       "gridColumn": 36,
       "regions": [
@@ -8579,7 +8579,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0428",
+      "code": "KR-COAST-0428",
       "gridRow": 56,
       "gridColumn": 37,
       "regions": [
@@ -8599,7 +8599,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0429",
+      "code": "KR-COAST-0429",
       "gridRow": 56,
       "gridColumn": 38,
       "regions": [
@@ -8619,7 +8619,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0430",
+      "code": "KR-COAST-0430",
       "gridRow": 56,
       "gridColumn": 39,
       "regions": [
@@ -8639,7 +8639,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0431",
+      "code": "KR-COAST-0431",
       "gridRow": 56,
       "gridColumn": 40,
       "regions": [
@@ -8659,7 +8659,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0432",
+      "code": "KR-COAST-0432",
       "gridRow": 56,
       "gridColumn": 41,
       "regions": [
@@ -8679,7 +8679,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0433",
+      "code": "KR-COAST-0433",
       "gridRow": 56,
       "gridColumn": 42,
       "regions": [
@@ -8699,7 +8699,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0434",
+      "code": "KR-COAST-0434",
       "gridRow": 56,
       "gridColumn": 43,
       "regions": [
@@ -8719,7 +8719,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0435",
+      "code": "KR-COAST-0435",
       "gridRow": 56,
       "gridColumn": 44,
       "regions": [
@@ -8739,7 +8739,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0436",
+      "code": "KR-COAST-0436",
       "gridRow": 56,
       "gridColumn": 45,
       "regions": [
@@ -8759,7 +8759,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0437",
+      "code": "KR-COAST-0437",
       "gridRow": 56,
       "gridColumn": 46,
       "regions": [
@@ -8779,7 +8779,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0438",
+      "code": "KR-COAST-0438",
       "gridRow": 56,
       "gridColumn": 47,
       "regions": [
@@ -8799,7 +8799,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0439",
+      "code": "KR-COAST-0439",
       "gridRow": 56,
       "gridColumn": 48,
       "regions": [
@@ -8819,7 +8819,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0440",
+      "code": "KR-COAST-0440",
       "gridRow": 56,
       "gridColumn": 49,
       "regions": [
@@ -8839,7 +8839,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0441",
+      "code": "KR-COAST-0441",
       "gridRow": 57,
       "gridColumn": 21,
       "regions": [
@@ -8859,7 +8859,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0442",
+      "code": "KR-COAST-0442",
       "gridRow": 57,
       "gridColumn": 22,
       "regions": [
@@ -8879,7 +8879,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0443",
+      "code": "KR-COAST-0443",
       "gridRow": 57,
       "gridColumn": 23,
       "regions": [
@@ -8899,7 +8899,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0444",
+      "code": "KR-COAST-0444",
       "gridRow": 57,
       "gridColumn": 24,
       "regions": [
@@ -8919,7 +8919,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0445",
+      "code": "KR-COAST-0445",
       "gridRow": 57,
       "gridColumn": 25,
       "regions": [
@@ -8939,7 +8939,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0446",
+      "code": "KR-COAST-0446",
       "gridRow": 57,
       "gridColumn": 26,
       "regions": [
@@ -8959,7 +8959,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0447",
+      "code": "KR-COAST-0447",
       "gridRow": 57,
       "gridColumn": 27,
       "regions": [
@@ -8979,7 +8979,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0448",
+      "code": "KR-COAST-0448",
       "gridRow": 57,
       "gridColumn": 28,
       "regions": [
@@ -8999,7 +8999,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0449",
+      "code": "KR-COAST-0449",
       "gridRow": 57,
       "gridColumn": 29,
       "regions": [
@@ -9019,7 +9019,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0450",
+      "code": "KR-COAST-0450",
       "gridRow": 57,
       "gridColumn": 30,
       "regions": [
@@ -9039,7 +9039,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0451",
+      "code": "KR-COAST-0451",
       "gridRow": 57,
       "gridColumn": 31,
       "regions": [
@@ -9059,7 +9059,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0452",
+      "code": "KR-COAST-0452",
       "gridRow": 57,
       "gridColumn": 32,
       "regions": [
@@ -9079,7 +9079,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0453",
+      "code": "KR-COAST-0453",
       "gridRow": 57,
       "gridColumn": 33,
       "regions": [
@@ -9099,7 +9099,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0454",
+      "code": "KR-COAST-0454",
       "gridRow": 57,
       "gridColumn": 34,
       "regions": [
@@ -9119,7 +9119,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0455",
+      "code": "KR-COAST-0455",
       "gridRow": 57,
       "gridColumn": 35,
       "regions": [
@@ -9139,7 +9139,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0456",
+      "code": "KR-COAST-0456",
       "gridRow": 57,
       "gridColumn": 36,
       "regions": [
@@ -9159,7 +9159,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0457",
+      "code": "KR-COAST-0457",
       "gridRow": 57,
       "gridColumn": 37,
       "regions": [
@@ -9179,7 +9179,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0458",
+      "code": "KR-COAST-0458",
       "gridRow": 57,
       "gridColumn": 38,
       "regions": [
@@ -9199,7 +9199,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0459",
+      "code": "KR-COAST-0459",
       "gridRow": 57,
       "gridColumn": 39,
       "regions": [
@@ -9219,7 +9219,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0460",
+      "code": "KR-COAST-0460",
       "gridRow": 57,
       "gridColumn": 40,
       "regions": [
@@ -9239,7 +9239,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0461",
+      "code": "KR-COAST-0461",
       "gridRow": 57,
       "gridColumn": 41,
       "regions": [
@@ -9259,7 +9259,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0462",
+      "code": "KR-COAST-0462",
       "gridRow": 57,
       "gridColumn": 42,
       "regions": [
@@ -9279,7 +9279,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0463",
+      "code": "KR-COAST-0463",
       "gridRow": 57,
       "gridColumn": 43,
       "regions": [
@@ -9299,7 +9299,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0464",
+      "code": "KR-COAST-0464",
       "gridRow": 57,
       "gridColumn": 44,
       "regions": [
@@ -9319,7 +9319,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0465",
+      "code": "KR-COAST-0465",
       "gridRow": 57,
       "gridColumn": 45,
       "regions": [
@@ -9339,7 +9339,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0466",
+      "code": "KR-COAST-0466",
       "gridRow": 57,
       "gridColumn": 46,
       "regions": [
@@ -9359,7 +9359,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0467",
+      "code": "KR-COAST-0467",
       "gridRow": 57,
       "gridColumn": 47,
       "regions": [
@@ -9379,7 +9379,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0468",
+      "code": "KR-COAST-0468",
       "gridRow": 57,
       "gridColumn": 48,
       "regions": [
@@ -9399,7 +9399,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0469",
+      "code": "KR-COAST-0469",
       "gridRow": 57,
       "gridColumn": 49,
       "regions": [
@@ -9419,7 +9419,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0470",
+      "code": "KR-COAST-0470",
       "gridRow": 58,
       "gridColumn": 23,
       "regions": [
@@ -9439,7 +9439,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0471",
+      "code": "KR-COAST-0471",
       "gridRow": 58,
       "gridColumn": 24,
       "regions": [
@@ -9459,7 +9459,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0472",
+      "code": "KR-COAST-0472",
       "gridRow": 58,
       "gridColumn": 25,
       "regions": [
@@ -9479,7 +9479,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0473",
+      "code": "KR-COAST-0473",
       "gridRow": 58,
       "gridColumn": 26,
       "regions": [
@@ -9499,7 +9499,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0474",
+      "code": "KR-COAST-0474",
       "gridRow": 58,
       "gridColumn": 27,
       "regions": [
@@ -9519,7 +9519,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0475",
+      "code": "KR-COAST-0475",
       "gridRow": 58,
       "gridColumn": 28,
       "regions": [
@@ -9539,7 +9539,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0476",
+      "code": "KR-COAST-0476",
       "gridRow": 58,
       "gridColumn": 29,
       "regions": [
@@ -9559,7 +9559,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0477",
+      "code": "KR-COAST-0477",
       "gridRow": 58,
       "gridColumn": 30,
       "regions": [
@@ -9579,7 +9579,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0478",
+      "code": "KR-COAST-0478",
       "gridRow": 58,
       "gridColumn": 31,
       "regions": [
@@ -9599,7 +9599,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0479",
+      "code": "KR-COAST-0479",
       "gridRow": 58,
       "gridColumn": 32,
       "regions": [
@@ -9619,7 +9619,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0480",
+      "code": "KR-COAST-0480",
       "gridRow": 58,
       "gridColumn": 33,
       "regions": [
@@ -9639,7 +9639,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0481",
+      "code": "KR-COAST-0481",
       "gridRow": 58,
       "gridColumn": 34,
       "regions": [
@@ -9659,7 +9659,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0482",
+      "code": "KR-COAST-0482",
       "gridRow": 58,
       "gridColumn": 35,
       "regions": [
@@ -9679,7 +9679,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0483",
+      "code": "KR-COAST-0483",
       "gridRow": 58,
       "gridColumn": 36,
       "regions": [
@@ -9699,7 +9699,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0484",
+      "code": "KR-COAST-0484",
       "gridRow": 58,
       "gridColumn": 37,
       "regions": [
@@ -9719,7 +9719,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0485",
+      "code": "KR-COAST-0485",
       "gridRow": 58,
       "gridColumn": 38,
       "regions": [
@@ -9739,7 +9739,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0486",
+      "code": "KR-COAST-0486",
       "gridRow": 58,
       "gridColumn": 39,
       "regions": [
@@ -9759,7 +9759,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0487",
+      "code": "KR-COAST-0487",
       "gridRow": 58,
       "gridColumn": 40,
       "regions": [
@@ -9779,7 +9779,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0488",
+      "code": "KR-COAST-0488",
       "gridRow": 58,
       "gridColumn": 41,
       "regions": [
@@ -9799,7 +9799,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0489",
+      "code": "KR-COAST-0489",
       "gridRow": 58,
       "gridColumn": 42,
       "regions": [
@@ -9819,7 +9819,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0490",
+      "code": "KR-COAST-0490",
       "gridRow": 58,
       "gridColumn": 43,
       "regions": [
@@ -9839,7 +9839,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0491",
+      "code": "KR-COAST-0491",
       "gridRow": 58,
       "gridColumn": 44,
       "regions": [
@@ -9859,7 +9859,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0492",
+      "code": "KR-COAST-0492",
       "gridRow": 58,
       "gridColumn": 45,
       "regions": [
@@ -9879,7 +9879,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0493",
+      "code": "KR-COAST-0493",
       "gridRow": 58,
       "gridColumn": 46,
       "regions": [
@@ -9899,7 +9899,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0494",
+      "code": "KR-COAST-0494",
       "gridRow": 58,
       "gridColumn": 47,
       "regions": [
@@ -9919,7 +9919,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0495",
+      "code": "KR-COAST-0495",
       "gridRow": 58,
       "gridColumn": 48,
       "regions": [
@@ -9939,7 +9939,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0496",
+      "code": "KR-COAST-0496",
       "gridRow": 58,
       "gridColumn": 49,
       "regions": [
@@ -9959,7 +9959,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0497",
+      "code": "KR-COAST-0497",
       "gridRow": 59,
       "gridColumn": 24,
       "regions": [
@@ -9979,7 +9979,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0498",
+      "code": "KR-COAST-0498",
       "gridRow": 59,
       "gridColumn": 25,
       "regions": [
@@ -9999,7 +9999,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0499",
+      "code": "KR-COAST-0499",
       "gridRow": 59,
       "gridColumn": 26,
       "regions": [
@@ -10019,7 +10019,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0500",
+      "code": "KR-COAST-0500",
       "gridRow": 59,
       "gridColumn": 27,
       "regions": [
@@ -10039,7 +10039,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0501",
+      "code": "KR-COAST-0501",
       "gridRow": 59,
       "gridColumn": 28,
       "regions": [
@@ -10059,7 +10059,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0502",
+      "code": "KR-COAST-0502",
       "gridRow": 59,
       "gridColumn": 29,
       "regions": [
@@ -10079,7 +10079,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0503",
+      "code": "KR-COAST-0503",
       "gridRow": 59,
       "gridColumn": 30,
       "regions": [
@@ -10099,7 +10099,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0504",
+      "code": "KR-COAST-0504",
       "gridRow": 59,
       "gridColumn": 31,
       "regions": [
@@ -10120,7 +10120,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0505",
+      "code": "KR-COAST-0505",
       "gridRow": 59,
       "gridColumn": 32,
       "regions": [
@@ -10140,7 +10140,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0506",
+      "code": "KR-COAST-0506",
       "gridRow": 59,
       "gridColumn": 33,
       "regions": [
@@ -10160,7 +10160,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0507",
+      "code": "KR-COAST-0507",
       "gridRow": 59,
       "gridColumn": 34,
       "regions": [
@@ -10180,7 +10180,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0508",
+      "code": "KR-COAST-0508",
       "gridRow": 59,
       "gridColumn": 35,
       "regions": [
@@ -10200,7 +10200,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0509",
+      "code": "KR-COAST-0509",
       "gridRow": 59,
       "gridColumn": 36,
       "regions": [
@@ -10220,7 +10220,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0510",
+      "code": "KR-COAST-0510",
       "gridRow": 59,
       "gridColumn": 37,
       "regions": [
@@ -10240,7 +10240,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0511",
+      "code": "KR-COAST-0511",
       "gridRow": 59,
       "gridColumn": 38,
       "regions": [
@@ -10260,7 +10260,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0512",
+      "code": "KR-COAST-0512",
       "gridRow": 59,
       "gridColumn": 39,
       "regions": [
@@ -10280,7 +10280,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0513",
+      "code": "KR-COAST-0513",
       "gridRow": 59,
       "gridColumn": 40,
       "regions": [
@@ -10300,7 +10300,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0514",
+      "code": "KR-COAST-0514",
       "gridRow": 59,
       "gridColumn": 41,
       "regions": [
@@ -10320,7 +10320,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0515",
+      "code": "KR-COAST-0515",
       "gridRow": 59,
       "gridColumn": 42,
       "regions": [
@@ -10340,7 +10340,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0516",
+      "code": "KR-COAST-0516",
       "gridRow": 59,
       "gridColumn": 43,
       "regions": [
@@ -10360,7 +10360,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0517",
+      "code": "KR-COAST-0517",
       "gridRow": 59,
       "gridColumn": 44,
       "regions": [
@@ -10380,7 +10380,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0518",
+      "code": "KR-COAST-0518",
       "gridRow": 59,
       "gridColumn": 45,
       "regions": [
@@ -10400,7 +10400,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0519",
+      "code": "KR-COAST-0519",
       "gridRow": 59,
       "gridColumn": 46,
       "regions": [
@@ -10420,7 +10420,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0520",
+      "code": "KR-COAST-0520",
       "gridRow": 59,
       "gridColumn": 47,
       "regions": [
@@ -10440,7 +10440,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0521",
+      "code": "KR-COAST-0521",
       "gridRow": 59,
       "gridColumn": 48,
       "regions": [
@@ -10460,7 +10460,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0522",
+      "code": "KR-COAST-0522",
       "gridRow": 59,
       "gridColumn": 49,
       "regions": [
@@ -10480,7 +10480,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0523",
+      "code": "KR-COAST-0523",
       "gridRow": 60,
       "gridColumn": 22,
       "regions": [
@@ -10500,7 +10500,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0524",
+      "code": "KR-COAST-0524",
       "gridRow": 60,
       "gridColumn": 23,
       "regions": [
@@ -10520,7 +10520,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0525",
+      "code": "KR-COAST-0525",
       "gridRow": 60,
       "gridColumn": 24,
       "regions": [
@@ -10540,7 +10540,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0526",
+      "code": "KR-COAST-0526",
       "gridRow": 60,
       "gridColumn": 25,
       "regions": [
@@ -10560,7 +10560,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0527",
+      "code": "KR-COAST-0527",
       "gridRow": 60,
       "gridColumn": 26,
       "regions": [
@@ -10580,7 +10580,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0528",
+      "code": "KR-COAST-0528",
       "gridRow": 60,
       "gridColumn": 27,
       "regions": [
@@ -10600,7 +10600,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0529",
+      "code": "KR-COAST-0529",
       "gridRow": 60,
       "gridColumn": 28,
       "regions": [
@@ -10620,7 +10620,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0530",
+      "code": "KR-COAST-0530",
       "gridRow": 60,
       "gridColumn": 29,
       "regions": [
@@ -10640,7 +10640,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0531",
+      "code": "KR-COAST-0531",
       "gridRow": 60,
       "gridColumn": 30,
       "regions": [
@@ -10661,7 +10661,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0532",
+      "code": "KR-COAST-0532",
       "gridRow": 60,
       "gridColumn": 31,
       "regions": [
@@ -10681,7 +10681,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0533",
+      "code": "KR-COAST-0533",
       "gridRow": 60,
       "gridColumn": 32,
       "regions": [
@@ -10701,7 +10701,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0534",
+      "code": "KR-COAST-0534",
       "gridRow": 60,
       "gridColumn": 33,
       "regions": [
@@ -10721,7 +10721,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0535",
+      "code": "KR-COAST-0535",
       "gridRow": 60,
       "gridColumn": 34,
       "regions": [
@@ -10741,7 +10741,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0536",
+      "code": "KR-COAST-0536",
       "gridRow": 60,
       "gridColumn": 35,
       "regions": [
@@ -10761,7 +10761,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0537",
+      "code": "KR-COAST-0537",
       "gridRow": 60,
       "gridColumn": 36,
       "regions": [
@@ -10781,7 +10781,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0538",
+      "code": "KR-COAST-0538",
       "gridRow": 60,
       "gridColumn": 37,
       "regions": [
@@ -10801,7 +10801,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0539",
+      "code": "KR-COAST-0539",
       "gridRow": 60,
       "gridColumn": 38,
       "regions": [
@@ -10821,7 +10821,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0540",
+      "code": "KR-COAST-0540",
       "gridRow": 60,
       "gridColumn": 39,
       "regions": [
@@ -10841,7 +10841,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0541",
+      "code": "KR-COAST-0541",
       "gridRow": 60,
       "gridColumn": 40,
       "regions": [
@@ -10861,7 +10861,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0542",
+      "code": "KR-COAST-0542",
       "gridRow": 60,
       "gridColumn": 41,
       "regions": [
@@ -10881,7 +10881,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0543",
+      "code": "KR-COAST-0543",
       "gridRow": 60,
       "gridColumn": 42,
       "regions": [
@@ -10901,7 +10901,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0544",
+      "code": "KR-COAST-0544",
       "gridRow": 60,
       "gridColumn": 43,
       "regions": [
@@ -10921,7 +10921,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0545",
+      "code": "KR-COAST-0545",
       "gridRow": 60,
       "gridColumn": 44,
       "regions": [
@@ -10941,7 +10941,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0546",
+      "code": "KR-COAST-0546",
       "gridRow": 60,
       "gridColumn": 45,
       "regions": [
@@ -10961,7 +10961,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0547",
+      "code": "KR-COAST-0547",
       "gridRow": 60,
       "gridColumn": 46,
       "regions": [
@@ -10981,7 +10981,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0548",
+      "code": "KR-COAST-0548",
       "gridRow": 60,
       "gridColumn": 47,
       "regions": [
@@ -11001,7 +11001,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0549",
+      "code": "KR-COAST-0549",
       "gridRow": 60,
       "gridColumn": 48,
       "regions": [
@@ -11021,7 +11021,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0550",
+      "code": "KR-COAST-0550",
       "gridRow": 61,
       "gridColumn": 23,
       "regions": [
@@ -11041,7 +11041,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0551",
+      "code": "KR-COAST-0551",
       "gridRow": 61,
       "gridColumn": 24,
       "regions": [
@@ -11061,7 +11061,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0552",
+      "code": "KR-COAST-0552",
       "gridRow": 61,
       "gridColumn": 25,
       "regions": [
@@ -11081,7 +11081,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0553",
+      "code": "KR-COAST-0553",
       "gridRow": 61,
       "gridColumn": 26,
       "regions": [
@@ -11101,7 +11101,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0554",
+      "code": "KR-COAST-0554",
       "gridRow": 61,
       "gridColumn": 27,
       "regions": [
@@ -11121,7 +11121,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0555",
+      "code": "KR-COAST-0555",
       "gridRow": 61,
       "gridColumn": 28,
       "regions": [
@@ -11141,7 +11141,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0556",
+      "code": "KR-COAST-0556",
       "gridRow": 61,
       "gridColumn": 29,
       "regions": [
@@ -11161,7 +11161,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0557",
+      "code": "KR-COAST-0557",
       "gridRow": 61,
       "gridColumn": 30,
       "regions": [
@@ -11181,7 +11181,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0558",
+      "code": "KR-COAST-0558",
       "gridRow": 61,
       "gridColumn": 31,
       "regions": [
@@ -11201,7 +11201,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0559",
+      "code": "KR-COAST-0559",
       "gridRow": 61,
       "gridColumn": 32,
       "regions": [
@@ -11221,7 +11221,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0560",
+      "code": "KR-COAST-0560",
       "gridRow": 61,
       "gridColumn": 33,
       "regions": [
@@ -11241,7 +11241,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0561",
+      "code": "KR-COAST-0561",
       "gridRow": 61,
       "gridColumn": 34,
       "regions": [
@@ -11261,7 +11261,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0562",
+      "code": "KR-COAST-0562",
       "gridRow": 61,
       "gridColumn": 35,
       "regions": [
@@ -11281,7 +11281,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0563",
+      "code": "KR-COAST-0563",
       "gridRow": 61,
       "gridColumn": 36,
       "regions": [
@@ -11301,7 +11301,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0564",
+      "code": "KR-COAST-0564",
       "gridRow": 61,
       "gridColumn": 37,
       "regions": [
@@ -11321,7 +11321,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0565",
+      "code": "KR-COAST-0565",
       "gridRow": 61,
       "gridColumn": 38,
       "regions": [
@@ -11341,7 +11341,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0566",
+      "code": "KR-COAST-0566",
       "gridRow": 61,
       "gridColumn": 39,
       "regions": [
@@ -11361,7 +11361,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0567",
+      "code": "KR-COAST-0567",
       "gridRow": 61,
       "gridColumn": 40,
       "regions": [
@@ -11381,7 +11381,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0568",
+      "code": "KR-COAST-0568",
       "gridRow": 61,
       "gridColumn": 41,
       "regions": [
@@ -11401,7 +11401,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0569",
+      "code": "KR-COAST-0569",
       "gridRow": 61,
       "gridColumn": 42,
       "regions": [
@@ -11421,7 +11421,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0570",
+      "code": "KR-COAST-0570",
       "gridRow": 61,
       "gridColumn": 43,
       "regions": [
@@ -11441,7 +11441,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0571",
+      "code": "KR-COAST-0571",
       "gridRow": 61,
       "gridColumn": 44,
       "regions": [
@@ -11461,7 +11461,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0572",
+      "code": "KR-COAST-0572",
       "gridRow": 61,
       "gridColumn": 45,
       "regions": [
@@ -11481,7 +11481,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0573",
+      "code": "KR-COAST-0573",
       "gridRow": 61,
       "gridColumn": 46,
       "regions": [
@@ -11501,7 +11501,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0574",
+      "code": "KR-COAST-0574",
       "gridRow": 61,
       "gridColumn": 47,
       "regions": [
@@ -11521,7 +11521,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0575",
+      "code": "KR-COAST-0575",
       "gridRow": 61,
       "gridColumn": 48,
       "regions": [
@@ -11541,7 +11541,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0576",
+      "code": "KR-COAST-0576",
       "gridRow": 62,
       "gridColumn": 23,
       "regions": [
@@ -11561,7 +11561,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0577",
+      "code": "KR-COAST-0577",
       "gridRow": 62,
       "gridColumn": 24,
       "regions": [
@@ -11581,7 +11581,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0578",
+      "code": "KR-COAST-0578",
       "gridRow": 62,
       "gridColumn": 25,
       "regions": [
@@ -11601,7 +11601,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0579",
+      "code": "KR-COAST-0579",
       "gridRow": 62,
       "gridColumn": 26,
       "regions": [
@@ -11621,7 +11621,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0580",
+      "code": "KR-COAST-0580",
       "gridRow": 62,
       "gridColumn": 27,
       "regions": [
@@ -11641,7 +11641,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0581",
+      "code": "KR-COAST-0581",
       "gridRow": 62,
       "gridColumn": 28,
       "regions": [
@@ -11661,7 +11661,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0582",
+      "code": "KR-COAST-0582",
       "gridRow": 62,
       "gridColumn": 29,
       "regions": [
@@ -11681,7 +11681,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0583",
+      "code": "KR-COAST-0583",
       "gridRow": 62,
       "gridColumn": 30,
       "regions": [
@@ -11701,7 +11701,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0584",
+      "code": "KR-COAST-0584",
       "gridRow": 62,
       "gridColumn": 31,
       "regions": [
@@ -11721,7 +11721,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0585",
+      "code": "KR-COAST-0585",
       "gridRow": 62,
       "gridColumn": 32,
       "regions": [
@@ -11741,7 +11741,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0586",
+      "code": "KR-COAST-0586",
       "gridRow": 62,
       "gridColumn": 33,
       "regions": [
@@ -11761,7 +11761,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0587",
+      "code": "KR-COAST-0587",
       "gridRow": 62,
       "gridColumn": 34,
       "regions": [
@@ -11781,7 +11781,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0588",
+      "code": "KR-COAST-0588",
       "gridRow": 62,
       "gridColumn": 35,
       "regions": [
@@ -11801,7 +11801,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0589",
+      "code": "KR-COAST-0589",
       "gridRow": 62,
       "gridColumn": 36,
       "regions": [
@@ -11821,7 +11821,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0590",
+      "code": "KR-COAST-0590",
       "gridRow": 62,
       "gridColumn": 37,
       "regions": [
@@ -11841,7 +11841,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0591",
+      "code": "KR-COAST-0591",
       "gridRow": 62,
       "gridColumn": 38,
       "regions": [
@@ -11861,7 +11861,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0592",
+      "code": "KR-COAST-0592",
       "gridRow": 62,
       "gridColumn": 39,
       "regions": [
@@ -11881,7 +11881,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0593",
+      "code": "KR-COAST-0593",
       "gridRow": 62,
       "gridColumn": 40,
       "regions": [
@@ -11901,7 +11901,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0594",
+      "code": "KR-COAST-0594",
       "gridRow": 62,
       "gridColumn": 41,
       "regions": [
@@ -11921,7 +11921,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0595",
+      "code": "KR-COAST-0595",
       "gridRow": 62,
       "gridColumn": 42,
       "regions": [
@@ -11941,7 +11941,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0596",
+      "code": "KR-COAST-0596",
       "gridRow": 62,
       "gridColumn": 43,
       "regions": [
@@ -11961,7 +11961,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0597",
+      "code": "KR-COAST-0597",
       "gridRow": 62,
       "gridColumn": 44,
       "regions": [
@@ -11981,7 +11981,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0598",
+      "code": "KR-COAST-0598",
       "gridRow": 62,
       "gridColumn": 45,
       "regions": [
@@ -12001,7 +12001,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0599",
+      "code": "KR-COAST-0599",
       "gridRow": 62,
       "gridColumn": 46,
       "regions": [
@@ -12021,7 +12021,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0600",
+      "code": "KR-COAST-0600",
       "gridRow": 62,
       "gridColumn": 47,
       "regions": [
@@ -12041,7 +12041,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0601",
+      "code": "KR-COAST-0601",
       "gridRow": 62,
       "gridColumn": 48,
       "regions": [
@@ -12061,7 +12061,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0602",
+      "code": "KR-COAST-0602",
       "gridRow": 63,
       "gridColumn": 24,
       "regions": [
@@ -12081,7 +12081,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0603",
+      "code": "KR-COAST-0603",
       "gridRow": 63,
       "gridColumn": 25,
       "regions": [
@@ -12101,7 +12101,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0604",
+      "code": "KR-COAST-0604",
       "gridRow": 63,
       "gridColumn": 26,
       "regions": [
@@ -12121,7 +12121,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0605",
+      "code": "KR-COAST-0605",
       "gridRow": 63,
       "gridColumn": 27,
       "regions": [
@@ -12141,7 +12141,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0606",
+      "code": "KR-COAST-0606",
       "gridRow": 63,
       "gridColumn": 28,
       "regions": [
@@ -12161,7 +12161,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0607",
+      "code": "KR-COAST-0607",
       "gridRow": 63,
       "gridColumn": 29,
       "regions": [
@@ -12181,7 +12181,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0608",
+      "code": "KR-COAST-0608",
       "gridRow": 63,
       "gridColumn": 30,
       "regions": [
@@ -12201,7 +12201,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0609",
+      "code": "KR-COAST-0609",
       "gridRow": 63,
       "gridColumn": 31,
       "regions": [
@@ -12221,7 +12221,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0610",
+      "code": "KR-COAST-0610",
       "gridRow": 63,
       "gridColumn": 32,
       "regions": [
@@ -12241,7 +12241,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0611",
+      "code": "KR-COAST-0611",
       "gridRow": 63,
       "gridColumn": 33,
       "regions": [
@@ -12261,7 +12261,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0612",
+      "code": "KR-COAST-0612",
       "gridRow": 63,
       "gridColumn": 34,
       "regions": [
@@ -12281,7 +12281,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0613",
+      "code": "KR-COAST-0613",
       "gridRow": 63,
       "gridColumn": 35,
       "regions": [
@@ -12301,7 +12301,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0614",
+      "code": "KR-COAST-0614",
       "gridRow": 63,
       "gridColumn": 36,
       "regions": [
@@ -12321,7 +12321,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0615",
+      "code": "KR-COAST-0615",
       "gridRow": 63,
       "gridColumn": 37,
       "regions": [
@@ -12341,7 +12341,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0616",
+      "code": "KR-COAST-0616",
       "gridRow": 63,
       "gridColumn": 38,
       "regions": [
@@ -12361,7 +12361,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0617",
+      "code": "KR-COAST-0617",
       "gridRow": 63,
       "gridColumn": 39,
       "regions": [
@@ -12381,7 +12381,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0618",
+      "code": "KR-COAST-0618",
       "gridRow": 63,
       "gridColumn": 40,
       "regions": [
@@ -12401,7 +12401,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0619",
+      "code": "KR-COAST-0619",
       "gridRow": 63,
       "gridColumn": 41,
       "regions": [
@@ -12421,7 +12421,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0620",
+      "code": "KR-COAST-0620",
       "gridRow": 63,
       "gridColumn": 42,
       "regions": [
@@ -12441,7 +12441,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0621",
+      "code": "KR-COAST-0621",
       "gridRow": 63,
       "gridColumn": 43,
       "regions": [
@@ -12461,7 +12461,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0622",
+      "code": "KR-COAST-0622",
       "gridRow": 63,
       "gridColumn": 44,
       "regions": [
@@ -12481,7 +12481,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0623",
+      "code": "KR-COAST-0623",
       "gridRow": 63,
       "gridColumn": 45,
       "regions": [
@@ -12501,7 +12501,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0624",
+      "code": "KR-COAST-0624",
       "gridRow": 63,
       "gridColumn": 46,
       "regions": [
@@ -12521,7 +12521,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0625",
+      "code": "KR-COAST-0625",
       "gridRow": 63,
       "gridColumn": 47,
       "regions": [
@@ -12541,7 +12541,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0626",
+      "code": "KR-COAST-0626",
       "gridRow": 63,
       "gridColumn": 48,
       "regions": [
@@ -12561,7 +12561,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0627",
+      "code": "KR-COAST-0627",
       "gridRow": 63,
       "gridColumn": 49,
       "regions": [
@@ -12581,7 +12581,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0628",
+      "code": "KR-COAST-0628",
       "gridRow": 64,
       "gridColumn": 25,
       "regions": [
@@ -12601,7 +12601,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0629",
+      "code": "KR-COAST-0629",
       "gridRow": 64,
       "gridColumn": 26,
       "regions": [
@@ -12621,7 +12621,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0630",
+      "code": "KR-COAST-0630",
       "gridRow": 64,
       "gridColumn": 27,
       "regions": [
@@ -12641,7 +12641,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0631",
+      "code": "KR-COAST-0631",
       "gridRow": 64,
       "gridColumn": 28,
       "regions": [
@@ -12661,7 +12661,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0632",
+      "code": "KR-COAST-0632",
       "gridRow": 64,
       "gridColumn": 29,
       "regions": [
@@ -12681,7 +12681,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0633",
+      "code": "KR-COAST-0633",
       "gridRow": 64,
       "gridColumn": 30,
       "regions": [
@@ -12701,7 +12701,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0634",
+      "code": "KR-COAST-0634",
       "gridRow": 64,
       "gridColumn": 31,
       "regions": [
@@ -12721,7 +12721,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0635",
+      "code": "KR-COAST-0635",
       "gridRow": 64,
       "gridColumn": 32,
       "regions": [
@@ -12741,7 +12741,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0636",
+      "code": "KR-COAST-0636",
       "gridRow": 64,
       "gridColumn": 33,
       "regions": [
@@ -12761,7 +12761,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0637",
+      "code": "KR-COAST-0637",
       "gridRow": 64,
       "gridColumn": 34,
       "regions": [
@@ -12781,7 +12781,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0638",
+      "code": "KR-COAST-0638",
       "gridRow": 64,
       "gridColumn": 35,
       "regions": [
@@ -12801,7 +12801,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0639",
+      "code": "KR-COAST-0639",
       "gridRow": 64,
       "gridColumn": 36,
       "regions": [
@@ -12821,7 +12821,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0640",
+      "code": "KR-COAST-0640",
       "gridRow": 64,
       "gridColumn": 37,
       "regions": [
@@ -12841,7 +12841,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0641",
+      "code": "KR-COAST-0641",
       "gridRow": 64,
       "gridColumn": 38,
       "regions": [
@@ -12861,7 +12861,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0642",
+      "code": "KR-COAST-0642",
       "gridRow": 64,
       "gridColumn": 39,
       "regions": [
@@ -12881,7 +12881,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0643",
+      "code": "KR-COAST-0643",
       "gridRow": 64,
       "gridColumn": 40,
       "regions": [
@@ -12901,7 +12901,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0644",
+      "code": "KR-COAST-0644",
       "gridRow": 64,
       "gridColumn": 41,
       "regions": [
@@ -12922,7 +12922,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0645",
+      "code": "KR-COAST-0645",
       "gridRow": 64,
       "gridColumn": 42,
       "regions": [
@@ -12942,7 +12942,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0646",
+      "code": "KR-COAST-0646",
       "gridRow": 64,
       "gridColumn": 43,
       "regions": [
@@ -12962,7 +12962,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0647",
+      "code": "KR-COAST-0647",
       "gridRow": 64,
       "gridColumn": 44,
       "regions": [
@@ -12982,7 +12982,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0648",
+      "code": "KR-COAST-0648",
       "gridRow": 64,
       "gridColumn": 45,
       "regions": [
@@ -13002,7 +13002,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0649",
+      "code": "KR-COAST-0649",
       "gridRow": 64,
       "gridColumn": 46,
       "regions": [
@@ -13022,7 +13022,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0650",
+      "code": "KR-COAST-0650",
       "gridRow": 64,
       "gridColumn": 47,
       "regions": [
@@ -13042,7 +13042,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0651",
+      "code": "KR-COAST-0651",
       "gridRow": 64,
       "gridColumn": 48,
       "regions": [
@@ -13062,7 +13062,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0652",
+      "code": "KR-COAST-0652",
       "gridRow": 64,
       "gridColumn": 50,
       "regions": [
@@ -13082,7 +13082,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0653",
+      "code": "KR-COAST-0653",
       "gridRow": 65,
       "gridColumn": 23,
       "regions": [
@@ -13102,7 +13102,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0654",
+      "code": "KR-COAST-0654",
       "gridRow": 65,
       "gridColumn": 24,
       "regions": [
@@ -13122,7 +13122,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0655",
+      "code": "KR-COAST-0655",
       "gridRow": 65,
       "gridColumn": 25,
       "regions": [
@@ -13142,7 +13142,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0656",
+      "code": "KR-COAST-0656",
       "gridRow": 65,
       "gridColumn": 26,
       "regions": [
@@ -13162,7 +13162,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0657",
+      "code": "KR-COAST-0657",
       "gridRow": 65,
       "gridColumn": 27,
       "regions": [
@@ -13182,7 +13182,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0658",
+      "code": "KR-COAST-0658",
       "gridRow": 65,
       "gridColumn": 28,
       "regions": [
@@ -13202,7 +13202,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0659",
+      "code": "KR-COAST-0659",
       "gridRow": 65,
       "gridColumn": 29,
       "regions": [
@@ -13222,7 +13222,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0660",
+      "code": "KR-COAST-0660",
       "gridRow": 65,
       "gridColumn": 30,
       "regions": [
@@ -13242,7 +13242,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0661",
+      "code": "KR-COAST-0661",
       "gridRow": 65,
       "gridColumn": 31,
       "regions": [
@@ -13262,7 +13262,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0662",
+      "code": "KR-COAST-0662",
       "gridRow": 65,
       "gridColumn": 32,
       "regions": [
@@ -13282,7 +13282,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0663",
+      "code": "KR-COAST-0663",
       "gridRow": 65,
       "gridColumn": 33,
       "regions": [
@@ -13302,7 +13302,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0664",
+      "code": "KR-COAST-0664",
       "gridRow": 65,
       "gridColumn": 34,
       "regions": [
@@ -13322,7 +13322,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0665",
+      "code": "KR-COAST-0665",
       "gridRow": 65,
       "gridColumn": 35,
       "regions": [
@@ -13342,7 +13342,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0666",
+      "code": "KR-COAST-0666",
       "gridRow": 65,
       "gridColumn": 36,
       "regions": [
@@ -13362,7 +13362,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0667",
+      "code": "KR-COAST-0667",
       "gridRow": 65,
       "gridColumn": 37,
       "regions": [
@@ -13382,7 +13382,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0668",
+      "code": "KR-COAST-0668",
       "gridRow": 65,
       "gridColumn": 38,
       "regions": [
@@ -13402,7 +13402,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0669",
+      "code": "KR-COAST-0669",
       "gridRow": 65,
       "gridColumn": 39,
       "regions": [
@@ -13422,7 +13422,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0670",
+      "code": "KR-COAST-0670",
       "gridRow": 65,
       "gridColumn": 40,
       "regions": [
@@ -13442,7 +13442,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0671",
+      "code": "KR-COAST-0671",
       "gridRow": 65,
       "gridColumn": 41,
       "regions": [
@@ -13463,7 +13463,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0672",
+      "code": "KR-COAST-0672",
       "gridRow": 65,
       "gridColumn": 42,
       "regions": [
@@ -13483,7 +13483,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0673",
+      "code": "KR-COAST-0673",
       "gridRow": 65,
       "gridColumn": 43,
       "regions": [
@@ -13503,7 +13503,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0674",
+      "code": "KR-COAST-0674",
       "gridRow": 65,
       "gridColumn": 44,
       "regions": [
@@ -13523,7 +13523,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0675",
+      "code": "KR-COAST-0675",
       "gridRow": 65,
       "gridColumn": 45,
       "regions": [
@@ -13543,7 +13543,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0676",
+      "code": "KR-COAST-0676",
       "gridRow": 65,
       "gridColumn": 46,
       "regions": [
@@ -13563,7 +13563,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0677",
+      "code": "KR-COAST-0677",
       "gridRow": 65,
       "gridColumn": 47,
       "regions": [
@@ -13583,7 +13583,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0678",
+      "code": "KR-COAST-0678",
       "gridRow": 65,
       "gridColumn": 48,
       "regions": [
@@ -13603,7 +13603,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0679",
+      "code": "KR-COAST-0679",
       "gridRow": 65,
       "gridColumn": 49,
       "regions": [
@@ -13623,7 +13623,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0680",
+      "code": "KR-COAST-0680",
       "gridRow": 65,
       "gridColumn": 50,
       "regions": [
@@ -13643,7 +13643,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0681",
+      "code": "KR-COAST-0681",
       "gridRow": 66,
       "gridColumn": 25,
       "regions": [
@@ -13663,7 +13663,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0682",
+      "code": "KR-COAST-0682",
       "gridRow": 66,
       "gridColumn": 26,
       "regions": [
@@ -13683,7 +13683,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0683",
+      "code": "KR-COAST-0683",
       "gridRow": 66,
       "gridColumn": 27,
       "regions": [
@@ -13703,7 +13703,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0684",
+      "code": "KR-COAST-0684",
       "gridRow": 66,
       "gridColumn": 28,
       "regions": [
@@ -13723,7 +13723,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0685",
+      "code": "KR-COAST-0685",
       "gridRow": 66,
       "gridColumn": 29,
       "regions": [
@@ -13743,7 +13743,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0686",
+      "code": "KR-COAST-0686",
       "gridRow": 66,
       "gridColumn": 30,
       "regions": [
@@ -13763,7 +13763,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0687",
+      "code": "KR-COAST-0687",
       "gridRow": 66,
       "gridColumn": 31,
       "regions": [
@@ -13783,7 +13783,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0688",
+      "code": "KR-COAST-0688",
       "gridRow": 66,
       "gridColumn": 32,
       "regions": [
@@ -13803,7 +13803,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0689",
+      "code": "KR-COAST-0689",
       "gridRow": 66,
       "gridColumn": 33,
       "regions": [
@@ -13823,7 +13823,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0690",
+      "code": "KR-COAST-0690",
       "gridRow": 66,
       "gridColumn": 34,
       "regions": [
@@ -13843,7 +13843,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0691",
+      "code": "KR-COAST-0691",
       "gridRow": 66,
       "gridColumn": 35,
       "regions": [
@@ -13863,7 +13863,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0692",
+      "code": "KR-COAST-0692",
       "gridRow": 66,
       "gridColumn": 36,
       "regions": [
@@ -13883,7 +13883,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0693",
+      "code": "KR-COAST-0693",
       "gridRow": 66,
       "gridColumn": 37,
       "regions": [
@@ -13903,7 +13903,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0694",
+      "code": "KR-COAST-0694",
       "gridRow": 66,
       "gridColumn": 38,
       "regions": [
@@ -13923,7 +13923,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0695",
+      "code": "KR-COAST-0695",
       "gridRow": 66,
       "gridColumn": 39,
       "regions": [
@@ -13943,7 +13943,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0696",
+      "code": "KR-COAST-0696",
       "gridRow": 66,
       "gridColumn": 40,
       "regions": [
@@ -13963,7 +13963,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0697",
+      "code": "KR-COAST-0697",
       "gridRow": 66,
       "gridColumn": 41,
       "regions": [
@@ -13984,7 +13984,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0698",
+      "code": "KR-COAST-0698",
       "gridRow": 66,
       "gridColumn": 42,
       "regions": [
@@ -14005,7 +14005,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0699",
+      "code": "KR-COAST-0699",
       "gridRow": 66,
       "gridColumn": 43,
       "regions": [
@@ -14025,7 +14025,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0700",
+      "code": "KR-COAST-0700",
       "gridRow": 66,
       "gridColumn": 44,
       "regions": [
@@ -14045,7 +14045,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0701",
+      "code": "KR-COAST-0701",
       "gridRow": 66,
       "gridColumn": 45,
       "regions": [
@@ -14065,7 +14065,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0702",
+      "code": "KR-COAST-0702",
       "gridRow": 66,
       "gridColumn": 46,
       "regions": [
@@ -14085,7 +14085,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0703",
+      "code": "KR-COAST-0703",
       "gridRow": 66,
       "gridColumn": 47,
       "regions": [
@@ -14105,7 +14105,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0704",
+      "code": "KR-COAST-0704",
       "gridRow": 66,
       "gridColumn": 48,
       "regions": [
@@ -14125,7 +14125,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0705",
+      "code": "KR-COAST-0705",
       "gridRow": 66,
       "gridColumn": 49,
       "regions": [
@@ -14145,7 +14145,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0706",
+      "code": "KR-COAST-0706",
       "gridRow": 66,
       "gridColumn": 50,
       "regions": [
@@ -14165,7 +14165,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0707",
+      "code": "KR-COAST-0707",
       "gridRow": 67,
       "gridColumn": 24,
       "regions": [
@@ -14185,7 +14185,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0708",
+      "code": "KR-COAST-0708",
       "gridRow": 67,
       "gridColumn": 25,
       "regions": [
@@ -14205,7 +14205,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0709",
+      "code": "KR-COAST-0709",
       "gridRow": 67,
       "gridColumn": 26,
       "regions": [
@@ -14225,7 +14225,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0710",
+      "code": "KR-COAST-0710",
       "gridRow": 67,
       "gridColumn": 27,
       "regions": [
@@ -14245,7 +14245,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0711",
+      "code": "KR-COAST-0711",
       "gridRow": 67,
       "gridColumn": 28,
       "regions": [
@@ -14265,7 +14265,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0712",
+      "code": "KR-COAST-0712",
       "gridRow": 67,
       "gridColumn": 29,
       "regions": [
@@ -14285,7 +14285,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0713",
+      "code": "KR-COAST-0713",
       "gridRow": 67,
       "gridColumn": 30,
       "regions": [
@@ -14305,7 +14305,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0714",
+      "code": "KR-COAST-0714",
       "gridRow": 67,
       "gridColumn": 31,
       "regions": [
@@ -14325,7 +14325,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0715",
+      "code": "KR-COAST-0715",
       "gridRow": 67,
       "gridColumn": 32,
       "regions": [
@@ -14345,7 +14345,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0716",
+      "code": "KR-COAST-0716",
       "gridRow": 67,
       "gridColumn": 33,
       "regions": [
@@ -14365,7 +14365,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0717",
+      "code": "KR-COAST-0717",
       "gridRow": 67,
       "gridColumn": 34,
       "regions": [
@@ -14385,7 +14385,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0718",
+      "code": "KR-COAST-0718",
       "gridRow": 67,
       "gridColumn": 35,
       "regions": [
@@ -14405,7 +14405,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0719",
+      "code": "KR-COAST-0719",
       "gridRow": 67,
       "gridColumn": 36,
       "regions": [
@@ -14425,7 +14425,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0720",
+      "code": "KR-COAST-0720",
       "gridRow": 67,
       "gridColumn": 37,
       "regions": [
@@ -14445,7 +14445,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0721",
+      "code": "KR-COAST-0721",
       "gridRow": 67,
       "gridColumn": 38,
       "regions": [
@@ -14465,7 +14465,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0722",
+      "code": "KR-COAST-0722",
       "gridRow": 67,
       "gridColumn": 39,
       "regions": [
@@ -14485,7 +14485,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0723",
+      "code": "KR-COAST-0723",
       "gridRow": 67,
       "gridColumn": 40,
       "regions": [
@@ -14505,7 +14505,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0724",
+      "code": "KR-COAST-0724",
       "gridRow": 67,
       "gridColumn": 41,
       "regions": [
@@ -14525,7 +14525,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0725",
+      "code": "KR-COAST-0725",
       "gridRow": 67,
       "gridColumn": 42,
       "regions": [
@@ -14545,7 +14545,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0726",
+      "code": "KR-COAST-0726",
       "gridRow": 67,
       "gridColumn": 43,
       "regions": [
@@ -14565,7 +14565,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0727",
+      "code": "KR-COAST-0727",
       "gridRow": 67,
       "gridColumn": 44,
       "regions": [
@@ -14585,7 +14585,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0728",
+      "code": "KR-COAST-0728",
       "gridRow": 67,
       "gridColumn": 45,
       "regions": [
@@ -14605,7 +14605,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0729",
+      "code": "KR-COAST-0729",
       "gridRow": 67,
       "gridColumn": 46,
       "regions": [
@@ -14625,7 +14625,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0730",
+      "code": "KR-COAST-0730",
       "gridRow": 67,
       "gridColumn": 47,
       "regions": [
@@ -14645,7 +14645,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0731",
+      "code": "KR-COAST-0731",
       "gridRow": 67,
       "gridColumn": 48,
       "regions": [
@@ -14665,7 +14665,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0732",
+      "code": "KR-COAST-0732",
       "gridRow": 67,
       "gridColumn": 49,
       "regions": [
@@ -14685,7 +14685,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0733",
+      "code": "KR-COAST-0733",
       "gridRow": 68,
       "gridColumn": 19,
       "regions": [
@@ -14705,7 +14705,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0734",
+      "code": "KR-COAST-0734",
       "gridRow": 68,
       "gridColumn": 23,
       "regions": [
@@ -14725,7 +14725,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0735",
+      "code": "KR-COAST-0735",
       "gridRow": 68,
       "gridColumn": 24,
       "regions": [
@@ -14745,7 +14745,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0736",
+      "code": "KR-COAST-0736",
       "gridRow": 68,
       "gridColumn": 25,
       "regions": [
@@ -14765,7 +14765,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0737",
+      "code": "KR-COAST-0737",
       "gridRow": 68,
       "gridColumn": 26,
       "regions": [
@@ -14785,7 +14785,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0738",
+      "code": "KR-COAST-0738",
       "gridRow": 68,
       "gridColumn": 27,
       "regions": [
@@ -14805,7 +14805,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0739",
+      "code": "KR-COAST-0739",
       "gridRow": 68,
       "gridColumn": 28,
       "regions": [
@@ -14825,7 +14825,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0740",
+      "code": "KR-COAST-0740",
       "gridRow": 68,
       "gridColumn": 29,
       "regions": [
@@ -14845,7 +14845,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0741",
+      "code": "KR-COAST-0741",
       "gridRow": 68,
       "gridColumn": 30,
       "regions": [
@@ -14865,7 +14865,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0742",
+      "code": "KR-COAST-0742",
       "gridRow": 68,
       "gridColumn": 31,
       "regions": [
@@ -14885,7 +14885,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0743",
+      "code": "KR-COAST-0743",
       "gridRow": 68,
       "gridColumn": 32,
       "regions": [
@@ -14905,7 +14905,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0744",
+      "code": "KR-COAST-0744",
       "gridRow": 68,
       "gridColumn": 33,
       "regions": [
@@ -14925,7 +14925,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0745",
+      "code": "KR-COAST-0745",
       "gridRow": 68,
       "gridColumn": 34,
       "regions": [
@@ -14945,7 +14945,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0746",
+      "code": "KR-COAST-0746",
       "gridRow": 68,
       "gridColumn": 35,
       "regions": [
@@ -14965,7 +14965,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0747",
+      "code": "KR-COAST-0747",
       "gridRow": 68,
       "gridColumn": 36,
       "regions": [
@@ -14985,7 +14985,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0748",
+      "code": "KR-COAST-0748",
       "gridRow": 68,
       "gridColumn": 37,
       "regions": [
@@ -15005,7 +15005,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0749",
+      "code": "KR-COAST-0749",
       "gridRow": 68,
       "gridColumn": 38,
       "regions": [
@@ -15025,7 +15025,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0750",
+      "code": "KR-COAST-0750",
       "gridRow": 68,
       "gridColumn": 39,
       "regions": [
@@ -15045,7 +15045,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0751",
+      "code": "KR-COAST-0751",
       "gridRow": 68,
       "gridColumn": 40,
       "regions": [
@@ -15065,7 +15065,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0752",
+      "code": "KR-COAST-0752",
       "gridRow": 68,
       "gridColumn": 41,
       "regions": [
@@ -15085,7 +15085,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0753",
+      "code": "KR-COAST-0753",
       "gridRow": 68,
       "gridColumn": 42,
       "regions": [
@@ -15105,7 +15105,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0754",
+      "code": "KR-COAST-0754",
       "gridRow": 68,
       "gridColumn": 43,
       "regions": [
@@ -15125,7 +15125,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0755",
+      "code": "KR-COAST-0755",
       "gridRow": 68,
       "gridColumn": 44,
       "regions": [
@@ -15145,7 +15145,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0756",
+      "code": "KR-COAST-0756",
       "gridRow": 68,
       "gridColumn": 45,
       "regions": [
@@ -15165,7 +15165,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0757",
+      "code": "KR-COAST-0757",
       "gridRow": 68,
       "gridColumn": 46,
       "regions": [
@@ -15185,7 +15185,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0758",
+      "code": "KR-COAST-0758",
       "gridRow": 68,
       "gridColumn": 47,
       "regions": [
@@ -15205,7 +15205,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0759",
+      "code": "KR-COAST-0759",
       "gridRow": 68,
       "gridColumn": 48,
       "regions": [
@@ -15225,7 +15225,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0760",
+      "code": "KR-COAST-0760",
       "gridRow": 68,
       "gridColumn": 49,
       "regions": [
@@ -15245,7 +15245,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0761",
+      "code": "KR-COAST-0761",
       "gridRow": 69,
       "gridColumn": 25,
       "regions": [
@@ -15265,7 +15265,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0762",
+      "code": "KR-COAST-0762",
       "gridRow": 69,
       "gridColumn": 26,
       "regions": [
@@ -15285,7 +15285,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0763",
+      "code": "KR-COAST-0763",
       "gridRow": 69,
       "gridColumn": 27,
       "regions": [
@@ -15305,7 +15305,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0764",
+      "code": "KR-COAST-0764",
       "gridRow": 69,
       "gridColumn": 28,
       "regions": [
@@ -15325,7 +15325,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0765",
+      "code": "KR-COAST-0765",
       "gridRow": 69,
       "gridColumn": 29,
       "regions": [
@@ -15345,7 +15345,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0766",
+      "code": "KR-COAST-0766",
       "gridRow": 69,
       "gridColumn": 30,
       "regions": [
@@ -15365,7 +15365,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0767",
+      "code": "KR-COAST-0767",
       "gridRow": 69,
       "gridColumn": 31,
       "regions": [
@@ -15385,7 +15385,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0768",
+      "code": "KR-COAST-0768",
       "gridRow": 69,
       "gridColumn": 32,
       "regions": [
@@ -15405,7 +15405,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0769",
+      "code": "KR-COAST-0769",
       "gridRow": 69,
       "gridColumn": 33,
       "regions": [
@@ -15425,7 +15425,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0770",
+      "code": "KR-COAST-0770",
       "gridRow": 69,
       "gridColumn": 34,
       "regions": [
@@ -15445,7 +15445,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0771",
+      "code": "KR-COAST-0771",
       "gridRow": 69,
       "gridColumn": 35,
       "regions": [
@@ -15465,7 +15465,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0772",
+      "code": "KR-COAST-0772",
       "gridRow": 69,
       "gridColumn": 36,
       "regions": [
@@ -15485,7 +15485,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0773",
+      "code": "KR-COAST-0773",
       "gridRow": 69,
       "gridColumn": 37,
       "regions": [
@@ -15505,7 +15505,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0774",
+      "code": "KR-COAST-0774",
       "gridRow": 69,
       "gridColumn": 38,
       "regions": [
@@ -15525,7 +15525,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0775",
+      "code": "KR-COAST-0775",
       "gridRow": 69,
       "gridColumn": 39,
       "regions": [
@@ -15545,7 +15545,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0776",
+      "code": "KR-COAST-0776",
       "gridRow": 69,
       "gridColumn": 40,
       "regions": [
@@ -15565,7 +15565,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0777",
+      "code": "KR-COAST-0777",
       "gridRow": 69,
       "gridColumn": 41,
       "regions": [
@@ -15585,7 +15585,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0778",
+      "code": "KR-COAST-0778",
       "gridRow": 69,
       "gridColumn": 42,
       "regions": [
@@ -15605,7 +15605,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0779",
+      "code": "KR-COAST-0779",
       "gridRow": 69,
       "gridColumn": 43,
       "regions": [
@@ -15625,7 +15625,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0780",
+      "code": "KR-COAST-0780",
       "gridRow": 69,
       "gridColumn": 44,
       "regions": [
@@ -15645,7 +15645,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0781",
+      "code": "KR-COAST-0781",
       "gridRow": 69,
       "gridColumn": 45,
       "regions": [
@@ -15665,7 +15665,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0782",
+      "code": "KR-COAST-0782",
       "gridRow": 69,
       "gridColumn": 46,
       "regions": [
@@ -15685,7 +15685,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0783",
+      "code": "KR-COAST-0783",
       "gridRow": 69,
       "gridColumn": 47,
       "regions": [
@@ -15706,7 +15706,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0784",
+      "code": "KR-COAST-0784",
       "gridRow": 69,
       "gridColumn": 48,
       "regions": [
@@ -15726,7 +15726,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0785",
+      "code": "KR-COAST-0785",
       "gridRow": 69,
       "gridColumn": 49,
       "regions": [
@@ -15747,7 +15747,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0786",
+      "code": "KR-COAST-0786",
       "gridRow": 70,
       "gridColumn": 23,
       "regions": [
@@ -15767,7 +15767,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0787",
+      "code": "KR-COAST-0787",
       "gridRow": 70,
       "gridColumn": 24,
       "regions": [
@@ -15787,7 +15787,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0788",
+      "code": "KR-COAST-0788",
       "gridRow": 70,
       "gridColumn": 25,
       "regions": [
@@ -15807,7 +15807,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0789",
+      "code": "KR-COAST-0789",
       "gridRow": 70,
       "gridColumn": 26,
       "regions": [
@@ -15827,7 +15827,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0790",
+      "code": "KR-COAST-0790",
       "gridRow": 70,
       "gridColumn": 27,
       "regions": [
@@ -15847,7 +15847,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0791",
+      "code": "KR-COAST-0791",
       "gridRow": 70,
       "gridColumn": 28,
       "regions": [
@@ -15867,7 +15867,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0792",
+      "code": "KR-COAST-0792",
       "gridRow": 70,
       "gridColumn": 29,
       "regions": [
@@ -15887,7 +15887,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0793",
+      "code": "KR-COAST-0793",
       "gridRow": 70,
       "gridColumn": 30,
       "regions": [
@@ -15907,7 +15907,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0794",
+      "code": "KR-COAST-0794",
       "gridRow": 70,
       "gridColumn": 31,
       "regions": [
@@ -15927,7 +15927,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0795",
+      "code": "KR-COAST-0795",
       "gridRow": 70,
       "gridColumn": 32,
       "regions": [
@@ -15947,7 +15947,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0796",
+      "code": "KR-COAST-0796",
       "gridRow": 70,
       "gridColumn": 33,
       "regions": [
@@ -15967,7 +15967,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0797",
+      "code": "KR-COAST-0797",
       "gridRow": 70,
       "gridColumn": 34,
       "regions": [
@@ -15987,7 +15987,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0798",
+      "code": "KR-COAST-0798",
       "gridRow": 70,
       "gridColumn": 35,
       "regions": [
@@ -16007,7 +16007,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0799",
+      "code": "KR-COAST-0799",
       "gridRow": 70,
       "gridColumn": 36,
       "regions": [
@@ -16027,7 +16027,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0800",
+      "code": "KR-COAST-0800",
       "gridRow": 70,
       "gridColumn": 37,
       "regions": [
@@ -16047,7 +16047,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0801",
+      "code": "KR-COAST-0801",
       "gridRow": 70,
       "gridColumn": 38,
       "regions": [
@@ -16067,7 +16067,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0802",
+      "code": "KR-COAST-0802",
       "gridRow": 70,
       "gridColumn": 39,
       "regions": [
@@ -16087,7 +16087,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0803",
+      "code": "KR-COAST-0803",
       "gridRow": 70,
       "gridColumn": 40,
       "regions": [
@@ -16107,7 +16107,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0804",
+      "code": "KR-COAST-0804",
       "gridRow": 70,
       "gridColumn": 41,
       "regions": [
@@ -16127,7 +16127,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0805",
+      "code": "KR-COAST-0805",
       "gridRow": 70,
       "gridColumn": 42,
       "regions": [
@@ -16147,7 +16147,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0806",
+      "code": "KR-COAST-0806",
       "gridRow": 70,
       "gridColumn": 43,
       "regions": [
@@ -16167,7 +16167,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0807",
+      "code": "KR-COAST-0807",
       "gridRow": 70,
       "gridColumn": 44,
       "regions": [
@@ -16187,7 +16187,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0808",
+      "code": "KR-COAST-0808",
       "gridRow": 70,
       "gridColumn": 45,
       "regions": [
@@ -16207,7 +16207,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0809",
+      "code": "KR-COAST-0809",
       "gridRow": 70,
       "gridColumn": 46,
       "regions": [
@@ -16227,7 +16227,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0810",
+      "code": "KR-COAST-0810",
       "gridRow": 70,
       "gridColumn": 47,
       "regions": [
@@ -16247,7 +16247,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0811",
+      "code": "KR-COAST-0811",
       "gridRow": 70,
       "gridColumn": 48,
       "regions": [
@@ -16267,7 +16267,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0812",
+      "code": "KR-COAST-0812",
       "gridRow": 71,
       "gridColumn": 22,
       "regions": [
@@ -16287,7 +16287,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0813",
+      "code": "KR-COAST-0813",
       "gridRow": 71,
       "gridColumn": 23,
       "regions": [
@@ -16307,7 +16307,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0814",
+      "code": "KR-COAST-0814",
       "gridRow": 71,
       "gridColumn": 24,
       "regions": [
@@ -16327,7 +16327,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0815",
+      "code": "KR-COAST-0815",
       "gridRow": 71,
       "gridColumn": 25,
       "regions": [
@@ -16347,7 +16347,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0816",
+      "code": "KR-COAST-0816",
       "gridRow": 71,
       "gridColumn": 26,
       "regions": [
@@ -16367,7 +16367,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0817",
+      "code": "KR-COAST-0817",
       "gridRow": 71,
       "gridColumn": 27,
       "regions": [
@@ -16387,7 +16387,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0818",
+      "code": "KR-COAST-0818",
       "gridRow": 71,
       "gridColumn": 28,
       "regions": [
@@ -16407,7 +16407,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0819",
+      "code": "KR-COAST-0819",
       "gridRow": 71,
       "gridColumn": 29,
       "regions": [
@@ -16427,7 +16427,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0820",
+      "code": "KR-COAST-0820",
       "gridRow": 71,
       "gridColumn": 30,
       "regions": [
@@ -16447,7 +16447,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0821",
+      "code": "KR-COAST-0821",
       "gridRow": 71,
       "gridColumn": 31,
       "regions": [
@@ -16467,7 +16467,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0822",
+      "code": "KR-COAST-0822",
       "gridRow": 71,
       "gridColumn": 32,
       "regions": [
@@ -16487,7 +16487,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0823",
+      "code": "KR-COAST-0823",
       "gridRow": 71,
       "gridColumn": 33,
       "regions": [
@@ -16507,7 +16507,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0824",
+      "code": "KR-COAST-0824",
       "gridRow": 71,
       "gridColumn": 34,
       "regions": [
@@ -16527,7 +16527,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0825",
+      "code": "KR-COAST-0825",
       "gridRow": 71,
       "gridColumn": 35,
       "regions": [
@@ -16547,7 +16547,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0826",
+      "code": "KR-COAST-0826",
       "gridRow": 71,
       "gridColumn": 36,
       "regions": [
@@ -16567,7 +16567,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0827",
+      "code": "KR-COAST-0827",
       "gridRow": 71,
       "gridColumn": 37,
       "regions": [
@@ -16587,7 +16587,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0828",
+      "code": "KR-COAST-0828",
       "gridRow": 71,
       "gridColumn": 38,
       "regions": [
@@ -16607,7 +16607,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0829",
+      "code": "KR-COAST-0829",
       "gridRow": 71,
       "gridColumn": 39,
       "regions": [
@@ -16627,7 +16627,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0830",
+      "code": "KR-COAST-0830",
       "gridRow": 71,
       "gridColumn": 40,
       "regions": [
@@ -16647,7 +16647,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0831",
+      "code": "KR-COAST-0831",
       "gridRow": 71,
       "gridColumn": 41,
       "regions": [
@@ -16667,7 +16667,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0832",
+      "code": "KR-COAST-0832",
       "gridRow": 71,
       "gridColumn": 42,
       "regions": [
@@ -16687,7 +16687,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0833",
+      "code": "KR-COAST-0833",
       "gridRow": 71,
       "gridColumn": 43,
       "regions": [
@@ -16707,7 +16707,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0834",
+      "code": "KR-COAST-0834",
       "gridRow": 71,
       "gridColumn": 44,
       "regions": [
@@ -16727,7 +16727,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0835",
+      "code": "KR-COAST-0835",
       "gridRow": 71,
       "gridColumn": 45,
       "regions": [
@@ -16747,7 +16747,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0836",
+      "code": "KR-COAST-0836",
       "gridRow": 71,
       "gridColumn": 46,
       "regions": [
@@ -16767,7 +16767,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0837",
+      "code": "KR-COAST-0837",
       "gridRow": 71,
       "gridColumn": 47,
       "regions": [
@@ -16787,7 +16787,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0838",
+      "code": "KR-COAST-0838",
       "gridRow": 71,
       "gridColumn": 48,
       "regions": [
@@ -16807,7 +16807,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0839",
+      "code": "KR-COAST-0839",
       "gridRow": 72,
       "gridColumn": 22,
       "regions": [
@@ -16827,7 +16827,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0840",
+      "code": "KR-COAST-0840",
       "gridRow": 72,
       "gridColumn": 23,
       "regions": [
@@ -16847,7 +16847,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0841",
+      "code": "KR-COAST-0841",
       "gridRow": 72,
       "gridColumn": 24,
       "regions": [
@@ -16867,7 +16867,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0842",
+      "code": "KR-COAST-0842",
       "gridRow": 72,
       "gridColumn": 25,
       "regions": [
@@ -16887,7 +16887,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0843",
+      "code": "KR-COAST-0843",
       "gridRow": 72,
       "gridColumn": 26,
       "regions": [
@@ -16907,7 +16907,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0844",
+      "code": "KR-COAST-0844",
       "gridRow": 72,
       "gridColumn": 27,
       "regions": [
@@ -16927,7 +16927,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0845",
+      "code": "KR-COAST-0845",
       "gridRow": 72,
       "gridColumn": 28,
       "regions": [
@@ -16947,7 +16947,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0846",
+      "code": "KR-COAST-0846",
       "gridRow": 72,
       "gridColumn": 29,
       "regions": [
@@ -16967,7 +16967,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0847",
+      "code": "KR-COAST-0847",
       "gridRow": 72,
       "gridColumn": 30,
       "regions": [
@@ -16987,7 +16987,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0848",
+      "code": "KR-COAST-0848",
       "gridRow": 72,
       "gridColumn": 31,
       "regions": [
@@ -17007,7 +17007,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0849",
+      "code": "KR-COAST-0849",
       "gridRow": 72,
       "gridColumn": 32,
       "regions": [
@@ -17027,7 +17027,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0850",
+      "code": "KR-COAST-0850",
       "gridRow": 72,
       "gridColumn": 33,
       "regions": [
@@ -17047,7 +17047,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0851",
+      "code": "KR-COAST-0851",
       "gridRow": 72,
       "gridColumn": 34,
       "regions": [
@@ -17067,7 +17067,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0852",
+      "code": "KR-COAST-0852",
       "gridRow": 72,
       "gridColumn": 35,
       "regions": [
@@ -17087,7 +17087,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0853",
+      "code": "KR-COAST-0853",
       "gridRow": 72,
       "gridColumn": 36,
       "regions": [
@@ -17107,7 +17107,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0854",
+      "code": "KR-COAST-0854",
       "gridRow": 72,
       "gridColumn": 37,
       "regions": [
@@ -17127,7 +17127,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0855",
+      "code": "KR-COAST-0855",
       "gridRow": 72,
       "gridColumn": 38,
       "regions": [
@@ -17147,7 +17147,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0856",
+      "code": "KR-COAST-0856",
       "gridRow": 72,
       "gridColumn": 39,
       "regions": [
@@ -17167,7 +17167,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0857",
+      "code": "KR-COAST-0857",
       "gridRow": 72,
       "gridColumn": 40,
       "regions": [
@@ -17187,7 +17187,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0858",
+      "code": "KR-COAST-0858",
       "gridRow": 72,
       "gridColumn": 41,
       "regions": [
@@ -17207,7 +17207,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0859",
+      "code": "KR-COAST-0859",
       "gridRow": 72,
       "gridColumn": 42,
       "regions": [
@@ -17227,7 +17227,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0860",
+      "code": "KR-COAST-0860",
       "gridRow": 72,
       "gridColumn": 43,
       "regions": [
@@ -17247,7 +17247,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0861",
+      "code": "KR-COAST-0861",
       "gridRow": 72,
       "gridColumn": 44,
       "regions": [
@@ -17267,7 +17267,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0862",
+      "code": "KR-COAST-0862",
       "gridRow": 72,
       "gridColumn": 45,
       "regions": [
@@ -17288,7 +17288,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0863",
+      "code": "KR-COAST-0863",
       "gridRow": 72,
       "gridColumn": 46,
       "regions": [
@@ -17309,7 +17309,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0864",
+      "code": "KR-COAST-0864",
       "gridRow": 72,
       "gridColumn": 47,
       "regions": [
@@ -17329,7 +17329,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0865",
+      "code": "KR-COAST-0865",
       "gridRow": 73,
       "gridColumn": 21,
       "regions": [
@@ -17349,7 +17349,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0866",
+      "code": "KR-COAST-0866",
       "gridRow": 73,
       "gridColumn": 22,
       "regions": [
@@ -17369,7 +17369,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0867",
+      "code": "KR-COAST-0867",
       "gridRow": 73,
       "gridColumn": 23,
       "regions": [
@@ -17389,7 +17389,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0868",
+      "code": "KR-COAST-0868",
       "gridRow": 73,
       "gridColumn": 24,
       "regions": [
@@ -17409,7 +17409,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0869",
+      "code": "KR-COAST-0869",
       "gridRow": 73,
       "gridColumn": 25,
       "regions": [
@@ -17429,7 +17429,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0870",
+      "code": "KR-COAST-0870",
       "gridRow": 73,
       "gridColumn": 26,
       "regions": [
@@ -17449,7 +17449,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0871",
+      "code": "KR-COAST-0871",
       "gridRow": 73,
       "gridColumn": 27,
       "regions": [
@@ -17469,7 +17469,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0872",
+      "code": "KR-COAST-0872",
       "gridRow": 73,
       "gridColumn": 28,
       "regions": [
@@ -17489,7 +17489,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0873",
+      "code": "KR-COAST-0873",
       "gridRow": 73,
       "gridColumn": 29,
       "regions": [
@@ -17509,7 +17509,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0874",
+      "code": "KR-COAST-0874",
       "gridRow": 73,
       "gridColumn": 30,
       "regions": [
@@ -17529,7 +17529,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0875",
+      "code": "KR-COAST-0875",
       "gridRow": 73,
       "gridColumn": 31,
       "regions": [
@@ -17549,7 +17549,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0876",
+      "code": "KR-COAST-0876",
       "gridRow": 73,
       "gridColumn": 32,
       "regions": [
@@ -17569,7 +17569,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0877",
+      "code": "KR-COAST-0877",
       "gridRow": 73,
       "gridColumn": 33,
       "regions": [
@@ -17589,7 +17589,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0878",
+      "code": "KR-COAST-0878",
       "gridRow": 73,
       "gridColumn": 34,
       "regions": [
@@ -17609,7 +17609,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0879",
+      "code": "KR-COAST-0879",
       "gridRow": 73,
       "gridColumn": 35,
       "regions": [
@@ -17629,7 +17629,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0880",
+      "code": "KR-COAST-0880",
       "gridRow": 73,
       "gridColumn": 36,
       "regions": [
@@ -17649,7 +17649,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0881",
+      "code": "KR-COAST-0881",
       "gridRow": 73,
       "gridColumn": 37,
       "regions": [
@@ -17669,7 +17669,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0882",
+      "code": "KR-COAST-0882",
       "gridRow": 73,
       "gridColumn": 38,
       "regions": [
@@ -17689,7 +17689,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0883",
+      "code": "KR-COAST-0883",
       "gridRow": 73,
       "gridColumn": 39,
       "regions": [
@@ -17709,7 +17709,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0884",
+      "code": "KR-COAST-0884",
       "gridRow": 73,
       "gridColumn": 40,
       "regions": [
@@ -17729,7 +17729,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0885",
+      "code": "KR-COAST-0885",
       "gridRow": 73,
       "gridColumn": 41,
       "regions": [
@@ -17749,7 +17749,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0886",
+      "code": "KR-COAST-0886",
       "gridRow": 73,
       "gridColumn": 42,
       "regions": [
@@ -17769,7 +17769,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0887",
+      "code": "KR-COAST-0887",
       "gridRow": 73,
       "gridColumn": 43,
       "regions": [
@@ -17789,7 +17789,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0888",
+      "code": "KR-COAST-0888",
       "gridRow": 73,
       "gridColumn": 44,
       "regions": [
@@ -17809,7 +17809,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0889",
+      "code": "KR-COAST-0889",
       "gridRow": 73,
       "gridColumn": 45,
       "regions": [
@@ -17830,7 +17830,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0890",
+      "code": "KR-COAST-0890",
       "gridRow": 73,
       "gridColumn": 46,
       "regions": [
@@ -17852,7 +17852,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0891",
+      "code": "KR-COAST-0891",
       "gridRow": 73,
       "gridColumn": 47,
       "regions": [
@@ -17873,7 +17873,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0892",
+      "code": "KR-COAST-0892",
       "gridRow": 74,
       "gridColumn": 19,
       "regions": [
@@ -17893,7 +17893,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0893",
+      "code": "KR-COAST-0893",
       "gridRow": 74,
       "gridColumn": 21,
       "regions": [
@@ -17913,7 +17913,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0894",
+      "code": "KR-COAST-0894",
       "gridRow": 74,
       "gridColumn": 22,
       "regions": [
@@ -17933,7 +17933,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0895",
+      "code": "KR-COAST-0895",
       "gridRow": 74,
       "gridColumn": 23,
       "regions": [
@@ -17953,7 +17953,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0896",
+      "code": "KR-COAST-0896",
       "gridRow": 74,
       "gridColumn": 24,
       "regions": [
@@ -17973,7 +17973,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0897",
+      "code": "KR-COAST-0897",
       "gridRow": 74,
       "gridColumn": 25,
       "regions": [
@@ -17994,7 +17994,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0898",
+      "code": "KR-COAST-0898",
       "gridRow": 74,
       "gridColumn": 26,
       "regions": [
@@ -18014,7 +18014,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0899",
+      "code": "KR-COAST-0899",
       "gridRow": 74,
       "gridColumn": 27,
       "regions": [
@@ -18034,7 +18034,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0900",
+      "code": "KR-COAST-0900",
       "gridRow": 74,
       "gridColumn": 28,
       "regions": [
@@ -18054,7 +18054,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0901",
+      "code": "KR-COAST-0901",
       "gridRow": 74,
       "gridColumn": 29,
       "regions": [
@@ -18074,7 +18074,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0902",
+      "code": "KR-COAST-0902",
       "gridRow": 74,
       "gridColumn": 30,
       "regions": [
@@ -18094,7 +18094,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0903",
+      "code": "KR-COAST-0903",
       "gridRow": 74,
       "gridColumn": 31,
       "regions": [
@@ -18114,7 +18114,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0904",
+      "code": "KR-COAST-0904",
       "gridRow": 74,
       "gridColumn": 32,
       "regions": [
@@ -18134,7 +18134,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0905",
+      "code": "KR-COAST-0905",
       "gridRow": 74,
       "gridColumn": 33,
       "regions": [
@@ -18154,7 +18154,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0906",
+      "code": "KR-COAST-0906",
       "gridRow": 74,
       "gridColumn": 34,
       "regions": [
@@ -18174,7 +18174,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0907",
+      "code": "KR-COAST-0907",
       "gridRow": 74,
       "gridColumn": 35,
       "regions": [
@@ -18194,7 +18194,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0908",
+      "code": "KR-COAST-0908",
       "gridRow": 74,
       "gridColumn": 36,
       "regions": [
@@ -18214,7 +18214,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0909",
+      "code": "KR-COAST-0909",
       "gridRow": 74,
       "gridColumn": 37,
       "regions": [
@@ -18234,7 +18234,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0910",
+      "code": "KR-COAST-0910",
       "gridRow": 74,
       "gridColumn": 38,
       "regions": [
@@ -18254,7 +18254,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0911",
+      "code": "KR-COAST-0911",
       "gridRow": 74,
       "gridColumn": 39,
       "regions": [
@@ -18274,7 +18274,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0912",
+      "code": "KR-COAST-0912",
       "gridRow": 74,
       "gridColumn": 40,
       "regions": [
@@ -18294,7 +18294,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0913",
+      "code": "KR-COAST-0913",
       "gridRow": 74,
       "gridColumn": 41,
       "regions": [
@@ -18314,7 +18314,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0914",
+      "code": "KR-COAST-0914",
       "gridRow": 74,
       "gridColumn": 43,
       "regions": [
@@ -18334,7 +18334,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0915",
+      "code": "KR-COAST-0915",
       "gridRow": 74,
       "gridColumn": 44,
       "regions": [
@@ -18354,7 +18354,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0916",
+      "code": "KR-COAST-0916",
       "gridRow": 74,
       "gridColumn": 45,
       "regions": [
@@ -18376,7 +18376,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0917",
+      "code": "KR-COAST-0917",
       "gridRow": 74,
       "gridColumn": 46,
       "regions": [
@@ -18399,7 +18399,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0918",
+      "code": "KR-COAST-0918",
       "gridRow": 75,
       "gridColumn": 22,
       "regions": [
@@ -18419,7 +18419,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0919",
+      "code": "KR-COAST-0919",
       "gridRow": 75,
       "gridColumn": 23,
       "regions": [
@@ -18439,7 +18439,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0920",
+      "code": "KR-COAST-0920",
       "gridRow": 75,
       "gridColumn": 24,
       "regions": [
@@ -18459,7 +18459,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0921",
+      "code": "KR-COAST-0921",
       "gridRow": 75,
       "gridColumn": 25,
       "regions": [
@@ -18479,7 +18479,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0922",
+      "code": "KR-COAST-0922",
       "gridRow": 75,
       "gridColumn": 26,
       "regions": [
@@ -18499,7 +18499,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0923",
+      "code": "KR-COAST-0923",
       "gridRow": 75,
       "gridColumn": 27,
       "regions": [
@@ -18519,7 +18519,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0924",
+      "code": "KR-COAST-0924",
       "gridRow": 75,
       "gridColumn": 28,
       "regions": [
@@ -18539,7 +18539,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0925",
+      "code": "KR-COAST-0925",
       "gridRow": 75,
       "gridColumn": 29,
       "regions": [
@@ -18559,7 +18559,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0926",
+      "code": "KR-COAST-0926",
       "gridRow": 75,
       "gridColumn": 30,
       "regions": [
@@ -18579,7 +18579,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0927",
+      "code": "KR-COAST-0927",
       "gridRow": 75,
       "gridColumn": 31,
       "regions": [
@@ -18599,7 +18599,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0928",
+      "code": "KR-COAST-0928",
       "gridRow": 75,
       "gridColumn": 32,
       "regions": [
@@ -18619,7 +18619,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0929",
+      "code": "KR-COAST-0929",
       "gridRow": 75,
       "gridColumn": 33,
       "regions": [
@@ -18639,7 +18639,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0930",
+      "code": "KR-COAST-0930",
       "gridRow": 75,
       "gridColumn": 34,
       "regions": [
@@ -18659,7 +18659,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0931",
+      "code": "KR-COAST-0931",
       "gridRow": 75,
       "gridColumn": 35,
       "regions": [
@@ -18679,7 +18679,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0932",
+      "code": "KR-COAST-0932",
       "gridRow": 75,
       "gridColumn": 36,
       "regions": [
@@ -18699,7 +18699,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0933",
+      "code": "KR-COAST-0933",
       "gridRow": 75,
       "gridColumn": 37,
       "regions": [
@@ -18719,7 +18719,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0934",
+      "code": "KR-COAST-0934",
       "gridRow": 75,
       "gridColumn": 38,
       "regions": [
@@ -18739,7 +18739,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0935",
+      "code": "KR-COAST-0935",
       "gridRow": 75,
       "gridColumn": 39,
       "regions": [
@@ -18759,7 +18759,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0936",
+      "code": "KR-COAST-0936",
       "gridRow": 75,
       "gridColumn": 40,
       "regions": [
@@ -18779,7 +18779,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0937",
+      "code": "KR-COAST-0937",
       "gridRow": 76,
       "gridColumn": 21,
       "regions": [
@@ -18799,7 +18799,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0938",
+      "code": "KR-COAST-0938",
       "gridRow": 76,
       "gridColumn": 22,
       "regions": [
@@ -18819,7 +18819,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0939",
+      "code": "KR-COAST-0939",
       "gridRow": 76,
       "gridColumn": 23,
       "regions": [
@@ -18839,7 +18839,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0940",
+      "code": "KR-COAST-0940",
       "gridRow": 76,
       "gridColumn": 24,
       "regions": [
@@ -18859,7 +18859,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0941",
+      "code": "KR-COAST-0941",
       "gridRow": 76,
       "gridColumn": 25,
       "regions": [
@@ -18879,7 +18879,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0942",
+      "code": "KR-COAST-0942",
       "gridRow": 76,
       "gridColumn": 26,
       "regions": [
@@ -18899,7 +18899,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0943",
+      "code": "KR-COAST-0943",
       "gridRow": 76,
       "gridColumn": 27,
       "regions": [
@@ -18919,7 +18919,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0944",
+      "code": "KR-COAST-0944",
       "gridRow": 76,
       "gridColumn": 28,
       "regions": [
@@ -18939,7 +18939,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0945",
+      "code": "KR-COAST-0945",
       "gridRow": 76,
       "gridColumn": 29,
       "regions": [
@@ -18959,7 +18959,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0946",
+      "code": "KR-COAST-0946",
       "gridRow": 76,
       "gridColumn": 30,
       "regions": [
@@ -18979,7 +18979,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0947",
+      "code": "KR-COAST-0947",
       "gridRow": 76,
       "gridColumn": 31,
       "regions": [
@@ -18999,7 +18999,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0948",
+      "code": "KR-COAST-0948",
       "gridRow": 76,
       "gridColumn": 32,
       "regions": [
@@ -19019,7 +19019,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0949",
+      "code": "KR-COAST-0949",
       "gridRow": 76,
       "gridColumn": 33,
       "regions": [
@@ -19039,7 +19039,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0950",
+      "code": "KR-COAST-0950",
       "gridRow": 76,
       "gridColumn": 34,
       "regions": [
@@ -19059,7 +19059,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0951",
+      "code": "KR-COAST-0951",
       "gridRow": 76,
       "gridColumn": 37,
       "regions": [
@@ -19079,7 +19079,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0952",
+      "code": "KR-COAST-0952",
       "gridRow": 76,
       "gridColumn": 38,
       "regions": [
@@ -19099,7 +19099,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0953",
+      "code": "KR-COAST-0953",
       "gridRow": 76,
       "gridColumn": 39,
       "regions": [
@@ -19119,7 +19119,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0954",
+      "code": "KR-COAST-0954",
       "gridRow": 76,
       "gridColumn": 40,
       "regions": [
@@ -19139,7 +19139,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0955",
+      "code": "KR-COAST-0955",
       "gridRow": 76,
       "gridColumn": 41,
       "regions": [
@@ -19159,7 +19159,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0956",
+      "code": "KR-COAST-0956",
       "gridRow": 76,
       "gridColumn": 42,
       "regions": [
@@ -19179,7 +19179,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0957",
+      "code": "KR-COAST-0957",
       "gridRow": 77,
       "gridColumn": 21,
       "regions": [
@@ -19200,7 +19200,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0958",
+      "code": "KR-COAST-0958",
       "gridRow": 77,
       "gridColumn": 22,
       "regions": [
@@ -19220,7 +19220,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0959",
+      "code": "KR-COAST-0959",
       "gridRow": 77,
       "gridColumn": 23,
       "regions": [
@@ -19240,7 +19240,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0960",
+      "code": "KR-COAST-0960",
       "gridRow": 77,
       "gridColumn": 24,
       "regions": [
@@ -19260,7 +19260,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0961",
+      "code": "KR-COAST-0961",
       "gridRow": 77,
       "gridColumn": 25,
       "regions": [
@@ -19280,7 +19280,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0962",
+      "code": "KR-COAST-0962",
       "gridRow": 77,
       "gridColumn": 26,
       "regions": [
@@ -19300,7 +19300,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0963",
+      "code": "KR-COAST-0963",
       "gridRow": 77,
       "gridColumn": 27,
       "regions": [
@@ -19320,7 +19320,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0964",
+      "code": "KR-COAST-0964",
       "gridRow": 77,
       "gridColumn": 28,
       "regions": [
@@ -19340,7 +19340,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0965",
+      "code": "KR-COAST-0965",
       "gridRow": 77,
       "gridColumn": 29,
       "regions": [
@@ -19360,7 +19360,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0966",
+      "code": "KR-COAST-0966",
       "gridRow": 77,
       "gridColumn": 30,
       "regions": [
@@ -19380,7 +19380,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0967",
+      "code": "KR-COAST-0967",
       "gridRow": 77,
       "gridColumn": 31,
       "regions": [
@@ -19400,7 +19400,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0968",
+      "code": "KR-COAST-0968",
       "gridRow": 77,
       "gridColumn": 32,
       "regions": [
@@ -19420,7 +19420,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0969",
+      "code": "KR-COAST-0969",
       "gridRow": 77,
       "gridColumn": 33,
       "regions": [
@@ -19440,7 +19440,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0970",
+      "code": "KR-COAST-0970",
       "gridRow": 77,
       "gridColumn": 34,
       "regions": [
@@ -19460,7 +19460,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0971",
+      "code": "KR-COAST-0971",
       "gridRow": 77,
       "gridColumn": 35,
       "regions": [
@@ -19480,7 +19480,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0972",
+      "code": "KR-COAST-0972",
       "gridRow": 77,
       "gridColumn": 36,
       "regions": [
@@ -19500,7 +19500,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0973",
+      "code": "KR-COAST-0973",
       "gridRow": 77,
       "gridColumn": 38,
       "regions": [
@@ -19520,7 +19520,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0974",
+      "code": "KR-COAST-0974",
       "gridRow": 77,
       "gridColumn": 40,
       "regions": [
@@ -19540,7 +19540,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0975",
+      "code": "KR-COAST-0975",
       "gridRow": 77,
       "gridColumn": 41,
       "regions": [
@@ -19560,7 +19560,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0976",
+      "code": "KR-COAST-0976",
       "gridRow": 77,
       "gridColumn": 42,
       "regions": [
@@ -19580,7 +19580,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0977",
+      "code": "KR-COAST-0977",
       "gridRow": 78,
       "gridColumn": 18,
       "regions": [
@@ -19600,7 +19600,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0978",
+      "code": "KR-COAST-0978",
       "gridRow": 78,
       "gridColumn": 19,
       "regions": [
@@ -19620,7 +19620,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0979",
+      "code": "KR-COAST-0979",
       "gridRow": 78,
       "gridColumn": 22,
       "regions": [
@@ -19640,7 +19640,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0980",
+      "code": "KR-COAST-0980",
       "gridRow": 78,
       "gridColumn": 23,
       "regions": [
@@ -19660,7 +19660,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0981",
+      "code": "KR-COAST-0981",
       "gridRow": 78,
       "gridColumn": 24,
       "regions": [
@@ -19680,7 +19680,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0982",
+      "code": "KR-COAST-0982",
       "gridRow": 78,
       "gridColumn": 25,
       "regions": [
@@ -19700,7 +19700,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0983",
+      "code": "KR-COAST-0983",
       "gridRow": 78,
       "gridColumn": 26,
       "regions": [
@@ -19720,7 +19720,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0984",
+      "code": "KR-COAST-0984",
       "gridRow": 78,
       "gridColumn": 27,
       "regions": [
@@ -19740,7 +19740,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0985",
+      "code": "KR-COAST-0985",
       "gridRow": 78,
       "gridColumn": 28,
       "regions": [
@@ -19760,7 +19760,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0986",
+      "code": "KR-COAST-0986",
       "gridRow": 78,
       "gridColumn": 29,
       "regions": [
@@ -19780,7 +19780,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0987",
+      "code": "KR-COAST-0987",
       "gridRow": 78,
       "gridColumn": 30,
       "regions": [
@@ -19800,7 +19800,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0988",
+      "code": "KR-COAST-0988",
       "gridRow": 78,
       "gridColumn": 33,
       "regions": [
@@ -19820,7 +19820,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0989",
+      "code": "KR-COAST-0989",
       "gridRow": 78,
       "gridColumn": 35,
       "regions": [
@@ -19840,7 +19840,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0990",
+      "code": "KR-COAST-0990",
       "gridRow": 78,
       "gridColumn": 36,
       "regions": [
@@ -19860,7 +19860,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0991",
+      "code": "KR-COAST-0991",
       "gridRow": 78,
       "gridColumn": 40,
       "regions": [
@@ -19880,7 +19880,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0992",
+      "code": "KR-COAST-0992",
       "gridRow": 78,
       "gridColumn": 42,
       "regions": [
@@ -19900,7 +19900,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0993",
+      "code": "KR-COAST-0993",
       "gridRow": 79,
       "gridColumn": 21,
       "regions": [
@@ -19920,7 +19920,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0994",
+      "code": "KR-COAST-0994",
       "gridRow": 79,
       "gridColumn": 22,
       "regions": [
@@ -19940,7 +19940,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0995",
+      "code": "KR-COAST-0995",
       "gridRow": 79,
       "gridColumn": 23,
       "regions": [
@@ -19960,7 +19960,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0996",
+      "code": "KR-COAST-0996",
       "gridRow": 79,
       "gridColumn": 24,
       "regions": [
@@ -19980,7 +19980,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0997",
+      "code": "KR-COAST-0997",
       "gridRow": 79,
       "gridColumn": 25,
       "regions": [
@@ -20000,7 +20000,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0998",
+      "code": "KR-COAST-0998",
       "gridRow": 79,
       "gridColumn": 26,
       "regions": [
@@ -20020,7 +20020,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-0999",
+      "code": "KR-COAST-0999",
       "gridRow": 79,
       "gridColumn": 27,
       "regions": [
@@ -20040,7 +20040,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1000",
+      "code": "KR-COAST-1000",
       "gridRow": 79,
       "gridColumn": 28,
       "regions": [
@@ -20060,7 +20060,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1001",
+      "code": "KR-COAST-1001",
       "gridRow": 79,
       "gridColumn": 31,
       "regions": [
@@ -20080,7 +20080,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1002",
+      "code": "KR-COAST-1002",
       "gridRow": 79,
       "gridColumn": 34,
       "regions": [
@@ -20100,7 +20100,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1003",
+      "code": "KR-COAST-1003",
       "gridRow": 80,
       "gridColumn": 19,
       "regions": [
@@ -20120,7 +20120,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1004",
+      "code": "KR-COAST-1004",
       "gridRow": 80,
       "gridColumn": 21,
       "regions": [
@@ -20140,7 +20140,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1005",
+      "code": "KR-COAST-1005",
       "gridRow": 80,
       "gridColumn": 22,
       "regions": [
@@ -20160,7 +20160,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1006",
+      "code": "KR-COAST-1006",
       "gridRow": 80,
       "gridColumn": 23,
       "regions": [
@@ -20180,7 +20180,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1007",
+      "code": "KR-COAST-1007",
       "gridRow": 80,
       "gridColumn": 24,
       "regions": [
@@ -20200,7 +20200,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1008",
+      "code": "KR-COAST-1008",
       "gridRow": 80,
       "gridColumn": 25,
       "regions": [
@@ -20220,7 +20220,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1009",
+      "code": "KR-COAST-1009",
       "gridRow": 80,
       "gridColumn": 26,
       "regions": [
@@ -20240,7 +20240,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1010",
+      "code": "KR-COAST-1010",
       "gridRow": 80,
       "gridColumn": 27,
       "regions": [
@@ -20260,7 +20260,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1011",
+      "code": "KR-COAST-1011",
       "gridRow": 80,
       "gridColumn": 29,
       "regions": [
@@ -20280,7 +20280,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1012",
+      "code": "KR-COAST-1012",
       "gridRow": 80,
       "gridColumn": 30,
       "regions": [
@@ -20300,7 +20300,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1013",
+      "code": "KR-COAST-1013",
       "gridRow": 80,
       "gridColumn": 31,
       "regions": [
@@ -20320,7 +20320,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1014",
+      "code": "KR-COAST-1014",
       "gridRow": 81,
       "gridColumn": 20,
       "regions": [
@@ -20340,7 +20340,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1015",
+      "code": "KR-COAST-1015",
       "gridRow": 81,
       "gridColumn": 21,
       "regions": [
@@ -20360,7 +20360,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1016",
+      "code": "KR-COAST-1016",
       "gridRow": 81,
       "gridColumn": 23,
       "regions": [
@@ -20380,7 +20380,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1017",
+      "code": "KR-COAST-1017",
       "gridRow": 81,
       "gridColumn": 24,
       "regions": [
@@ -20400,7 +20400,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1018",
+      "code": "KR-COAST-1018",
       "gridRow": 81,
       "gridColumn": 26,
       "regions": [
@@ -20420,7 +20420,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1019",
+      "code": "KR-COAST-1019",
       "gridRow": 81,
       "gridColumn": 30,
       "regions": [
@@ -20440,7 +20440,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1020",
+      "code": "KR-COAST-1020",
       "gridRow": 82,
       "gridColumn": 19,
       "regions": [
@@ -20460,7 +20460,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1021",
+      "code": "KR-COAST-1021",
       "gridRow": 82,
       "gridColumn": 20,
       "regions": [
@@ -20480,7 +20480,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1022",
+      "code": "KR-COAST-1022",
       "gridRow": 82,
       "gridColumn": 21,
       "regions": [
@@ -20500,7 +20500,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1023",
+      "code": "KR-COAST-1023",
       "gridRow": 82,
       "gridColumn": 23,
       "regions": [
@@ -20520,7 +20520,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1024",
+      "code": "KR-COAST-1024",
       "gridRow": 82,
       "gridColumn": 25,
       "regions": [
@@ -20540,7 +20540,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1025",
+      "code": "KR-COAST-1025",
       "gridRow": 83,
       "gridColumn": 18,
       "regions": [
@@ -20560,7 +20560,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1026",
+      "code": "KR-COAST-1026",
       "gridRow": 83,
       "gridColumn": 23,
       "regions": [
@@ -20580,7 +20580,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1027",
+      "code": "KR-COAST-1027",
       "gridRow": 83,
       "gridColumn": 25,
       "regions": [
@@ -20600,7 +20600,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1028",
+      "code": "KR-COAST-1028",
       "gridRow": 83,
       "gridColumn": 26,
       "regions": [
@@ -20620,7 +20620,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1029",
+      "code": "KR-COAST-1029",
       "gridRow": 83,
       "gridColumn": 27,
       "regions": [
@@ -20640,7 +20640,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1030",
+      "code": "KR-COAST-1030",
       "gridRow": 85,
       "gridColumn": 23,
       "regions": [
@@ -20660,7 +20660,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1031",
+      "code": "KR-COAST-1031",
       "gridRow": 85,
       "gridColumn": 24,
       "regions": [
@@ -20680,7 +20680,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1032",
+      "code": "KR-COAST-1032",
       "gridRow": 86,
       "gridColumn": 30,
       "regions": [
@@ -20700,7 +20700,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1033",
+      "code": "KR-COAST-1033",
       "gridRow": 87,
       "gridColumn": 21,
       "regions": [
@@ -20720,7 +20720,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1034",
+      "code": "KR-COAST-1034",
       "gridRow": 92,
       "gridColumn": 22,
       "regions": [
@@ -20740,7 +20740,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1035",
+      "code": "KR-COAST-1035",
       "gridRow": 92,
       "gridColumn": 23,
       "regions": [
@@ -20760,7 +20760,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1036",
+      "code": "KR-COAST-1036",
       "gridRow": 92,
       "gridColumn": 24,
       "regions": [
@@ -20780,7 +20780,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1037",
+      "code": "KR-COAST-1037",
       "gridRow": 92,
       "gridColumn": 25,
       "regions": [
@@ -20800,7 +20800,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1038",
+      "code": "KR-COAST-1038",
       "gridRow": 92,
       "gridColumn": 26,
       "regions": [
@@ -20820,7 +20820,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1039",
+      "code": "KR-COAST-1039",
       "gridRow": 93,
       "gridColumn": 21,
       "regions": [
@@ -20840,7 +20840,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1040",
+      "code": "KR-COAST-1040",
       "gridRow": 93,
       "gridColumn": 22,
       "regions": [
@@ -20860,7 +20860,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1041",
+      "code": "KR-COAST-1041",
       "gridRow": 93,
       "gridColumn": 23,
       "regions": [
@@ -20880,7 +20880,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1042",
+      "code": "KR-COAST-1042",
       "gridRow": 93,
       "gridColumn": 24,
       "regions": [
@@ -20900,7 +20900,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1043",
+      "code": "KR-COAST-1043",
       "gridRow": 93,
       "gridColumn": 25,
       "regions": [
@@ -20920,7 +20920,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1044",
+      "code": "KR-COAST-1044",
       "gridRow": 93,
       "gridColumn": 26,
       "regions": [
@@ -20940,7 +20940,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1045",
+      "code": "KR-COAST-1045",
       "gridRow": 94,
       "gridColumn": 20,
       "regions": [
@@ -20960,7 +20960,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1046",
+      "code": "KR-COAST-1046",
       "gridRow": 94,
       "gridColumn": 21,
       "regions": [
@@ -20980,7 +20980,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1047",
+      "code": "KR-COAST-1047",
       "gridRow": 94,
       "gridColumn": 22,
       "regions": [
@@ -21000,7 +21000,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1048",
+      "code": "KR-COAST-1048",
       "gridRow": 94,
       "gridColumn": 23,
       "regions": [
@@ -21020,7 +21020,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1049",
+      "code": "KR-COAST-1049",
       "gridRow": 94,
       "gridColumn": 24,
       "regions": [
@@ -21040,7 +21040,7 @@
       }
     },
     {
-      "code": "KR-COAST-5X5-1050",
+      "code": "KR-COAST-1050",
       "gridRow": 94,
       "gridColumn": 25,
       "regions": [

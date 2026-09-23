@@ -17,7 +17,7 @@
     "items": [
       {
         "map_dot_id": 1,
-        "code": "KR-COAST-5X5-0001",
+        "code": "KR-COAST-0001",
         "album_cover_url": null,
         "latest_recorded_at": null
       }
