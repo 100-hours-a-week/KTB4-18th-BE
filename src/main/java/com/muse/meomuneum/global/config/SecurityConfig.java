@@ -63,6 +63,7 @@ public class SecurityConfig {
                     }
                     authorize.requestMatchers("/api/v1/auth/**").permitAll()
                             .requestMatchers(HttpMethod.POST, "/api/v1/users/signup").permitAll()
+                            .requestMatchers(HttpMethod.GET, "/api/v1/map-dots").permitAll()
                             .anyRequest().authenticated();
                 })
                 .exceptionHandling(exception -> exception
