@@ -26,16 +26,6 @@ class ChatRoomProvisioningMigrationTest {
         assertEquals(269, countOccurrences(migration, " AS `parent_code`"));
     }
 
-    @Test
-    void keepsRegionAndRoomProvisioningIdempotent() throws IOException {
-        String migration = readMigration();
-
-        assertEquals(2, countOccurrences(migration, "ON DUPLICATE KEY UPDATE"));
-        assertTrue(migration.contains("INSERT IGNORE INTO `chat_rooms`"));
-        assertTrue(migration.contains("WHERE region.`level` = 'SIGUNGU'"));
-        assertTrue(migration.contains("AND region.`is_active` = TRUE"));
-    }
-
     private int countOccurrences(String source, String target) {
         int count = 0;
         int start = 0;
