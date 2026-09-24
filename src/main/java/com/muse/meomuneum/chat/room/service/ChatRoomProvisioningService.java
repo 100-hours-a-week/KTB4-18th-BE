@@ -16,6 +16,12 @@ public class ChatRoomProvisioningService {
 
     @Transactional
     public int provisionMissingRooms() {
-        return chatRoomRepository.createMissingActiveSigunguRooms();
+        int createdRoomCount = chatRoomRepository.createMissingActiveSigunguRooms();
+        long missingRoomCount = chatRoomRepository.countMissingActiveSigunguRooms();
+        if (missingRoomCount > 0) {
+            throw new IllegalStateException(
+                    "chat room provisioning incomplete: " + missingRoomCount + " active SIGUNGU rooms missing");
+        }
+        return createdRoomCount;
     }
 }

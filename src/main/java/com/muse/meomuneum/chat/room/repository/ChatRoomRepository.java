@@ -14,11 +14,23 @@ public interface ChatRoomRepository extends JpaRepository<ChatRoom, Long> {
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
-            INSERT IGNORE INTO chat_rooms (region_id, capacity, status)
+            INSERT INTO chat_rooms (region_id, capacity, status)
             SELECT region.id, 25, 'ACTIVE'
             FROM regions AS region
+            LEFT JOIN chat_rooms AS room ON room.region_id = region.id
             WHERE region.level = 'SIGUNGU'
                 AND region.is_active = TRUE
+                AND room.id IS NULL
             """, nativeQuery = true)
     int createMissingActiveSigunguRooms();
+
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM regions AS region
+            LEFT JOIN chat_rooms AS room ON room.region_id = region.id
+            WHERE region.level = 'SIGUNGU'
+                AND region.is_active = TRUE
+                AND room.id IS NULL
+            """, nativeQuery = true)
+    long countMissingActiveSigunguRooms();
 }
