@@ -18,14 +18,12 @@ public class LocationConfig {
     }
 
     @Bean("kakaoReverseGeocodingRestClient")
-    public RestClient kakaoReverseGeocodingRestClient(
-            RestClient.Builder builder,
-            ReverseGeocodingProperties properties) {
+    public RestClient kakaoReverseGeocodingRestClient(ReverseGeocodingProperties properties) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(properties.connectTimeout());
         requestFactory.setReadTimeout(properties.readTimeout());
 
-        return builder
+        return RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .requestFactory(requestFactory)
                 .build();
