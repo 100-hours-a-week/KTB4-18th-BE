@@ -1,0 +1,23 @@
+DROP PROCEDURE IF EXISTS assert_terms_20260925192738;
+
+DELIMITER //
+CREATE PROCEDURE assert_terms_20260925192738()
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM terms
+        WHERE CHAR_LENGTH(CAST(type AS CHAR)) > 30
+            OR CHAR_LENGTH(version) > 10
+            OR CHAR_LENGTH(title) > 100
+    ) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'terms column length exceeds ERD limit';
+    END IF;
+END //
+DELIMITER ;
+
+CALL assert_terms_20260925192738();
+DROP PROCEDURE assert_terms_20260925192738;
+
+ALTER TABLE terms
+    MODIFY COLUMN type VARCHAR(30) NOT NULL,
+    MODIFY COLUMN version VARCHAR(10) NOT NULL,
+    MODIFY COLUMN title VARCHAR(100) NOT NULL;

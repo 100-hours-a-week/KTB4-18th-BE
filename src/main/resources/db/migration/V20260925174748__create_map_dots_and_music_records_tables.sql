@@ -1,14 +1,3 @@
-CREATE TABLE regions (
-    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    parent_id BIGINT NULL,
-    code VARCHAR(20) NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    level VARCHAR(20) NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    CONSTRAINT uq_regions_code UNIQUE (code),
-    CONSTRAINT fk_regions_parent FOREIGN KEY (parent_id) REFERENCES regions(id)
-);
-
 CREATE TABLE map_dots (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     code VARCHAR(64) NOT NULL,

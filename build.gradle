@@ -56,7 +56,10 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V1__recommendation_sample.sql'
 		include 'V20260921192804__add_index_to_recommendation_session_context.sql'
 		include 'V20260921200528__create_users_table.sql'
-		include 'V20260923093759__create_music_record_tables.sql'
+		include 'V20260923142421__create_chat_room_foundation.sql'
+		include 'V20260923162348__seed_chat_regions_and_rooms.sql'
+		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
+		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
 	into layout.buildDirectory.dir('music-record-local-migrations')
 }
@@ -70,7 +73,12 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20260922145107__add_auto_increment_to_users_id.sql'
 		include 'V20260922145108__create_terms_and_agreements_tables.sql'
 		include 'V20260922195140__add_terms_type_version_unique_constraint.sql'
-		include 'V20260923093759__create_music_record_tables.sql'
+		include 'V20260923142421__create_chat_room_foundation.sql'
+		include 'V20260923162348__seed_chat_regions_and_rooms.sql'
+		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
+		include 'V20260925192738__align_terms_column_lengths.sql'
+		include 'V20260925192745__publish_required_ai_personal_terms.sql'
+		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
 	from('src/main/resources/db/music-record-signup-local')
 	into layout.buildDirectory.dir('music-record-signup-local-migrations')
