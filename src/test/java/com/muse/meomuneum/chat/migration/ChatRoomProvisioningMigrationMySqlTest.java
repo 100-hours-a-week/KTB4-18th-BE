@@ -18,7 +18,7 @@ import org.testcontainers.mysql.MySQLContainer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ChatRoomProvisioningMigrationMySqlTest {
 
     private static final String SEED_MIGRATION_PATH =

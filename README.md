@@ -147,6 +147,18 @@ gradle/wrapper/                    Gradle Wrapper
 현재 지도 도트 데이터 기반은 이 이슈 범위에 포함되지 않아 `map_dot`은 `null`입니다. 이후 도트
 판정 기능이 연결되더라도 행정구역 판정과 위치 토큰 검증 경계는 그대로 재사용할 수 있습니다.
 
+## 행정구역 채팅방 조회와 입장
+
+`GET /api/v1/regions/{region_id}/chat-room`은 사전 생성된 활성 시·군·구 채팅방을 조회합니다.
+`POST /api/v1/chat-rooms/{room_id}/members`는 `location_resolution_token`의 사용자와 시·군·구가
+대상 방과 일치하는지 확인한 뒤 입장합니다. 같은 사용자가 같은 방에 다시 요청하면 기존 활성
+membership을 `200 OK`로 반환하고, 최초 입장은 `201 Created`를 반환합니다.
+
+입장 트랜잭션은 사용자와 관련 채팅방을 비관적 잠금으로 직렬화하며 실제 DB의 사용자별 활성
+membership UNIQUE 제약도 함께 적용됩니다. 정원은 활성 membership만 계산합니다. 다른 지역으로
+이동할 때는 기존 membership을 먼저 종료하며, 새 방이 가득 차 `409 Conflict`가 발생하더라도 기존
+membership 종료를 되돌리지 않습니다.
+
 ## 텍스트 음악 추천 기능
 
 `POST /api/v1/recommendations`는 `TEXT`와 STT 전사문인 `VOICE`를 같은 경로로 처리합니다.
