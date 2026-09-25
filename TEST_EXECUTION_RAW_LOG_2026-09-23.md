@@ -16,7 +16,7 @@ TEST_DB_URL='jdbc:mysql://127.0.0.1:3306/meomuneum_test_mainmap_review_20260923'
 
 ```text
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.7.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
-Daemon will be stopped at the end of the build 
+Daemon will be stopped at the end of the build
 > Task :clean
 
 Note: /Users/bipo/Documents/meomuneum/BE-branch/feature/main-map/src/main/java/com/muse/meomuneum/recommendation/provider/ItunesRecommendationProvider.java uses or overrides a deprecated API.
@@ -59,7 +59,7 @@ Consider enabling configuration cache to speed up this build: https://docs.gradl
 
 ```text
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.7.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
-Daemon will be stopped at the end of the build 
+Daemon will be stopped at the end of the build
 > Task :compileJava UP-TO-DATE
 > Task :processResources UP-TO-DATE
 > Task :classes UP-TO-DATE
@@ -135,5 +135,3 @@ users
 ```
 
 - 종료 코드: `0`
-
-
