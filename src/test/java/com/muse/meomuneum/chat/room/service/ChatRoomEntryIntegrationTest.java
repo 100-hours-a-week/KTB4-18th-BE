@@ -7,6 +7,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
@@ -64,6 +67,9 @@ class ChatRoomEntryIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
@@ -111,6 +117,39 @@ class ChatRoomEntryIntegrationTest {
         assertEquals(1L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
         assertEquals(1L, outcomes.stream().filter("joined"::equals).count());
         assertEquals(1L, outcomes.stream().filter("full"::equals).count());
+    }
+
+    @Test
+    void capacityCheckReadsLatestCommittedMembershipAfterEarlierSnapshot() throws Exception {
+        Long firstUserId = createUser("snapshot-first");
+        Long secondUserId = createUser("snapshot-second");
+        ChatRoom room = roomFor("41135");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity = 1 WHERE id = ?", room.getId());
+        String firstToken = issueToken(firstUserId, room.getRegion());
+        String secondToken = issueToken(secondUserId, room.getRegion());
+        CountDownLatch snapshotCreated = new CountDownLatch(1);
+        CountDownLatch firstJoinCompleted = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<String> secondOutcome = executor.submit(() -> new TransactionTemplate(transactionManager)
+                    .execute(status -> {
+                        assertEquals(0L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
+                        snapshotCreated.countDown();
+                        await(firstJoinCompleted);
+                        return joinOutcome(secondUserId, room.getId(), secondToken);
+                    }));
+
+            assertTrue(snapshotCreated.await(5, TimeUnit.SECONDS));
+            service.join(firstUserId, room.getId(), firstToken);
+            firstJoinCompleted.countDown();
+
+            assertEquals("full", secondOutcome.get(5, TimeUnit.SECONDS));
+            assertEquals(1L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
+        } finally {
+            firstJoinCompleted.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -195,6 +234,17 @@ class ChatRoomEntryIntegrationTest {
                 return "full";
             }
             throw exception;
+        }
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("timed out while coordinating concurrent joins");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
         }
     }
 

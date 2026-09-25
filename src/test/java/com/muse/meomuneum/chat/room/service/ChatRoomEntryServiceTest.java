@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -68,7 +69,7 @@ class ChatRoomEntryServiceTest {
 
         assertFalse(result.created());
         assertEquals(900L, result.membership().membershipId());
-        verify(memberRepository, never()).countByChatRoom_IdAndDeletedAtIsNull(any());
+        verify(memberRepository, never()).findAllActiveByChatRoomIdForUpdate(any());
         verify(memberRepository, never()).saveAndFlush(any());
     }
 
@@ -97,7 +98,7 @@ class ChatRoomEntryServiceTest {
         prepareJoin(user, targetRoom, claims(7L, 25L, "41135"));
         when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L))
                 .thenReturn(Optional.of(previousMembership));
-        when(memberRepository.countByChatRoom_IdAndDeletedAtIsNull(700L)).thenReturn(1L);
+        when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of(mock(ChatRoomMember.class)));
 
         ChatRoomException exception = assertThrows(
                 ChatRoomException.class,

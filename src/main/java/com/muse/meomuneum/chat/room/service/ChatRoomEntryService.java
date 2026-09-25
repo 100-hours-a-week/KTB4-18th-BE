@@ -75,7 +75,7 @@ public class ChatRoomEntryService {
             memberRepository.saveAndFlush(activeMembership);
         }
 
-        long activeMemberCount = memberRepository.countByChatRoom_IdAndDeletedAtIsNull(roomId);
+        int activeMemberCount = memberRepository.findAllActiveByChatRoomIdForUpdate(roomId).size();
         if (activeMemberCount >= targetRoom.getCapacity()) {
             throw new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED);
         }
