@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -17,11 +18,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.auth.service.RefreshTokenCookieFactory;
 import com.muse.meomuneum.auth.service.RefreshTokenSessionService;
-import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -49,16 +50,10 @@ class RefreshTokenRotationMvcTest {
         when(user.getId()).thenReturn(1L);
         when(user.getRole()).thenReturn(UserRole.USER);
         when(userAuthenticationService.findActiveUser(1L)).thenReturn(user);
-        AuthService authService = new AuthService(
-                jwtTokenProvider,
-                jwtProperties,
-                new RefreshTokenCookieFactory(jwtProperties),
-                refreshTokenSessionService,
-                userAuthenticationService
-        );
+        AuthService authService = new AuthService(jwtTokenProvider, jwtProperties,
+                new RefreshTokenCookieFactory(jwtProperties), refreshTokenSessionService, userAuthenticationService);
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, mock(CsrfTokenService.class)))
-                .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler())
-                .build();
+                .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler()).build();
     }
 
     @Test
@@ -66,29 +61,24 @@ class RefreshTokenRotationMvcTest {
         MockHttpSession session = new MockHttpSession();
         String currentRefreshToken = registerRefreshToken(session);
 
-        MvcResult success = mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
+        MvcResult success = mockMvc
+                .perform(post("/api/v1/auth/token/refresh").session(session)
                         .cookie(new Cookie("refresh_token", currentRefreshToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("token refreshed"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("token refreshed"))
                 .andExpect(jsonPath("$.data.access_token").exists())
-                .andExpect(jsonPath("$.data.expires_in").value(3600))
-                .andReturn();
+                .andExpect(jsonPath("$.data.expires_in").value(3600)).andReturn();
 
         assertThat(success.getResponse().getHeader(HttpHeaders.SET_COOKIE)).contains("refresh_token=");
         assertThat(session.getAttribute("auth.refresh.active-token-hash")).isNotEqualTo(currentRefreshToken);
         assertThat(session.isInvalid()).isFalse();
 
-        MvcResult failure = mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
+        MvcResult failure = mockMvc
+                .perform(post("/api/v1/auth/token/refresh").session(session)
                         .cookie(new Cookie("refresh_token", currentRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("invalid refresh token"))
-                .andExpect(jsonPath("$.data").doesNotExist())
-                .andReturn();
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("invalid refresh token"))
+                .andExpect(jsonPath("$.data").doesNotExist()).andReturn();
 
-        assertThat(failure.getResponse().getHeader(HttpHeaders.SET_COOKIE))
-                .contains("refresh_token=", "Max-Age=0");
+        assertThat(failure.getResponse().getHeader(HttpHeaders.SET_COOKIE)).contains("refresh_token=", "Max-Age=0");
         assertThat(session.isInvalid()).isTrue();
     }
 
@@ -96,15 +86,12 @@ class RefreshTokenRotationMvcTest {
     void refreshWithoutSessionRejectsExistingRefreshToken() throws Exception {
         String refreshToken = registerRefreshToken(new MockHttpSession());
 
-        MvcResult failure = mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .cookie(new Cookie("refresh_token", refreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("invalid refresh token"))
-                .andExpect(jsonPath("$.data").doesNotExist())
-                .andReturn();
+        MvcResult failure = mockMvc
+                .perform(post("/api/v1/auth/token/refresh").cookie(new Cookie("refresh_token", refreshToken)))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("invalid refresh token"))
+                .andExpect(jsonPath("$.data").doesNotExist()).andReturn();
 
-        assertThat(failure.getResponse().getHeader(HttpHeaders.SET_COOKIE))
-                .contains("refresh_token=", "Max-Age=0");
+        assertThat(failure.getResponse().getHeader(HttpHeaders.SET_COOKIE)).contains("refresh_token=", "Max-Age=0");
     }
 
     @Test
@@ -112,23 +99,17 @@ class RefreshTokenRotationMvcTest {
         MockHttpSession session = new MockHttpSession();
 
         MvcResult result = mockMvc.perform(post("/api/v1/auth/logout").session(session))
-                .andExpect(status().isNoContent())
-                .andReturn();
+                .andExpect(status().isNoContent()).andReturn();
 
         assertThat(session.isInvalid()).isTrue();
-        assertThat(result.getResponse().getHeader(HttpHeaders.SET_COOKIE))
-                .contains("refresh_token=", "Max-Age=0");
+        assertThat(result.getResponse().getHeader(HttpHeaders.SET_COOKIE)).contains("refresh_token=", "Max-Age=0");
     }
 
     private String registerRefreshToken(MockHttpSession session) {
         String refreshToken = jwtTokenProvider.createRefreshToken(user);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setSession(session);
-        refreshTokenSessionService.register(
-                request,
-                jwtTokenProvider.parseRefreshToken(refreshToken),
-                refreshToken
-        );
+        refreshTokenSessionService.register(request, jwtTokenProvider.parseRefreshToken(refreshToken), refreshToken);
         return refreshToken;
     }
 }

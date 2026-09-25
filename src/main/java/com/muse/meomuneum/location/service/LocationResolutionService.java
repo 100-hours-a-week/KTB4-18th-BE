@@ -24,9 +24,7 @@ public class LocationResolutionService {
     private final RegionRepository regionRepository;
     private final LocationResolutionTokenProvider tokenProvider;
 
-    public LocationResolutionService(
-            RegionCoordinateResolver coordinateResolver,
-            RegionRepository regionRepository,
+    public LocationResolutionService(RegionCoordinateResolver coordinateResolver, RegionRepository regionRepository,
             LocationResolutionTokenProvider tokenProvider) {
         this.coordinateResolver = coordinateResolver;
         this.regionRepository = regionRepository;
@@ -42,12 +40,9 @@ public class LocationResolutionService {
         validateHierarchy(sido, sigungu);
 
         IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu);
-        return new LocationResolveResponse(
-                null,
-                new RegionSummaryPair(RegionSummary.from(sido), RegionSummary.from(sigungu)),
-                token.value(),
-                token.expiresIn()
-        );
+        return new LocationResolveResponse(null,
+                new RegionSummaryPair(RegionSummary.from(sido), RegionSummary.from(sigungu)), token.value(),
+                token.expiresIn());
     }
 
     private Region findRegion(String code, RegionLevel level) {

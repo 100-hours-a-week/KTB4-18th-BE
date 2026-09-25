@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
@@ -51,8 +52,7 @@ class RefreshTokenSessionServiceTest {
         refreshTokenSessionService.rotate(request, currentClaims, currentToken, nextClaims, nextToken);
 
         MockHttpSession session = (MockHttpSession) request.getSession(false);
-        assertThat(session.getAttribute(RefreshTokenSessionService.ACTIVE_TOKEN_HASH_ATTRIBUTE))
-                .isNotEqualTo(nextToken)
+        assertThat(session.getAttribute(RefreshTokenSessionService.ACTIVE_TOKEN_HASH_ATTRIBUTE)).isNotEqualTo(nextToken)
                 .isNotEqualTo(session.getAttribute(RefreshTokenSessionService.CONSUMED_TOKEN_HASH_ATTRIBUTE));
         assertThat(session.getAttribute(RefreshTokenSessionService.CONSUMED_TOKEN_HASH_ATTRIBUTE))
                 .isNotEqualTo(currentToken);
@@ -71,9 +71,8 @@ class RefreshTokenSessionServiceTest {
         refreshTokenSessionService.rotate(request, claims, currentToken, claims(1L), "next-refresh-token");
         MockHttpSession session = (MockHttpSession) request.getSession(false);
 
-        assertThatThrownBy(() -> refreshTokenSessionService.rotate(
-                request, claims, currentToken, claims(1L), "third-refresh-token"))
-                .isInstanceOf(AuthenticationFailedException.class)
+        assertThatThrownBy(() -> refreshTokenSessionService.rotate(request, claims, currentToken, claims(1L),
+                "third-refresh-token")).isInstanceOf(AuthenticationFailedException.class)
                 .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
                 .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
 
@@ -85,9 +84,8 @@ class RefreshTokenSessionServiceTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         RefreshTokenClaims claims = claims(1L);
 
-        assertThatThrownBy(() -> refreshTokenSessionService.rotate(
-                request, claims, "current-refresh-token", claims, "next-refresh-token"))
-                .isInstanceOf(AuthenticationFailedException.class)
+        assertThatThrownBy(() -> refreshTokenSessionService.rotate(request, claims, "current-refresh-token", claims,
+                "next-refresh-token")).isInstanceOf(AuthenticationFailedException.class)
                 .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
                 .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
     }
@@ -99,9 +97,8 @@ class RefreshTokenSessionServiceTest {
         refreshTokenSessionService.register(request, claims(1L), currentToken);
         MockHttpSession session = (MockHttpSession) request.getSession(false);
 
-        assertThatThrownBy(() -> refreshTokenSessionService.rotate(
-                request, claims(2L), currentToken, claims(2L), "next-refresh-token"))
-                .isInstanceOf(AuthenticationFailedException.class);
+        assertThatThrownBy(() -> refreshTokenSessionService.rotate(request, claims(2L), currentToken, claims(2L),
+                "next-refresh-token")).isInstanceOf(AuthenticationFailedException.class);
 
         assertThat(session.isInvalid()).isTrue();
     }
@@ -118,10 +115,10 @@ class RefreshTokenSessionServiceTest {
         ExecutorService executorService = Executors.newFixedThreadPool(2);
 
         try {
-            Future<Boolean> firstResult = executorService.submit(() -> rotateConcurrently(
-                    session, currentClaims, currentToken, "next-refresh-token-1", ready, start));
-            Future<Boolean> secondResult = executorService.submit(() -> rotateConcurrently(
-                    session, currentClaims, currentToken, "next-refresh-token-2", ready, start));
+            Future<Boolean> firstResult = executorService.submit(() -> rotateConcurrently(session, currentClaims,
+                    currentToken, "next-refresh-token-1", ready, start));
+            Future<Boolean> secondResult = executorService.submit(() -> rotateConcurrently(session, currentClaims,
+                    currentToken, "next-refresh-token-2", ready, start));
 
             assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
             start.countDown();
@@ -133,8 +130,8 @@ class RefreshTokenSessionServiceTest {
         }
     }
 
-    private boolean rotateConcurrently(MockHttpSession session, RefreshTokenClaims currentClaims,
-            String currentToken, String nextToken, CountDownLatch ready, CountDownLatch start)
+    private boolean rotateConcurrently(MockHttpSession session, RefreshTokenClaims currentClaims, String currentToken,
+            String nextToken, CountDownLatch ready, CountDownLatch start)
             throws InterruptedException, ExecutionException {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setSession(session);

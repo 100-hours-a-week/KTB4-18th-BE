@@ -6,8 +6,8 @@ import com.muse.meomuneum.global.exception.ErrorCode;
 
 public enum SecurityErrorCode implements ErrorCode {
 
-    ACCESS_UNAUTHORIZED("SECURITY_401", HttpStatus.UNAUTHORIZED, "unauthorized"),
-    ACCESS_DENIED("SECURITY_403", HttpStatus.FORBIDDEN, "request rejected");
+    ACCESS_UNAUTHORIZED("SECURITY_401", HttpStatus.UNAUTHORIZED, "unauthorized"), ACCESS_DENIED("SECURITY_403",
+            HttpStatus.FORBIDDEN, "request rejected");
 
     private final String code;
     private final String message;

@@ -6,21 +6,12 @@ import com.muse.meomuneum.global.exception.ErrorCode;
 
 public enum LocationErrorCode implements ErrorCode {
 
-    INVALID_COORDINATES(
-            "LOCATION_400_INVALID_COORDINATES",
-            HttpStatus.BAD_REQUEST,
-            "invalid coordinates or location accuracy insufficient"
-    ),
-    INVALID_LOCATION_TOKEN(
-            "LOCATION_400_INVALID_TOKEN",
-            HttpStatus.BAD_REQUEST,
-            "invalid location resolution token"
-    ),
-    REVERSE_GEOCODING_FAILED(
-            "LOCATION_502_REVERSE_GEOCODING_FAILED",
-            HttpStatus.BAD_GATEWAY,
-            "reverse geocoding failed"
-    );
+    INVALID_COORDINATES("LOCATION_400_INVALID_COORDINATES", HttpStatus.BAD_REQUEST,
+            "invalid coordinates or location accuracy insufficient"), INVALID_LOCATION_TOKEN(
+                    "LOCATION_400_INVALID_TOKEN", HttpStatus.BAD_REQUEST,
+                    "invalid location resolution token"), REVERSE_GEOCODING_FAILED(
+                            "LOCATION_502_REVERSE_GEOCODING_FAILED", HttpStatus.BAD_GATEWAY,
+                            "reverse geocoding failed");
 
     private final String code;
     private final HttpStatus status;

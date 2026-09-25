@@ -34,9 +34,7 @@ import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
 @WebMvcTest(value = RecommendationController.class, properties = {
-        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
-        "recommendation.allow-guests=false"
-})
+        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
 @Import({SecurityConfig.class, RecommendationSecurityIntegrationTest.SecurityTestConfiguration.class})
 class RecommendationSecurityIntegrationTest {
 
@@ -62,10 +60,8 @@ class RecommendationSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousRecommendationRequestWhenGuestsAreDisabled() throws Exception {
-        mockMvc.perform(get("/api/v1/recommendations/1"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("unauthorized"))
-                .andExpect(jsonPath("$.data").doesNotExist());
+        mockMvc.perform(get("/api/v1/recommendations/1")).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("unauthorized")).andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
@@ -75,39 +71,29 @@ class RecommendationSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousRecommendationPostWhenGuestsAreDisabled() throws Exception {
-        mockMvc.perform(post("/api/v1/recommendations")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(recommendationRequest()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("unauthorized"))
-                .andExpect(jsonPath("$.data").doesNotExist());
+        mockMvc.perform(post("/api/v1/recommendations").contentType(MediaType.APPLICATION_JSON)
+                .content(recommendationRequest())).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("unauthorized")).andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
     void rejectsInvalidBearerRecommendationPostWithoutCsrfToken() throws Exception {
-        mockMvc.perform(post("/api/v1/recommendations")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer invalid-token")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(recommendationRequest()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("unauthorized"))
+        mockMvc.perform(post("/api/v1/recommendations").header(HttpHeaders.AUTHORIZATION, "Bearer invalid-token")
+                .contentType(MediaType.APPLICATION_JSON).content(recommendationRequest()))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
     void passesCsrfFilterForValidBearerRecommendationPost() throws Exception {
-        when(recommendationService.create(
-                org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.eq(1L)
-        )).thenReturn(new RecommendationResponse(1L, "COMPLETED", "conversation-key", java.util.List.of(), null));
+        when(recommendationService.create(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq(1L)))
+                .thenReturn(new RecommendationResponse(1L, "COMPLETED", "conversation-key", java.util.List.of(), null));
 
-        mockMvc.perform(post("/api/v1/recommendations")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(recommendationRequest()))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.message").value("recommendation completed"));
+        mockMvc.perform(
+                post("/api/v1/recommendations").header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(recommendationRequest()))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.message").value("recommendation completed"));
     }
 
     private String createAccessToken() {
@@ -133,13 +119,8 @@ class RecommendationSecurityIntegrationTest {
 
         @Bean
         JwtTokenProvider jwtTokenProvider() {
-            return new JwtTokenProvider(new JwtProperties(
-                    "project-api",
-                    "project-api",
-                    "development-only-secret-with-at-least-32-bytes",
-                    3600,
-                    1209600
-            ));
+            return new JwtTokenProvider(new JwtProperties("project-api", "project-api",
+                    "development-only-secret-with-at-least-32-bytes", 3600, 1209600));
         }
 
         @Bean

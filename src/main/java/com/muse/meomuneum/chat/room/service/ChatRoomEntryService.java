@@ -30,12 +30,8 @@ public class ChatRoomEntryService {
     private final LocationResolutionTokenProvider tokenProvider;
     private final Clock clock;
 
-    public ChatRoomEntryService(
-            ChatRoomRepository chatRoomRepository,
-            ChatRoomMemberRepository memberRepository,
-            UserRepository userRepository,
-            LocationResolutionTokenProvider tokenProvider,
-            Clock clock) {
+    public ChatRoomEntryService(ChatRoomRepository chatRoomRepository, ChatRoomMemberRepository memberRepository,
+            UserRepository userRepository, LocationResolutionTokenProvider tokenProvider, Clock clock) {
         this.chatRoomRepository = chatRoomRepository;
         this.memberRepository = memberRepository;
         this.userRepository = userRepository;
@@ -45,8 +41,7 @@ public class ChatRoomEntryService {
 
     @Transactional(readOnly = true)
     public ChatRoomResponse findByRegion(Long regionId) {
-        ChatRoom chatRoom = chatRoomRepository.findByRegion_Id(regionId)
-                .filter(ChatRoom::isActive)
+        ChatRoom chatRoom = chatRoomRepository.findByRegion_Id(regionId).filter(ChatRoom::isActive)
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_NOT_FOUND));
         return ChatRoomResponse.from(chatRoom);
     }
@@ -59,10 +54,8 @@ public class ChatRoomEntryService {
         ChatRoomMember activeMembership = memberRepository.findByUser_IdAndDeletedAtIsNull(userId).orElse(null);
         List<Long> roomIdsToLock = roomIdsToLock(activeMembership, roomId);
         List<ChatRoom> lockedRooms = chatRoomRepository.findAllByIdForUpdate(roomIdsToLock);
-        ChatRoom targetRoom = lockedRooms.stream()
-                .filter(room -> room.getId().equals(roomId))
-                .filter(ChatRoom::isActive)
-                .findFirst()
+        ChatRoom targetRoom = lockedRooms.stream().filter(room -> room.getId().equals(roomId))
+                .filter(ChatRoom::isActive).findFirst()
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_NOT_FOUND));
         validateLocation(claims, targetRoom);
 
@@ -89,16 +82,13 @@ public class ChatRoomEntryService {
         if (activeMembership == null || activeMembership.getChatRoom().getId().equals(targetRoomId)) {
             return List.of(targetRoomId);
         }
-        return List.of(activeMembership.getChatRoom().getId(), targetRoomId).stream()
-                .sorted()
-                .toList();
+        return List.of(activeMembership.getChatRoom().getId(), targetRoomId).stream().sorted().toList();
     }
 
     private void validateLocation(LocationResolutionClaims claims, ChatRoom targetRoom) {
         Long targetRegionId = targetRoom.getRegion().getId();
         String targetRegionCode = targetRoom.getRegion().getCode();
-        if (!targetRegionId.equals(claims.sigunguRegionId())
-                || !targetRegionCode.equals(claims.sigunguCode())) {
+        if (!targetRegionId.equals(claims.sigunguRegionId()) || !targetRegionCode.equals(claims.sigunguCode())) {
             throw new ChatRoomException(ChatRoomErrorCode.LOCATION_REGION_MISMATCH);
         }
     }

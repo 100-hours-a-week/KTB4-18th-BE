@@ -1,5 +1,12 @@
 package com.muse.meomuneum.chat.room.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import java.time.OffsetDateTime;
 
 import org.junit.jupiter.api.Test;
@@ -23,17 +30,8 @@ import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 @WebMvcTest(value = ChatRoomController.class, properties = {
-        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
-        "recommendation.allow-guests=false"
-})
+        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
 @Import({SecurityConfig.class, ChatRoomSecurityIntegrationTest.SecurityTestConfiguration.class})
 class ChatRoomSecurityIntegrationTest {
 
@@ -48,32 +46,19 @@ class ChatRoomSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousJoinRequests() throws Exception {
-        mockMvc.perform(post("/api/v1/chat-rooms/700/members")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("unauthorized"));
+        mockMvc.perform(
+                post("/api/v1/chat-rooms/700/members").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"));
     }
 
     @Test
     void acceptsAuthenticatedBearerJoinWithoutCsrfToken() throws Exception {
-        when(chatRoomEntryService.join(any(), any(), any())).thenReturn(
-                new ChatRoomJoinResult(
-                        new ChatRoomMembershipResponse(
-                                900L,
-                                700L,
-                                25L,
-                                OffsetDateTime.parse("2026-09-25T00:00:00Z")
-                        ),
-                        true
-                )
-        );
+        when(chatRoomEntryService.join(any(), any(), any())).thenReturn(new ChatRoomJoinResult(
+                new ChatRoomMembershipResponse(900L, 700L, 25L, OffsetDateTime.parse("2026-09-25T00:00:00Z")), true));
 
         mockMvc.perform(post("/api/v1/chat-rooms/700/members")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody()))
-                .andExpect(status().isCreated())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(requestBody())).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("chat room joined"));
     }
 
@@ -93,13 +78,8 @@ class ChatRoomSecurityIntegrationTest {
 
         @Bean
         JwtTokenProvider jwtTokenProvider() {
-            return new JwtTokenProvider(new JwtProperties(
-                    "project-api",
-                    "project-api",
-                    "development-only-secret-with-at-least-32-bytes",
-                    3600,
-                    1209600
-            ));
+            return new JwtTokenProvider(new JwtProperties("project-api", "project-api",
+                    "development-only-secret-with-at-least-32-bytes", 3600, 1209600));
         }
 
         @Bean

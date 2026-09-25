@@ -5,8 +5,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +14,9 @@ import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 @Service
 public class RecommendationService {
@@ -27,7 +28,7 @@ public class RecommendationService {
     private final MeterRegistry meterRegistry;
 
     public RecommendationService(RecommendationProvider provider, RecommendationRepository repository,
-                                 MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry) {
         this.provider = provider;
         this.repository = repository;
         this.meterRegistry = meterRegistry;
@@ -50,13 +51,13 @@ public class RecommendationService {
                 }
                 throw exception;
             } finally {
-                providerTimer.stop(Timer.builder("recommendation.provider.duration")
-                        .tag("provider", "itunes").tag("outcome", providerOutcome).register(meterRegistry));
+                providerTimer.stop(Timer.builder("recommendation.provider.duration").tag("provider", "itunes")
+                        .tag("outcome", providerOutcome).register(meterRegistry));
             }
             if (tracks.isEmpty() || tracks.size() > 5
                     || tracks.stream().map(t -> t.provider() + ":" + t.externalId()).distinct().count() != tracks.size()
-                    || tracks.stream().map(t -> (t.artistName() + ":" + t.title()).trim()
-                    .toLowerCase(Locale.ROOT)).distinct().count() != tracks.size()) {
+                    || tracks.stream().map(t -> (t.artistName() + ":" + t.title()).trim().toLowerCase(Locale.ROOT))
+                            .distinct().count() != tracks.size()) {
                 throw new RecommendationException(503, "추천 결과를 확보하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             }
             var result = repository.saveCompleted(request, guestSessionId, userId, tracks);
@@ -68,8 +69,8 @@ public class RecommendationService {
             }
             throw exception;
         } finally {
-            requestTimer.stop(Timer.builder("recommendation.request.duration")
-                    .tag("outcome", outcome).register(meterRegistry));
+            requestTimer.stop(
+                    Timer.builder("recommendation.request.duration").tag("outcome", outcome).register(meterRegistry));
         }
     }
 
@@ -83,8 +84,8 @@ public class RecommendationService {
             return List.copyOf(prompts);
         }
 
-        var recentPrompts = repository.findRecentPrompts(
-                request.conversation_key(), guestSessionId, userId, MAX_HISTORY_COUNT);
+        var recentPrompts = repository.findRecentPrompts(request.conversation_key(), guestSessionId, userId,
+                MAX_HISTORY_COUNT);
         for (String prompt : recentPrompts) {
             String trimmedPrompt = prompt.trim();
             if (trimmedPrompt.isEmpty()) {
@@ -113,8 +114,10 @@ public class RecommendationService {
         boolean ownsResult = saved.userId() != null
                 ? Objects.equals(saved.userId(), userId)
                 : guestSessionId != null && Objects.equals(saved.guestSessionId(), guestSessionId);
-        if (!ownsResult) throw new RecommendationException(403, "이 추천 결과에 접근할 수 없습니다.");
-        return new RecommendationResponse(id, saved.status(), saved.conversationKey(),
-                repository.findItems(id), saved.completedAt());
+        if (!ownsResult) {
+            throw new RecommendationException(403, "이 추천 결과에 접근할 수 없습니다.");
+        }
+        return new RecommendationResponse(id, saved.status(), saved.conversationKey(), repository.findItems(id),
+                saved.completedAt());
     }
 }

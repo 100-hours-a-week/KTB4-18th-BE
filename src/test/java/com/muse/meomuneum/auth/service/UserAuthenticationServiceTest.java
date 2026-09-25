@@ -1,5 +1,14 @@
 package com.muse.meomuneum.auth.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -11,15 +20,6 @@ import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.repository.UserRepository;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class UserAuthenticationServiceTest {
 
@@ -49,8 +49,7 @@ class UserAuthenticationServiceTest {
     }
 
     private void assertInvalidCredentials(Runnable invocation) {
-        assertThatThrownBy(invocation::run)
-                .isInstanceOf(AuthenticationFailedException.class)
+        assertThatThrownBy(invocation::run).isInstanceOf(AuthenticationFailedException.class)
                 .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
     }

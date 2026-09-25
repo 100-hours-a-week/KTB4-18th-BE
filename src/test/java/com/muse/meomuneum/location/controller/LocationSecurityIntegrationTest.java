@@ -30,9 +30,7 @@ import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
 @WebMvcTest(value = LocationController.class, properties = {
-        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
-        "recommendation.allow-guests=false"
-})
+        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
 @Import({SecurityConfig.class, LocationSecurityIntegrationTest.SecurityTestConfiguration.class})
 class LocationSecurityIntegrationTest {
 
@@ -47,23 +45,19 @@ class LocationSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousLocationResolution() throws Exception {
-        mockMvc.perform(post("/api/v1/locations/resolve")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("unauthorized"));
+        mockMvc.perform(
+                post("/api/v1/locations/resolve").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"));
     }
 
     @Test
     void acceptsAuthenticatedBearerRequestWithoutCsrfToken() throws Exception {
         when(locationResolutionService.resolve(any(), any())).thenReturn(response());
 
-        mockMvc.perform(post("/api/v1/locations/resolve")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("location resolved"));
+        mockMvc.perform(
+                post("/api/v1/locations/resolve").header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("location resolved"));
     }
 
     private String createAccessToken() {
@@ -74,15 +68,9 @@ class LocationSecurityIntegrationTest {
     }
 
     private LocationResolveResponse response() {
-        return new LocationResolveResponse(
-                null,
-                new RegionSummaryPair(
-                        new RegionSummary(9L, "41", "경기도"),
-                        new RegionSummary(25L, "41135", "성남시 분당구")
-                ),
-                "loc_token",
-                300
-        );
+        return new LocationResolveResponse(null,
+                new RegionSummaryPair(new RegionSummary(9L, "41", "경기도"), new RegionSummary(25L, "41135", "성남시 분당구")),
+                "loc_token", 300);
     }
 
     private String requestBody() {
@@ -96,13 +84,8 @@ class LocationSecurityIntegrationTest {
 
         @Bean
         JwtTokenProvider jwtTokenProvider() {
-            return new JwtTokenProvider(new JwtProperties(
-                    "project-api",
-                    "project-api",
-                    "development-only-secret-with-at-least-32-bytes",
-                    3600,
-                    1209600
-            ));
+            return new JwtTokenProvider(new JwtProperties("project-api", "project-api",
+                    "development-only-secret-with-at-least-32-bytes", 3600, 1209600));
         }
 
         @Bean

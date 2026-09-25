@@ -1,5 +1,9 @@
 package com.muse.meomuneum.chat.room.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -34,10 +38,6 @@ import com.muse.meomuneum.chat.room.repository.ChatRoomRepository;
 import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 @SpringBootTest
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
@@ -45,8 +45,7 @@ class ChatRoomEntryIntegrationTest {
 
     @Container
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4.6")
-            .withDatabaseName("meomuneum_chat_entry_test")
-            .withUsername("meomuneum_test")
+            .withDatabaseName("meomuneum_chat_entry_test").withUsername("meomuneum_test")
             .withPassword("meomuneum_test");
 
     @Autowired
@@ -90,10 +89,8 @@ class ChatRoomEntryIntegrationTest {
         ChatRoom room = roomFor("41135");
         String token = issueToken(userId, room.getRegion());
 
-        List<ChatRoomJoinResult> results = runConcurrently(
-                () -> service.join(userId, room.getId(), token),
-                () -> service.join(userId, room.getId(), token)
-        );
+        List<ChatRoomJoinResult> results = runConcurrently(() -> service.join(userId, room.getId(), token),
+                () -> service.join(userId, room.getId(), token));
 
         assertEquals(1L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
         assertEquals(results.get(0).membership().membershipId(), results.get(1).membership().membershipId());
@@ -109,10 +106,8 @@ class ChatRoomEntryIntegrationTest {
         String firstToken = issueToken(firstUserId, room.getRegion());
         String secondToken = issueToken(secondUserId, room.getRegion());
 
-        List<String> outcomes = runConcurrently(
-                () -> joinOutcome(firstUserId, room.getId(), firstToken),
-                () -> joinOutcome(secondUserId, room.getId(), secondToken)
-        );
+        List<String> outcomes = runConcurrently(() -> joinOutcome(firstUserId, room.getId(), firstToken),
+                () -> joinOutcome(secondUserId, room.getId(), secondToken));
 
         assertEquals(1L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
         assertEquals(1L, outcomes.stream().filter("joined"::equals).count());
@@ -132,8 +127,8 @@ class ChatRoomEntryIntegrationTest {
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
         try {
-            Future<String> secondOutcome = executor.submit(() -> new TransactionTemplate(transactionManager)
-                    .execute(status -> {
+            Future<String> secondOutcome = executor
+                    .submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
                         assertEquals(0L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
                         snapshotCreated.countDown();
                         await(firstJoinCompleted);
@@ -162,23 +157,14 @@ class ChatRoomEntryIntegrationTest {
         service.join(secondUserId, secondRoom.getId(), issueToken(secondUserId, secondRoom.getRegion()));
 
         List<ChatRoomJoinResult> results = runConcurrently(
-                () -> service.join(
-                        firstUserId,
-                        secondRoom.getId(),
-                        issueToken(firstUserId, secondRoom.getRegion())
-                ),
-                () -> service.join(
-                        secondUserId,
-                        firstRoom.getId(),
-                        issueToken(secondUserId, firstRoom.getRegion())
-                )
-        );
+                () -> service.join(firstUserId, secondRoom.getId(), issueToken(firstUserId, secondRoom.getRegion())),
+                () -> service.join(secondUserId, firstRoom.getId(), issueToken(secondUserId, firstRoom.getRegion())));
 
         assertEquals(2, results.size());
-        assertEquals(secondRoom.getId(), memberRepository.findByUser_IdAndDeletedAtIsNull(firstUserId)
-                .orElseThrow().getChatRoom().getId());
-        assertEquals(firstRoom.getId(), memberRepository.findByUser_IdAndDeletedAtIsNull(secondUserId)
-                .orElseThrow().getChatRoom().getId());
+        assertEquals(secondRoom.getId(),
+                memberRepository.findByUser_IdAndDeletedAtIsNull(firstUserId).orElseThrow().getChatRoom().getId());
+        assertEquals(firstRoom.getId(),
+                memberRepository.findByUser_IdAndDeletedAtIsNull(secondUserId).orElseThrow().getChatRoom().getId());
     }
 
     @Test
@@ -192,14 +178,8 @@ class ChatRoomEntryIntegrationTest {
         service.join(movingUserId, previousRoom.getId(), issueToken(movingUserId, previousRoom.getRegion()));
         service.join(occupyingUserId, fullRoom.getId(), issueToken(occupyingUserId, fullRoom.getRegion()));
 
-        ChatRoomException exception = org.junit.jupiter.api.Assertions.assertThrows(
-                ChatRoomException.class,
-                () -> service.join(
-                        movingUserId,
-                        fullRoom.getId(),
-                        issueToken(movingUserId, fullRoom.getRegion())
-                )
-        );
+        ChatRoomException exception = org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                () -> service.join(movingUserId, fullRoom.getId(), issueToken(movingUserId, fullRoom.getRegion())));
 
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, exception.getErrorCode());
         assertFalse(memberRepository.findByUser_IdAndDeletedAtIsNull(movingUserId).isPresent());
@@ -212,14 +192,8 @@ class ChatRoomEntryIntegrationTest {
         ChatRoom requestedRoom = roomFor("41135");
         ChatRoom actualRoom = roomFor("11680");
 
-        ChatRoomException exception = org.junit.jupiter.api.Assertions.assertThrows(
-                ChatRoomException.class,
-                () -> service.join(
-                        userId,
-                        requestedRoom.getId(),
-                        issueToken(userId, actualRoom.getRegion())
-                )
-        );
+        ChatRoomException exception = org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                () -> service.join(userId, requestedRoom.getId(), issueToken(userId, actualRoom.getRegion())));
 
         assertEquals(ChatRoomErrorCode.LOCATION_REGION_MISMATCH, exception.getErrorCode());
         assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(userId).isEmpty());
@@ -253,11 +227,8 @@ class ChatRoomEntryIntegrationTest {
                 INSERT INTO users (email, password_hash, nickname, role)
                 VALUES (?, 'password-hash', ?, 'USER')
                 """, "chat-entry-" + suffix + "@example.com", suffix.substring(0, Math.min(12, suffix.length())));
-        return jdbcTemplate.queryForObject(
-                "SELECT id FROM users WHERE email = ?",
-                Long.class,
-                "chat-entry-" + suffix + "@example.com"
-        );
+        return jdbcTemplate.queryForObject("SELECT id FROM users WHERE email = ?", Long.class,
+                "chat-entry-" + suffix + "@example.com");
     }
 
     private ChatRoom roomFor(String sigunguCode) {
@@ -273,17 +244,14 @@ class ChatRoomEntryIntegrationTest {
     }
 
     @SafeVarargs
-    private <T> List<T> runConcurrently(Callable<T>... tasks)
-            throws InterruptedException, ExecutionException {
+    private <T> List<T> runConcurrently(Callable<T>... tasks) throws InterruptedException, ExecutionException {
         ExecutorService executor = Executors.newFixedThreadPool(tasks.length);
         CountDownLatch start = new CountDownLatch(1);
         try {
-            List<Future<T>> futures = java.util.Arrays.stream(tasks)
-                    .map(task -> executor.submit(() -> {
-                        start.await();
-                        return task.call();
-                    }))
-                    .toList();
+            List<Future<T>> futures = java.util.Arrays.stream(tasks).map(task -> executor.submit(() -> {
+                start.await();
+                return task.call();
+            })).toList();
             start.countDown();
             return futures.stream().map(this::getResult).toList();
         } finally {

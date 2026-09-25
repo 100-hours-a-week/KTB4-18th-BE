@@ -14,10 +14,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.web.context.WebApplicationContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,13 +38,9 @@ class RefreshCsrfProtectionIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
-                .apply(springSecurity())
-                .build();
-        MvcResult csrfIssueResult = mockMvc.perform(get("/api/v1/auth/token/csrf"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("csrf token issued"))
-                .andReturn();
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).apply(springSecurity()).build();
+        MvcResult csrfIssueResult = mockMvc.perform(get("/api/v1/auth/token/csrf")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("csrf token issued")).andReturn();
         JsonNode responseBody = objectMapper.readTree(csrfIssueResult.getResponse().getContentAsByteArray());
 
         session = (MockHttpSession) csrfIssueResult.getRequest().getSession(false);
@@ -53,32 +49,23 @@ class RefreshCsrfProtectionIntegrationTest {
 
     @Test
     void rejectsRefreshWhenCsrfHeaderIsMissing() throws Exception {
-        mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .cookie(new Cookie("refresh_token", "masked-refresh-token")))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value("request rejected"))
-                .andExpect(jsonPath("$.data").isEmpty());
+        mockMvc.perform(post("/api/v1/auth/token/refresh").session(session)
+                .cookie(new Cookie("refresh_token", "masked-refresh-token"))).andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("request rejected")).andExpect(jsonPath("$.data").isEmpty());
     }
 
     @Test
     void rejectsRefreshWhenCsrfHeaderDoesNotMatchSessionToken() throws Exception {
-        mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .cookie(new Cookie("refresh_token", "masked-refresh-token"))
-                        .header("X-CSRF-TOKEN", "mismatched-csrf-token"))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value("request rejected"))
-                .andExpect(jsonPath("$.data").isEmpty());
+        mockMvc.perform(post("/api/v1/auth/token/refresh").session(session)
+                .cookie(new Cookie("refresh_token", "masked-refresh-token"))
+                .header("X-CSRF-TOKEN", "mismatched-csrf-token")).andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("request rejected")).andExpect(jsonPath("$.data").isEmpty());
     }
 
     @Test
     void passesCsrfValidationThenRejectsMissingRefreshSessionState() throws Exception {
-        mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .header("X-CSRF-TOKEN", csrfToken))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("invalid refresh token"))
+        mockMvc.perform(post("/api/v1/auth/token/refresh").session(session).header("X-CSRF-TOKEN", csrfToken))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("invalid refresh token"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 }

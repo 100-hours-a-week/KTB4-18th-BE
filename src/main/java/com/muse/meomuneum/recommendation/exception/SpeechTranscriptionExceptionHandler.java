@@ -25,13 +25,11 @@ public class SpeechTranscriptionExceptionHandler {
     public ResponseEntity<SpeechTranscriptionController.ApiResponse<Void>> tooLarge(
             MaxUploadSizeExceededException exception) {
         return ResponseEntity.status(413)
-                .body(new SpeechTranscriptionController.ApiResponse<>(
-                        "음성 파일은 최대 10MB까지 전송할 수 있습니다.", null));
+                .body(new SpeechTranscriptionController.ApiResponse<>("음성 파일은 최대 10MB까지 전송할 수 있습니다.", null));
     }
 
     @ExceptionHandler({MissingServletRequestParameterException.class, MissingServletRequestPartException.class})
-    public ResponseEntity<SpeechTranscriptionController.ApiResponse<Void>> missingAudio(
-            Exception exception) {
+    public ResponseEntity<SpeechTranscriptionController.ApiResponse<Void>> missingAudio(Exception exception) {
         return ResponseEntity.badRequest()
                 .body(new SpeechTranscriptionController.ApiResponse<>("음성 파일을 선택해 주세요.", null));
     }
