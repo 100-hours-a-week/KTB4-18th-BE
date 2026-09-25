@@ -80,7 +80,8 @@ public class ChatRoomEntryService {
             throw new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED);
         }
 
-        ChatRoomMember membership = memberRepository.saveAndFlush(ChatRoomMember.join(user, targetRoom));
+        LocalDateTime joinedAt = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+        ChatRoomMember membership = memberRepository.saveAndFlush(ChatRoomMember.join(user, targetRoom, joinedAt));
         return new ChatRoomJoinResult(ChatRoomMembershipResponse.from(membership), true);
     }
 

@@ -110,6 +110,19 @@ class ChatRoomEntryServiceTest {
         verify(memberRepository).saveAndFlush(previousMembership);
     }
 
+    @Test
+    void storesAndReturnsTheJoinedAtTimestampInUtc() {
+        User user = mock(User.class);
+        ChatRoom room = room(700L, 25L, "41135", 25);
+        prepareJoin(user, room, claims(7L, 25L, "41135"));
+        when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of());
+        when(memberRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ChatRoomJoinResult result = service.join(7L, 700L, "loc_token");
+
+        assertEquals(NOW.atOffset(ZoneOffset.UTC), result.membership().joinedAt());
+    }
+
     private void prepareJoin(User user, ChatRoom room, LocationResolutionClaims claims) {
         when(tokenProvider.validate("loc_token", 7L)).thenReturn(claims);
         when(userRepository.findActiveByIdForUpdate(7L)).thenReturn(Optional.of(user));

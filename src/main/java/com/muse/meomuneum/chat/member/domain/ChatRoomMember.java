@@ -3,8 +3,6 @@ package com.muse.meomuneum.chat.member.domain;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-import org.hibernate.annotations.CreationTimestamp;
-
 import com.muse.meomuneum.chat.room.domain.ChatRoom;
 import com.muse.meomuneum.user.domain.User;
 
@@ -34,7 +32,6 @@ public class ChatRoomMember {
     @JoinColumn(name = "room_id", nullable = false)
     private ChatRoom chatRoom;
 
-    @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -44,13 +41,14 @@ public class ChatRoomMember {
     protected ChatRoomMember() {
     }
 
-    private ChatRoomMember(User user, ChatRoom chatRoom) {
+    private ChatRoomMember(User user, ChatRoom chatRoom, LocalDateTime createdAt) {
         this.user = Objects.requireNonNull(user);
         this.chatRoom = Objects.requireNonNull(chatRoom);
+        this.createdAt = Objects.requireNonNull(createdAt);
     }
 
-    public static ChatRoomMember join(User user, ChatRoom chatRoom) {
-        return new ChatRoomMember(user, chatRoom);
+    public static ChatRoomMember join(User user, ChatRoom chatRoom, LocalDateTime joinedAt) {
+        return new ChatRoomMember(user, chatRoom, joinedAt);
     }
 
     public Long getId() {
