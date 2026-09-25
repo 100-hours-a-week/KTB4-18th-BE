@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: ${MUSIC_SIGNUP_DB_URL}
+    username: ${MUSIC_SIGNUP_DB_USERNAME}
+    password: ${MUSIC_SIGNUP_DB_PASSWORD}
+  flyway:
+    locations: filesystem:build/music-record-signup-local-migrations
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+auth:
+  cors:
+    allowed-origins: http://localhost:5176,http://127.0.0.1:5176
+  jwt:
+    secret: ${MUSIC_SIGNUP_AUTH_JWT_SECRET}
+    issuer: ${MUSIC_SIGNUP_AUTH_JWT_ISSUER}

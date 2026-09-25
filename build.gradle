@@ -47,3 +47,39 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+// Temporary local profile: stage only migrations needed by music-record development.
+tasks.register('prepareMusicRecordLocalMigrations', Sync) {
+	from('src/main/resources/db/migration') {
+		include 'V1__recommendation_sample.sql'
+		include 'V20260921192804__add_index_to_recommendation_session_context.sql'
+		include 'V20260921200528__create_users_table.sql'
+		include 'V20260923093759__create_music_record_tables.sql'
+	}
+	into layout.buildDirectory.dir('music-record-local-migrations')
+}
+
+// Isolated signup verification profile; keep the existing music-record migration set unchanged.
+tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
+	from('src/main/resources/db/migration') {
+		include 'V1__recommendation_sample.sql'
+		include 'V20260921192804__add_index_to_recommendation_session_context.sql'
+		include 'V20260921200528__create_users_table.sql'
+		include 'V20260922145107__add_auto_increment_to_users_id.sql'
+		include 'V20260922145108__create_terms_and_agreements_tables.sql'
+		include 'V20260922195140__add_terms_type_version_unique_constraint.sql'
+		include 'V20260923093759__create_music_record_tables.sql'
+	}
+	from('src/main/resources/db/music-record-signup-local')
+	into layout.buildDirectory.dir('music-record-signup-local-migrations')
+}
+
+tasks.named('bootRun') {
+	dependsOn 'prepareMusicRecordLocalMigrations'
+	dependsOn 'prepareMusicRecordSignupLocalMigrations'
+}
+
+tasks.named('test') {
+	dependsOn 'prepareMusicRecordLocalMigrations'
+	dependsOn 'prepareMusicRecordSignupLocalMigrations'
+}
