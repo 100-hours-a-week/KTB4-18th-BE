@@ -2,6 +2,8 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.1.1'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'com.diffplug.spotless' version '8.10.2'
+	id 'checkstyle'
 }
 
 group = 'com.muse'
@@ -15,6 +17,23 @@ java {
 
 repositories {
 	mavenCentral()
+}
+
+spotless {
+	java {
+		target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+		eclipse().configFile('config/eclipse-java-formatter.xml')
+		removeUnusedImports()
+		importOrder('java', 'javax', 'jakarta', 'org', 'com', '')
+		trimTrailingWhitespace()
+		endWithNewline()
+	}
+}
+
+checkstyle {
+	toolVersion = '14.1.0'
+	configFile = file('config/checkstyle/checkstyle.xml')
+	maxWarnings = 0
 }
 
 dependencies {
