@@ -79,6 +79,90 @@ set +a
 
 기본 서버 주소는 `http://localhost:8080`입니다. 아직 서비스 API가 없으므로 루트 주소가 서비스 화면을 제공하지는 않습니다. Spring Security 기본 설정으로 인증이 요구되거나 기본 로그인 화면이 표시될 수 있습니다. 별도 인증 설정 전에는 실행 로그의 기본 생성 비밀번호를 확인하세요.
 
+## 음악 기록 로컬 개발 프로필
+
+채팅 테이블이 아직 통합되지 않은 음악 기록 개발 DB는 `dev,music-record-local` 프로필로 실행합니다.
+이 프로필은 Gradle이 준비한 음악 기록용 마이그레이션 디렉터리만 사용하며, 채팅 마이그레이션은 실행하지 않습니다.
+
+```sh
+set -a
+. ./.env
+set +a
+./gradlew bootRun --args='--spring.profiles.active=dev,music-record-local'
+```
+
+`bootRun`은 `prepareMusicRecordLocalMigrations`를 먼저 실행합니다. IDE에서 애플리케이션을 직접 실행할 때는
+`./gradlew prepareMusicRecordLocalMigrations`를 먼저 실행하고 두 프로필을 모두 활성화하세요.
+임시 프로필에서는 채팅 테이블이 없으므로 JPA의 전체 스키마 검증을 끕니다. 음악 기록 SQL의 Flyway 검증은 유지됩니다.
+새 음악 기록 마이그레이션을 추가하면 `build.gradle`의 전용 SQL 목록에도 추가해야 합니다.
+이 프로필은 로컬 개발 전용이며 통합 검증이나 배포에 사용하지 않습니다.
+
+음악 기록 전용 DB 통합 테스트는 기존 테스트 DB와 분리된 로컬 DB에서
+`test,music-record-local` 프로필로 실행합니다. 테스트 DB 자격 증명은 실행 환경의
+`TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`로 주입합니다.
+`./gradlew test`가 필요한 마이그레이션을 먼저 준비합니다.
+
+전체 테스트는 일반 `test` 프로필을 사용하는 기존 테스트도 포함합니다. 현재 음악 기록과
+채팅의 지역 테이블 마이그레이션이 충돌하므로, 전용 프로필 검증과 전체 테스트
+통과를 동일하게 취급하지 않습니다.
+
+### 회원가입·음악 기록 격리 로컬 프로필
+
+회원가입 약관 ID 1~6 및 음악 기록을 함께 개발할 때는 기존 DB가 아닌
+`meomuneum_music_record_signup_dev`를 사용합니다. 해당 스키마에는 전용 계정
+`mm_signup_dev`만 권한을 부여합니다. Git에서 제외되는 `.env.music-record-signup-dev`에
+`MUSIC_SIGNUP_DB_URL`, `MUSIC_SIGNUP_DB_USERNAME`, `MUSIC_SIGNUP_DB_PASSWORD`,
+`MUSIC_SIGNUP_AUTH_JWT_SECRET`, `MUSIC_SIGNUP_AUTH_JWT_ISSUER`를 별도로 둡니다.
+기존 `.env`와 이전 로컬 DB의 값은 변경하지 않습니다.
+기존 `.env`의 `AUTH_JWT_SECRET`·`AUTH_JWT_ISSUER`·`AUTH_CORS_ALLOWED_ORIGINS`가
+프로필 YAML보다 우선하므로 신규 env 파일을 **나중에** 불러와 이 세 값을 전용 값으로
+덮어써야 합니다.
+
+```sh
+set -a
+. ./.env
+. ./.env.music-record-signup-dev
+set +a
+SERVER_PORT=8082 ./gradlew bootRun --args='--spring.profiles.active=dev,music-record-signup-local'
+```
+
+새 프로필은 `prepareMusicRecordSignupLocalMigrations`의 SQL만 실행하며 원본 migration을
+수정하지 않습니다. Flyway 전 URL·설정 계정과 실제 연결 스키마·계정을 검사해 로컬 전용
+대상이 아니면 실행을 거부합니다. IntelliJ에서 직접 실행하면 위 Gradle 준비 태스크를 먼저
+실행하고 프로필 순서를 `dev,music-record-signup-local`로 지정합니다.
+프론트엔드는 기존 `.env.local`을 보존하고
+`VITE_API_BASE_URL='' VITE_API_PROXY_TARGET=http://localhost:8082 npm run dev -- --port 5176`
+으로 새 백엔드에 연결합니다.
+
+약관 1·2는 필수, 3~6은 선택이며 제출한 ID만 동의 이력에 기록합니다. 로컬 보정 SQL은
+새 DB에서만 ERD의 필드 길이와 필수 여부·모순된 시드 문구를 맞춥니다. 운영 약관 문구
+적용은 별도의 법률·제품 검토가 필요합니다. 실패해도 기존 DB에 `clean`·`repair`·삭제를
+실행하지 마세요.
+
+위치 확인 API는 서버에서 Kakao 로컬 REST API로 좌표를 역지오코딩합니다. `.env.example`을
+복사한 `.env`에 **Kakao REST API 키**를 `KAKAO_REST_API_KEY`로 설정하고, Kakao Developers에서
+해당 앱의 Kakao Maps API 사용을 활성화하세요. 키는 백엔드의 `Authorization: KakaoAK ...`
+헤더에만 사용하며 프론트엔드로 전달하지 않습니다. 기존 위치 API의 요청·응답 형식은 유지됩니다.
+Kakao 조회가 성공한 시점부터 위치 토큰의 유효시간은 300초입니다.
+
+### 음악 기록 상세·수정 API
+
+인증된 사용자는 `GET /api/v1/music-records/{record_id}`로 본인 기록의 곡,
+지도 도트 ID, 시/도·시/군/구, 사용자 장소명, 감정 메모, 생성·수정 시각을 조회합니다.
+`PATCH /api/v1/music-records/{record_id}`는 변경된 필드만 받습니다.
+
+```json
+{
+  "custom_place_name": "범서네 집",
+  "emotion_memo": "비 오는 날의 차분함"
+}
+```
+
+PATCH는 `custom_place_name`과 `emotion_memo`만 받으며 음악·위치·지역·저장 날짜는
+수정하지 않습니다. 값이 모두 기존과 같으면 공통 400을 반환하고 DB를 수정하지
+않습니다. 변경 시 `updated_at`은 서버 시각으로 설정합니다. 다른 사용자의 기록은
+403, 존재하지 않거나 삭제된 기록은 404를 반환합니다.
+
 ## 테스트 및 빌드
 
 DB를 준비하고 환경변수를 불러온 상태에서 실행합니다.
