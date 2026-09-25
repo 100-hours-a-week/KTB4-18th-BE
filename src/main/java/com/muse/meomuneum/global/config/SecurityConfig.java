@@ -43,6 +43,7 @@ public class SecurityConfig {
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
                 "/api/v1/locations/resolve",
+                "/api/v1/chat-rooms/**",
                 "/api/v1/users/signup"
         };
 
