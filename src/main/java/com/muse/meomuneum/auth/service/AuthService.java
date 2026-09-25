@@ -48,13 +48,9 @@ public class AuthService {
         servletRequest.getSession(true);
         servletRequest.changeSessionId();
         TokenResponse response = issueTokens(user, servletRequest, headers);
-        log.info(
-                "event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
-                AuthSuccessCode.LOGIN_SUCCESS.code(),
-                AuthSuccessCode.LOGIN_SUCCESS.status().value(),
-                user.getId(),
-                MDC.get("requestId")
-        );
+        log.info("event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
+                AuthSuccessCode.LOGIN_SUCCESS.code(), AuthSuccessCode.LOGIN_SUCCESS.status().value(), user.getId(),
+                MDC.get("requestId"));
         return response;
     }
 
@@ -79,8 +75,7 @@ public class AuthService {
         RefreshTokenClaims refreshTokenClaims = jwtTokenProvider.parseRefreshToken(refreshToken);
         refreshTokenSessionService.register(request, refreshTokenClaims, refreshToken);
         refreshTokenCookieFactory.addRefreshTokenCookie(headers, refreshToken);
-        return new TokenResponse(
-                jwtTokenProvider.createAccessToken(user),
+        return new TokenResponse(jwtTokenProvider.createAccessToken(user),
                 jwtProperties.accessTokenExpirationSeconds());
     }
 
@@ -88,11 +83,9 @@ public class AuthService {
             String currentRefreshToken, RefreshTokenClaims currentClaims) {
         String nextRefreshToken = jwtTokenProvider.createRefreshToken(user);
         RefreshTokenClaims nextClaims = jwtTokenProvider.parseRefreshToken(nextRefreshToken);
-        refreshTokenSessionService.rotate(
-                request, currentClaims, currentRefreshToken, nextClaims, nextRefreshToken);
+        refreshTokenSessionService.rotate(request, currentClaims, currentRefreshToken, nextClaims, nextRefreshToken);
         refreshTokenCookieFactory.addRefreshTokenCookie(headers, nextRefreshToken);
-        return new TokenResponse(
-                jwtTokenProvider.createAccessToken(user),
+        return new TokenResponse(jwtTokenProvider.createAccessToken(user),
                 jwtProperties.accessTokenExpirationSeconds());
     }
 
@@ -101,11 +94,8 @@ public class AuthService {
             throw new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
         }
 
-        return Arrays.stream(request.getCookies())
-                .filter(cookie -> REFRESH_TOKEN_COOKIE_NAME.equals(cookie.getName()))
-                .map(cookie -> cookie.getValue())
-                .findFirst()
-                .filter(value -> !value.isBlank())
+        return Arrays.stream(request.getCookies()).filter(cookie -> REFRESH_TOKEN_COOKIE_NAME.equals(cookie.getName()))
+                .map(cookie -> cookie.getValue()).findFirst().filter(value -> !value.isBlank())
                 .orElseThrow(() -> new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN));
     }
 }

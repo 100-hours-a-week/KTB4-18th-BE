@@ -13,8 +13,7 @@ public class StubSpeechToTextProvider implements SpeechToTextProvider {
     private final String transcript;
 
     public StubSpeechToTextProvider(
-            @Value("${speech.transcription.stub-transcript:"
-                    + "비 올 때 듣기 좋은 노래를 추천해줘}") String transcript) {
+            @Value("${speech.transcription.stub-transcript:" + "비 올 때 듣기 좋은 노래를 추천해줘}") String transcript) {
         this.transcript = transcript;
     }
 

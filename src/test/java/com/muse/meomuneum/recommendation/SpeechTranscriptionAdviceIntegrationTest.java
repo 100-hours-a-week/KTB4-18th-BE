@@ -36,10 +36,9 @@ class SpeechTranscriptionAdviceIntegrationTest {
     @ValueSource(ints = {400, 413, 502})
     void prioritizesSpeechTranscriptionErrorContractOverGlobalHandler(int responseStatus) throws Exception {
         when(service.transcribe(any())).thenThrow(new SpeechTranscriptionException(responseStatus, "speech error"));
-        var audio = new MockMultipartFile("audio", "voice.webm", "audio/webm", new byte[] {1});
+        var audio = new MockMultipartFile("audio", "voice.webm", "audio/webm", new byte[]{1});
 
-        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio))
-                .andExpect(status().is(responseStatus))
+        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio)).andExpect(status().is(responseStatus))
                 .andExpect(jsonPath("$.message").value("speech error"));
     }
 }

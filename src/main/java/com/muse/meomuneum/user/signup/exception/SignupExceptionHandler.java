@@ -29,7 +29,6 @@ public class SignupExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> unexpected(Exception exception) {
         LOGGER.error("회원가입 요청 처리 중 예외가 발생했습니다.", exception);
-        return ResponseEntity.internalServerError()
-                .body(ApiResponse.failure("internal server error"));
+        return ResponseEntity.internalServerError().body(ApiResponse.failure("internal server error"));
     }
 }

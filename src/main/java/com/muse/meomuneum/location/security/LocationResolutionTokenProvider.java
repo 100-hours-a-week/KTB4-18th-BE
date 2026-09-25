@@ -11,6 +11,10 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.chat.region.domain.Region;
+import com.muse.meomuneum.location.config.LocationTokenProperties;
+import com.muse.meomuneum.location.exception.LocationErrorCode;
+import com.muse.meomuneum.location.exception.LocationException;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -18,10 +22,6 @@ import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jose.crypto.MACVerifier;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import com.muse.meomuneum.chat.region.domain.Region;
-import com.muse.meomuneum.location.config.LocationTokenProperties;
-import com.muse.meomuneum.location.exception.LocationErrorCode;
-import com.muse.meomuneum.location.exception.LocationException;
 
 @Component
 public class LocationResolutionTokenProvider {
@@ -44,19 +44,10 @@ public class LocationResolutionTokenProvider {
     public IssuedLocationToken issue(Long userId, Region sido, Region sigungu) {
         Instant issuedAt = clock.instant();
         Instant expiresAt = issuedAt.plus(TOKEN_LIFETIME);
-        JWTClaimsSet claims = new JWTClaimsSet.Builder()
-                .issuer(ISSUER)
-                .subject(userId.toString())
-                .audience(AUDIENCE)
-                .issueTime(Date.from(issuedAt))
-                .expirationTime(Date.from(expiresAt))
-                .jwtID(UUID.randomUUID().toString())
-                .claim("type", TOKEN_TYPE)
-                .claim("sido_region_id", sido.getId())
-                .claim("sido_code", sido.getCode())
-                .claim("sigungu_region_id", sigungu.getId())
-                .claim("sigungu_code", sigungu.getCode())
-                .build();
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().issuer(ISSUER).subject(userId.toString()).audience(AUDIENCE)
+                .issueTime(Date.from(issuedAt)).expirationTime(Date.from(expiresAt)).jwtID(UUID.randomUUID().toString())
+                .claim("type", TOKEN_TYPE).claim("sido_region_id", sido.getId()).claim("sido_code", sido.getCode())
+                .claim("sigungu_region_id", sigungu.getId()).claim("sigungu_code", sigungu.getCode()).build();
 
         try {
             SignedJWT signedJwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims);
@@ -80,14 +71,9 @@ public class LocationResolutionTokenProvider {
                 throw invalidToken();
             }
 
-            return new LocationResolutionClaims(
-                    userId,
-                    numberClaim(claims, "sido_region_id"),
-                    stringClaim(claims, "sido_code"),
-                    numberClaim(claims, "sigungu_region_id"),
-                    stringClaim(claims, "sigungu_code"),
-                    claims.getExpirationTime().toInstant()
-            );
+            return new LocationResolutionClaims(userId, numberClaim(claims, "sido_region_id"),
+                    stringClaim(claims, "sido_code"), numberClaim(claims, "sigungu_region_id"),
+                    stringClaim(claims, "sigungu_code"), claims.getExpirationTime().toInstant());
         } catch (JOSEException | ParseException | IllegalArgumentException exception) {
             throw invalidToken();
         }
@@ -103,13 +89,9 @@ public class LocationResolutionTokenProvider {
     private boolean hasExpectedStandardClaims(SignedJWT signedJwt, JWTClaimsSet claims) throws ParseException {
         Date issueTime = claims.getIssueTime();
         Date expirationTime = claims.getExpirationTime();
-        return JWSAlgorithm.HS256.equals(signedJwt.getHeader().getAlgorithm())
-                && ISSUER.equals(claims.getIssuer())
-                && List.of(AUDIENCE).equals(claims.getAudience())
-                && TOKEN_TYPE.equals(claims.getStringClaim("type"))
-                && issueTime != null
-                && !issueTime.toInstant().isAfter(clock.instant())
-                && expirationTime != null
+        return JWSAlgorithm.HS256.equals(signedJwt.getHeader().getAlgorithm()) && ISSUER.equals(claims.getIssuer())
+                && List.of(AUDIENCE).equals(claims.getAudience()) && TOKEN_TYPE.equals(claims.getStringClaim("type"))
+                && issueTime != null && !issueTime.toInstant().isAfter(clock.instant()) && expirationTime != null
                 && expirationTime.toInstant().isAfter(clock.instant());
     }
 

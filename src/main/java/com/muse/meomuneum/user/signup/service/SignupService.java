@@ -26,8 +26,8 @@ import com.muse.meomuneum.user.signup.repository.SignupRepository;
 public class SignupService {
     private static final short MIN_BIRTH_YEAR = 1900;
     private static final String SERVICE = "SERVICE";
-    private static final Set<String> SIGNUP_TERMS_TYPES =
-            Set.of(SERVICE, "PROFILE", "AIPERSONAL", "LOCATIONTERMS", "LOCATION");
+    private static final Set<String> SIGNUP_TERMS_TYPES = Set.of(SERVICE, "PROFILE", "AIPERSONAL", "LOCATIONTERMS",
+            "LOCATION");
 
     private final SignupRepository signupRepository;
     private final PasswordEncoder passwordEncoder;
@@ -65,14 +65,12 @@ public class SignupService {
         Map<Long, SignupRepository.Term> termsById = currentTerms.stream()
                 .filter(term -> requestedTermsIds.contains(term.id()))
                 .collect(Collectors.toMap(SignupRepository.Term::id, Function.identity()));
-        if (termsById.size() != requestedTermsIds.size() || termsById.values().stream()
-                .anyMatch(term -> !SIGNUP_TERMS_TYPES.contains(term.type()))) {
+        if (termsById.size() != requestedTermsIds.size()
+                || termsById.values().stream().anyMatch(term -> !SIGNUP_TERMS_TYPES.contains(term.type()))) {
             throw new InvalidSignupRequestException();
         }
-        Set<Long> requiredTermsIds = currentTerms.stream()
-                .filter(SignupRepository.Term::required)
-                .map(SignupRepository.Term::id)
-                .collect(Collectors.toSet());
+        Set<Long> requiredTermsIds = currentTerms.stream().filter(SignupRepository.Term::required)
+                .map(SignupRepository.Term::id).collect(Collectors.toSet());
         if (requiredTermsIds.isEmpty()) {
             throw new IllegalStateException("Current required terms are missing");
         }
@@ -95,13 +93,8 @@ public class SignupService {
 
     private long createUser(SignupRequest request, String email, Instant now) {
         try {
-            return signupRepository.createUser(
-                    email,
-                    passwordEncoder.encode(request.password()),
-                    request.nickname().trim(),
-                    request.birthYear(),
-                    request.gender(),
-                    now);
+            return signupRepository.createUser(email, passwordEncoder.encode(request.password()),
+                    request.nickname().trim(), request.birthYear(), request.gender(), now);
         } catch (DuplicateKeyException exception) {
             throw new DuplicateEmailException();
         }

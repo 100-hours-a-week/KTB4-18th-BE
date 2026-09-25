@@ -23,7 +23,8 @@ import com.muse.meomuneum.recommendation.service.SpeechTranscriptionService;
 
 @ExtendWith(MockitoExtension.class)
 class SpeechTranscriptionServiceTests {
-    @Mock SpeechToTextProvider provider;
+    @Mock
+    SpeechToTextProvider provider;
     SpeechTranscriptionService service;
 
     @BeforeEach
@@ -34,8 +35,8 @@ class SpeechTranscriptionServiceTests {
     @Test
     void returnsTrimmedTranscriptForValidWebm() {
         when(provider.transcribe(any())).thenReturn("  비 올 때 듣기 좋은 노래  ");
-        var audio = new MockMultipartFile(
-                "audio", "voice.webm", "audio/webm;codecs=opus", AudioMetadataInspectorTests.webm(59.5f));
+        var audio = new MockMultipartFile("audio", "voice.webm", "audio/webm;codecs=opus",
+                AudioMetadataInspectorTests.webm(59.5f));
 
         var response = service.transcribe(audio);
 
@@ -48,8 +49,7 @@ class SpeechTranscriptionServiceTests {
 
     @Test
     void rejectsAudioLongerThanSixtySeconds() {
-        var audio = new MockMultipartFile(
-                "audio", "voice.mp4", "audio/mp4", AudioMetadataInspectorTests.mp4(60_001));
+        var audio = new MockMultipartFile("audio", "voice.mp4", "audio/mp4", AudioMetadataInspectorTests.mp4(60_001));
 
         var exception = assertThrows(SpeechTranscriptionException.class, () -> service.transcribe(audio));
 
@@ -58,8 +58,7 @@ class SpeechTranscriptionServiceTests {
 
     @Test
     void rejectsUnsupportedContentType() {
-        var audio = new MockMultipartFile(
-                "audio", "voice.txt", "text/plain", AudioMetadataInspectorTests.webm(10f));
+        var audio = new MockMultipartFile("audio", "voice.txt", "text/plain", AudioMetadataInspectorTests.webm(10f));
 
         var exception = assertThrows(SpeechTranscriptionException.class, () -> service.transcribe(audio));
 
@@ -80,8 +79,7 @@ class SpeechTranscriptionServiceTests {
     @Test
     void rejectsBlankProviderResponse() {
         when(provider.transcribe(any())).thenReturn("  ");
-        var audio = new MockMultipartFile(
-                "audio", "voice.webm", "audio/webm", AudioMetadataInspectorTests.webm(10f));
+        var audio = new MockMultipartFile("audio", "voice.webm", "audio/webm", AudioMetadataInspectorTests.webm(10f));
 
         var exception = assertThrows(SpeechTranscriptionException.class, () -> service.transcribe(audio));
 

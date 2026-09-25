@@ -16,12 +16,13 @@ import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /** AI 팀 연동 전에는 대화의 입력 문장을 iTunes에서 직접 검색합니다. */
 @Component
@@ -33,10 +34,9 @@ public class ItunesRecommendationProvider implements RecommendationProvider {
     private final Duration timeout;
 
     public ItunesRecommendationProvider(ObjectMapper mapper,
-                                        @Value("${recommendation.itunes.search-url:https://itunes.apple.com/search}")
-                                        String searchUrl,
-                                        @Value("${recommendation.itunes.country:US}") String country,
-                                        @Value("${recommendation.itunes.timeout:8s}") Duration timeout) {
+            @Value("${recommendation.itunes.search-url:https://itunes.apple.com/search}") String searchUrl,
+            @Value("${recommendation.itunes.country:US}") String country,
+            @Value("${recommendation.itunes.timeout:8s}") Duration timeout) {
         this.mapper = mapper;
         this.searchUrl = searchUrl;
         this.country = country;
@@ -55,8 +55,8 @@ public class ItunesRecommendationProvider implements RecommendationProvider {
             query = query.substring(query.length() - 250).trim();
         }
         String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
-        URI uri = URI.create(searchUrl + "?term=" + encoded + "&country=" + country
-                + "&media=music&entity=song&limit=25");
+        URI uri = URI
+                .create(searchUrl + "?term=" + encoded + "&country=" + country + "&media=music&entity=song&limit=25");
         var request = HttpRequest.newBuilder(uri).timeout(timeout).GET().build();
         try {
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());

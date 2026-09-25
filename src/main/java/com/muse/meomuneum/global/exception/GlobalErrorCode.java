@@ -4,9 +4,7 @@ import org.springframework.http.HttpStatus;
 
 public enum GlobalErrorCode implements ErrorCode {
 
-    INTERNAL_SERVER_ERROR(
-            "GLOBAL_500", HttpStatus.INTERNAL_SERVER_ERROR, "internal server error"
-    );
+    INTERNAL_SERVER_ERROR("GLOBAL_500", HttpStatus.INTERNAL_SERVER_ERROR, "internal server error");
 
     private final String code;
     private final String message;

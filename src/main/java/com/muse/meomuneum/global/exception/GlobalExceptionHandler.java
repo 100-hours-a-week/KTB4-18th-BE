@@ -22,14 +22,9 @@ public class GlobalExceptionHandler {
         log.error(
                 "event=unexpected_server_error domainCode={} httpStatus={} method={} path={} requestId={} "
                         + "exceptionType={}",
-                GlobalErrorCode.INTERNAL_SERVER_ERROR.code(),
-                GlobalErrorCode.INTERNAL_SERVER_ERROR.status().value(),
-                request.getMethod(),
-                request.getRequestURI(),
-                MDC.get("requestId"),
-                exception.getClass().getSimpleName(),
-                exception
-        );
+                GlobalErrorCode.INTERNAL_SERVER_ERROR.code(), GlobalErrorCode.INTERNAL_SERVER_ERROR.status().value(),
+                request.getMethod(), request.getRequestURI(), MDC.get("requestId"),
+                exception.getClass().getSimpleName(), exception);
         return toErrorResponse(GlobalErrorCode.INTERNAL_SERVER_ERROR);
     }
 

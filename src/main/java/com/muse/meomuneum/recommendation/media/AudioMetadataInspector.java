@@ -48,8 +48,8 @@ public class AudioMetadataInspector {
         while (clusterOffset >= 0) {
             int nextClusterOffset = indexOf(content, WEBM_CLUSTER, clusterOffset + WEBM_CLUSTER.length);
             int clusterEnd = nextClusterOffset < 0 ? content.length : nextClusterOffset;
-            long clusterTimecode = findUnsignedElement(
-                    content, WEBM_CLUSTER_TIMECODE, clusterOffset + WEBM_CLUSTER.length, clusterEnd, -1);
+            long clusterTimecode = findUnsignedElement(content, WEBM_CLUSTER_TIMECODE,
+                    clusterOffset + WEBM_CLUSTER.length, clusterEnd, -1);
             if (clusterTimecode >= 0) {
                 lastTimestamp = Math.max(lastTimestamp,
                         findLastBlockTimestamp(content, clusterOffset, clusterEnd, clusterTimecode));
@@ -72,8 +72,8 @@ public class AudioMetadataInspector {
             if (trackNumber != null) {
                 int timecodeOffset = payloadOffset + trackNumber.length();
                 if (timecodeOffset + 2 <= end) {
-                    int relativeTimecode = ByteBuffer.wrap(content, timecodeOffset, 2)
-                            .order(ByteOrder.BIG_ENDIAN).getShort();
+                    int relativeTimecode = ByteBuffer.wrap(content, timecodeOffset, 2).order(ByteOrder.BIG_ENDIAN)
+                            .getShort();
                     lastTimestamp = Math.max(lastTimestamp, clusterTimecode + relativeTimecode);
                 }
             }
@@ -209,11 +209,12 @@ public class AudioMetadataInspector {
     }
 
     private SpeechTranscriptionException invalidAudio() {
-        return new SpeechTranscriptionException(400,
-                "WebM 또는 MP4 형식의 재생 가능한 음성 파일을 전송해 주세요. (최대 60초)");
+        return new SpeechTranscriptionException(400, "WebM 또는 MP4 형식의 재생 가능한 음성 파일을 전송해 주세요. (최대 60초)");
     }
 
-    public record AudioMetadata(String mediaType, double durationSeconds) {}
+    public record AudioMetadata(String mediaType, double durationSeconds) {
+    }
 
-    private record Vint(int length, long value) {}
+    private record Vint(int length, long value) {
+    }
 }

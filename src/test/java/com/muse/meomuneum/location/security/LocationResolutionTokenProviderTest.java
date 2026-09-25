@@ -61,10 +61,8 @@ class LocationResolutionTokenProviderTest {
     void rejectsTokenSignedWithDifferentSecret() {
         String token = providerAt(ISSUED_AT, SECRET).issue(7L, sido, sigungu).value();
 
-        assertInvalidToken(() -> providerAt(
-                ISSUED_AT,
-                "different-location-token-secret-with-at-least-32-bytes"
-        ).validate(token, 7L));
+        assertInvalidToken(() -> providerAt(ISSUED_AT, "different-location-token-secret-with-at-least-32-bytes")
+                .validate(token, 7L));
     }
 
     @Test
@@ -76,15 +74,12 @@ class LocationResolutionTokenProviderTest {
     }
 
     private LocationResolutionTokenProvider providerAt(Instant instant, String secret) {
-        return new LocationResolutionTokenProvider(
-                new LocationTokenProperties(secret),
-                Clock.fixed(instant, ZoneOffset.UTC)
-        );
+        return new LocationResolutionTokenProvider(new LocationTokenProperties(secret),
+                Clock.fixed(instant, ZoneOffset.UTC));
     }
 
     private void assertInvalidToken(Runnable invocation) {
-        assertThatThrownBy(invocation::run)
-                .isInstanceOf(LocationException.class)
+        assertThatThrownBy(invocation::run).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.INVALID_LOCATION_TOKEN);
     }

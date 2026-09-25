@@ -18,8 +18,8 @@ public class SpeechTranscriptionService {
     static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
     static final double MAX_DURATION_SECONDS = 60d;
 
-    private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
-            "audio/webm", "video/webm", "audio/mp4", "video/mp4", "application/mp4", "application/octet-stream");
+    private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("audio/webm", "video/webm", "audio/mp4",
+            "video/mp4", "application/mp4", "application/octet-stream");
 
     private final AudioMetadataInspector metadataInspector;
     private final SpeechToTextProvider provider;
@@ -48,14 +48,10 @@ public class SpeechTranscriptionService {
             throw invalidAudio();
         }
 
-        String transcript = provider.transcribe(new SpeechAudio(
-                content,
-                metadata.mediaType(),
-                safeFilename(audio.getOriginalFilename()),
-                metadata.durationSeconds()));
+        String transcript = provider.transcribe(new SpeechAudio(content, metadata.mediaType(),
+                safeFilename(audio.getOriginalFilename()), metadata.durationSeconds()));
         if (transcript == null || transcript.isBlank()) {
-            throw new SpeechTranscriptionException(
-                    502, "음성을 텍스트로 변환하지 못했습니다. 다시 시도해 주세요.");
+            throw new SpeechTranscriptionException(502, "음성을 텍스트로 변환하지 못했습니다. 다시 시도해 주세요.");
         }
         return new SpeechTranscriptionResponse(transcript.trim());
     }
@@ -92,8 +88,7 @@ public class SpeechTranscriptionService {
     }
 
     private SpeechTranscriptionException invalidAudio() {
-        return new SpeechTranscriptionException(400,
-                "WebM 또는 MP4 형식의 재생 가능한 음성 파일을 전송해 주세요. (최대 60초)");
+        return new SpeechTranscriptionException(400, "WebM 또는 MP4 형식의 재생 가능한 음성 파일을 전송해 주세요. (최대 60초)");
     }
 
     private SpeechTranscriptionException tooLarge() {

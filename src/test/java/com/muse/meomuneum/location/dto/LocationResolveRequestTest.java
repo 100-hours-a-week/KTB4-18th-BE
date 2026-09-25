@@ -33,8 +33,7 @@ class LocationResolveRequestTest {
     }
 
     private void assertInvalidCoordinates(LocationResolveRequest request) {
-        assertThatThrownBy(request::validate)
-                .isInstanceOf(LocationException.class)
+        assertThatThrownBy(request::validate).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.INVALID_COORDINATES);
     }

@@ -1,5 +1,14 @@
 package com.muse.meomuneum.chat.room.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -23,15 +32,6 @@ import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.repository.UserRepository;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 class ChatRoomEntryServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-09-25T00:00:00Z");
@@ -48,13 +48,8 @@ class ChatRoomEntryServiceTest {
         memberRepository = mock(ChatRoomMemberRepository.class);
         userRepository = mock(UserRepository.class);
         tokenProvider = mock(LocationResolutionTokenProvider.class);
-        service = new ChatRoomEntryService(
-                chatRoomRepository,
-                memberRepository,
-                userRepository,
-                tokenProvider,
-                Clock.fixed(NOW, ZoneOffset.UTC)
-        );
+        service = new ChatRoomEntryService(chatRoomRepository, memberRepository, userRepository, tokenProvider,
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -79,10 +74,7 @@ class ChatRoomEntryServiceTest {
         ChatRoom room = room(700L, 25L, "41135", 25);
         prepareJoin(user, room, claims(7L, 30L, "11680"));
 
-        ChatRoomException exception = assertThrows(
-                ChatRoomException.class,
-                () -> service.join(7L, 700L, "loc_token")
-        );
+        ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
 
         assertEquals(ChatRoomErrorCode.LOCATION_REGION_MISMATCH, exception.getErrorCode());
         verify(memberRepository, never()).saveAndFlush(any());
@@ -96,14 +88,10 @@ class ChatRoomEntryServiceTest {
         ChatRoomMember previousMembership = mock(ChatRoomMember.class);
         when(previousMembership.getChatRoom()).thenReturn(previousRoom);
         prepareJoin(user, targetRoom, claims(7L, 25L, "41135"));
-        when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L))
-                .thenReturn(Optional.of(previousMembership));
+        when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(previousMembership));
         when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of(mock(ChatRoomMember.class)));
 
-        ChatRoomException exception = assertThrows(
-                ChatRoomException.class,
-                () -> service.join(7L, 700L, "loc_token")
-        );
+        ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
 
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, exception.getErrorCode());
         verify(previousMembership).leave(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC));
@@ -130,14 +118,7 @@ class ChatRoomEntryServiceTest {
     }
 
     private LocationResolutionClaims claims(Long userId, Long sigunguRegionId, String sigunguCode) {
-        return new LocationResolutionClaims(
-                userId,
-                9L,
-                "41",
-                sigunguRegionId,
-                sigunguCode,
-                NOW.plusSeconds(300)
-        );
+        return new LocationResolutionClaims(userId, 9L, "41", sigunguRegionId, sigunguCode, NOW.plusSeconds(300));
     }
 
     private ChatRoom room(Long roomId, Long regionId, String regionCode, int capacity) {
@@ -156,9 +137,7 @@ class ChatRoomEntryServiceTest {
         ChatRoomMember membership = mock(ChatRoomMember.class);
         when(membership.getId()).thenReturn(membershipId);
         when(membership.getChatRoom()).thenReturn(room);
-        when(membership.getCreatedAt()).thenReturn(
-                OffsetDateTime.parse("2026-09-25T00:00:00Z").toLocalDateTime()
-        );
+        when(membership.getCreatedAt()).thenReturn(OffsetDateTime.parse("2026-09-25T00:00:00Z").toLocalDateTime());
         return membership;
     }
 }

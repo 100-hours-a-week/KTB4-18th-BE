@@ -28,9 +28,7 @@ import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
 @WebMvcTest(value = SpeechTranscriptionController.class, properties = {
-        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
-        "recommendation.allow-guests=true"
-})
+        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=true"})
 @Import({SecurityConfig.class, SpeechTranscriptionSecurityIntegrationTest.SecurityTestConfiguration.class})
 class SpeechTranscriptionSecurityIntegrationTest {
     @Autowired
@@ -44,10 +42,8 @@ class SpeechTranscriptionSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousRequestWhenRecommendationGuestsAreAllowed() throws Exception {
-        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("unauthorized"))
-                .andExpect(jsonPath("$.data").doesNotExist());
+        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio())).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("unauthorized")).andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
@@ -55,15 +51,13 @@ class SpeechTranscriptionSecurityIntegrationTest {
         when(service.transcribe(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new SpeechTranscriptionResponse("비 오는 날 듣기 좋은 노래"));
 
-        mockMvc.perform(multipart("/api/v1/speech-transcriptions")
-                        .file(audio())
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken()))
-                .andExpect(status().isOk())
+        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio()).header(HttpHeaders.AUTHORIZATION,
+                "Bearer " + createAccessToken())).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.transcript").value("비 오는 날 듣기 좋은 노래"));
     }
 
     private MockMultipartFile audio() {
-        return new MockMultipartFile("audio", "voice.webm", "audio/webm", new byte[] {1});
+        return new MockMultipartFile("audio", "voice.webm", "audio/webm", new byte[]{1});
     }
 
     private String createAccessToken() {
@@ -77,13 +71,8 @@ class SpeechTranscriptionSecurityIntegrationTest {
     static class SecurityTestConfiguration {
         @Bean
         JwtTokenProvider jwtTokenProvider() {
-            return new JwtTokenProvider(new JwtProperties(
-                    "project-api",
-                    "project-api",
-                    "development-only-secret-with-at-least-32-bytes",
-                    3600,
-                    1209600
-            ));
+            return new JwtTokenProvider(new JwtProperties("project-api", "project-api",
+                    "development-only-secret-with-at-least-32-bytes", 3600, 1209600));
         }
 
         @Bean

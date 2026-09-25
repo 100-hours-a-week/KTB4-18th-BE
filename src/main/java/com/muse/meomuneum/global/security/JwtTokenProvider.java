@@ -10,6 +10,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -18,16 +19,15 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.stereotype.Component;
 
-import com.nimbusds.jose.jwk.source.ImmutableSecret;
-import com.nimbusds.jose.proc.SecurityContext;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.exception.ErrorCode;
 import com.muse.meomuneum.user.domain.User;
+import com.nimbusds.jose.jwk.source.ImmutableSecret;
+import com.nimbusds.jose.proc.SecurityContext;
 
 @Component
 public class JwtTokenProvider {
@@ -71,16 +71,10 @@ public class JwtTokenProvider {
 
     private String createToken(User user, String type, long expirationSeconds) {
         Instant issuedAt = Instant.now();
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-                .issuer(jwtProperties.issuer())
-                .subject(user.getId().toString())
-                .audience(List.of(jwtProperties.audience()))
-                .issuedAt(issuedAt)
-                .expiresAt(issuedAt.plusSeconds(expirationSeconds))
-                .id(UUID.randomUUID().toString())
-                .claim("type", type)
-                .claim("roles", List.of(user.getRole().name()))
-                .build();
+        JwtClaimsSet claims = JwtClaimsSet.builder().issuer(jwtProperties.issuer()).subject(user.getId().toString())
+                .audience(List.of(jwtProperties.audience())).issuedAt(issuedAt)
+                .expiresAt(issuedAt.plusSeconds(expirationSeconds)).id(UUID.randomUUID().toString()).claim("type", type)
+                .claim("roles", List.of(user.getRole().name())).build();
 
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
         return jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();

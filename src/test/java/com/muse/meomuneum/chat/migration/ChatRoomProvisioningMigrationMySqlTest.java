@@ -1,5 +1,8 @@
 package com.muse.meomuneum.chat.migration;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -15,25 +18,18 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 @Testcontainers(disabledWithoutDocker = true)
 class ChatRoomProvisioningMigrationMySqlTest {
 
-    private static final String SEED_MIGRATION_PATH =
-            "db/migration/V20260923162348__seed_chat_regions_and_rooms.sql";
+    private static final String SEED_MIGRATION_PATH = "db/migration/V20260923162348__seed_chat_regions_and_rooms.sql";
     private static final List<String> PREREQUISITE_MIGRATION_PATHS = List.of(
             "db/migration/V20260921200528__create_users_table.sql",
             "db/migration/V20260922145107__add_auto_increment_to_users_id.sql",
-            "db/migration/V20260923142421__create_chat_room_foundation.sql"
-    );
+            "db/migration/V20260923142421__create_chat_room_foundation.sql");
 
     @Container
-    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4.6")
-            .withDatabaseName("meomuneum_migration_test")
-            .withUsername("meomuneum_test")
-            .withPassword("meomuneum_test");
+    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
+            .withDatabaseName("meomuneum_migration_test").withUsername("meomuneum_test").withPassword("meomuneum_test");
 
     @Test
     void keepsRegionAndRoomProvisioningIdempotentOnMySql() throws SQLException {
@@ -48,8 +44,8 @@ class ChatRoomProvisioningMigrationMySqlTest {
         assertEquals(16, countRegionLevel(regionsAfterFirstRun, "SIDO"));
         assertEquals(269, countRegionLevel(regionsAfterFirstRun, "SIGUNGU"));
         assertEquals(269, roomsAfterFirstRun.size());
-        assertTrue(roomsAfterFirstRun.stream()
-                .allMatch(room -> room.capacity() == 25 && "ACTIVE".equals(room.status())));
+        assertTrue(
+                roomsAfterFirstRun.stream().allMatch(room -> room.capacity() == 25 && "ACTIVE".equals(room.status())));
         assertEquals(0, countMissingActiveSigunguRooms());
         assertEquals(269, countDistinctRoomRegions());
 
@@ -79,13 +75,8 @@ class ChatRoomProvisioningMigrationMySqlTest {
                 Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(sql)) {
             while (resultSet.next()) {
-                regions.add(new RegionState(
-                        resultSet.getString(1),
-                        resultSet.getString(2),
-                        resultSet.getString(3),
-                        resultSet.getString(4),
-                        resultSet.getBoolean(5)
-                ));
+                regions.add(new RegionState(resultSet.getString(1), resultSet.getString(2), resultSet.getString(3),
+                        resultSet.getString(4), resultSet.getBoolean(5)));
             }
         }
         return regions;
@@ -102,12 +93,8 @@ class ChatRoomProvisioningMigrationMySqlTest {
                 Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(sql)) {
             while (resultSet.next()) {
-                rooms.add(new RoomState(
-                        resultSet.getLong(1),
-                        resultSet.getLong(2),
-                        resultSet.getInt(3),
-                        resultSet.getString(4)
-                ));
+                rooms.add(new RoomState(resultSet.getLong(1), resultSet.getLong(2), resultSet.getInt(3),
+                        resultSet.getString(4)));
             }
         }
         return rooms;

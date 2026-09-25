@@ -36,18 +36,11 @@ public class SignupRepository {
                         WHERE current_terms.type = t.type
                             AND current_terms.effective_at <= ?
                     )
-                """, (row, index) -> new Term(
-                row.getLong("id"),
-                row.getString("type"),
-                row.getBoolean("is_required")), Timestamp.from(now), Timestamp.from(now));
+                """, (row, index) -> new Term(row.getLong("id"), row.getString("type"), row.getBoolean("is_required")),
+                Timestamp.from(now), Timestamp.from(now));
     }
 
-    public long createUser(
-            String email,
-            String passwordHash,
-            String nickname,
-            Short birthYear,
-            String gender,
+    public long createUser(String email, String passwordHash, String nickname, Short birthYear, String gender,
             Instant now) {
         var keys = new GeneratedKeyHolder();
         jdbc.update(connection -> {
@@ -79,5 +72,6 @@ public class SignupRepository {
                 """, userId, termsId, Timestamp.from(now));
     }
 
-    public record Term(long id, String type, boolean required) {}
+    public record Term(long id, String type, boolean required) {
+    }
 }

@@ -5,14 +5,15 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 
-import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
-import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
-import com.muse.meomuneum.recommendation.dto.TrackData;
-import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.muse.meomuneum.recommendation.dto.TrackData;
+import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
+import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
+import com.muse.meomuneum.recommendation.exception.RecommendationException;
 
 /** SQL을 모아 둔 클래스입니다. 모든 쿼리는 파라미터 바인딩을 사용합니다. */
 @Repository
@@ -21,7 +22,9 @@ public class RecommendationRepository {
 
     private final JdbcTemplate jdbc;
 
-    public RecommendationRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public RecommendationRepository(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
 
     public List<String> findRecentPrompts(String conversationKey, String guestSessionId, Long userId, int limit) {
         if (userId != null) {
@@ -44,7 +47,7 @@ public class RecommendationRepository {
 
     @Transactional
     public RecommendationResponse saveCompleted(RecommendationRequest request, String guestSessionId, Long userId,
-                                                List<TrackData> tracks) {
+            List<TrackData> tracks) {
         long id = createSession(request, userId == null ? guestSessionId : null, userId, Instant.now());
         for (int i = 0; i < tracks.size(); i++) {
             saveItem(id, saveMusic(tracks.get(i)), i + 1);
@@ -85,7 +88,8 @@ public class RecommendationRepository {
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE title = VALUES(title), artist_name = VALUES(artist_name),
                     album_cover_url = VALUES(album_cover_url), preview_url = VALUES(preview_url)
-                """, track.provider(), track.externalId(), track.title(), track.artistName(), track.coverUrl(), track.previewUrl());
+                """, track.provider(), track.externalId(), track.title(), track.artistName(), track.coverUrl(),
+                track.previewUrl());
         Long musicId = jdbc.queryForObject("SELECT id FROM music WHERE provider = ? AND external_music_id = ?",
                 Long.class, track.provider(), track.externalId());
         if (musicId == null) {
@@ -108,10 +112,11 @@ public class RecommendationRepository {
         return jdbc.query("""
                 SELECT id, user_id, guest_session_id, status, conversation_key, completed_at
                 FROM recommendation_sessions WHERE id = ?
-                """, (row, index) -> new SavedSession(row.getLong("id"), row.getObject("user_id", Long.class),
-                row.getString("guest_session_id"), row.getString("status"), row.getString("conversation_key"),
-                row.getTimestamp("completed_at") == null ? null : row.getTimestamp("completed_at").toInstant()), id)
-                .stream().findFirst().orElseThrow(() -> new RecommendationException(404, "추천 결과를 찾을 수 없습니다."));
+                """,
+                (row, index) -> new SavedSession(row.getLong("id"), row.getObject("user_id", Long.class),
+                        row.getString("guest_session_id"), row.getString("status"), row.getString("conversation_key"),
+                        row.getTimestamp("completed_at") == null ? null : row.getTimestamp("completed_at").toInstant()),
+                id).stream().findFirst().orElseThrow(() -> new RecommendationException(404, "추천 결과를 찾을 수 없습니다."));
     }
 
     public List<RecommendationResponse.Item> findItems(long id) {
@@ -121,9 +126,11 @@ public class RecommendationRepository {
                 WHERE i.recommendation_session_id = ? ORDER BY i.rank_no
                 """, (row, index) -> new RecommendationResponse.Item(row.getInt("rank_no"),
                 new RecommendationResponse.Music(row.getLong("id"), row.getString("title"),
-                        row.getString("artist_name"), row.getString("album_cover_url"), row.getString("preview_url"))), id);
+                        row.getString("artist_name"), row.getString("album_cover_url"), row.getString("preview_url"))),
+                id);
     }
 
-    public record SavedSession(long id, Long userId, String guestSessionId, String status,
-                               String conversationKey, Instant completedAt) {}
+    public record SavedSession(long id, Long userId, String guestSessionId, String status, String conversationKey,
+            Instant completedAt) {
+    }
 }

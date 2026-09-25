@@ -7,8 +7,7 @@ import com.muse.meomuneum.recommendation.dto.SpeechAudio;
 import com.muse.meomuneum.recommendation.exception.SpeechTranscriptionException;
 
 @Component
-@ConditionalOnProperty(prefix = "speech.transcription", name = "provider", havingValue = "unavailable",
-        matchIfMissing = true)
+@ConditionalOnProperty(prefix = "speech.transcription", name = "provider", havingValue = "unavailable", matchIfMissing = true)
 public class UnavailableSpeechToTextProvider implements SpeechToTextProvider {
     @Override
     public String transcribe(SpeechAudio audio) {

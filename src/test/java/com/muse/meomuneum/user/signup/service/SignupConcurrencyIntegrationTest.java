@@ -66,8 +66,7 @@ class SignupConcurrencyIntegrationTest {
         CountDownLatch emailLookupComplete = new CountDownLatch(2);
         CountDownLatch createUserStart = new CountDownLatch(1);
         SignupService signupService = new SignupService(
-                new CoordinatingSignupRepository(jdbc, emailLookupComplete, createUserStart),
-                passwordEncoder,
+                new CoordinatingSignupRepository(jdbc, emailLookupComplete, createUserStart), passwordEncoder,
                 Clock.systemUTC());
 
         Future<SignupAttempt> firstAttempt = executor.submit(() -> signup(signupService, email, requiredTermsIds));
@@ -76,19 +75,15 @@ class SignupConcurrencyIntegrationTest {
             assertTrue(emailLookupComplete.await(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS));
             createUserStart.countDown();
 
-            List<SignupAttempt> attempts = List.of(
-                    firstAttempt.get(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+            List<SignupAttempt> attempts = List.of(firstAttempt.get(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
                     secondAttempt.get(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS));
-            List<RuntimeException> failures = attempts.stream()
-                    .map(SignupAttempt::exception)
-                    .filter(exception -> exception != null)
-                    .toList();
+            List<RuntimeException> failures = attempts.stream().map(SignupAttempt::exception)
+                    .filter(exception -> exception != null).toList();
 
             assertEquals(1, attempts.stream().filter(SignupAttempt::isSuccess).count());
             assertEquals(1, failures.size());
             assertInstanceOf(DuplicateEmailException.class, failures.getFirst());
-            assertEquals(1, jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email));
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email));
             assertEquals(requiredTermsIds.size(), jdbc.queryForObject("""
                     SELECT COUNT(*)
                     FROM terms_agreements agreements
@@ -102,8 +97,7 @@ class SignupConcurrencyIntegrationTest {
 
     private SignupAttempt signup(SignupService signupService, String email, List<Long> requiredTermsIds) {
         try {
-            signupService.signup(new SignupRequest(
-                    email, "password1!", "머문음", null, null, requiredTermsIds));
+            signupService.signup(new SignupRequest(email, "password1!", "머문음", null, null, requiredTermsIds));
             return SignupAttempt.success();
         } catch (RuntimeException exception) {
             return SignupAttempt.failure(exception);
@@ -144,8 +138,8 @@ class SignupConcurrencyIntegrationTest {
         private final CountDownLatch emailLookupComplete;
         private final CountDownLatch createUserStart;
 
-        private CoordinatingSignupRepository(
-                JdbcTemplate jdbc, CountDownLatch emailLookupComplete, CountDownLatch createUserStart) {
+        private CoordinatingSignupRepository(JdbcTemplate jdbc, CountDownLatch emailLookupComplete,
+                CountDownLatch createUserStart) {
             super(jdbc);
             this.emailLookupComplete = emailLookupComplete;
             this.createUserStart = createUserStart;
