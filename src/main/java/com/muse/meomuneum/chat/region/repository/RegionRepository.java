@@ -12,5 +12,7 @@ public interface RegionRepository extends JpaRepository<Region, Long> {
 
     Optional<Region> findByCodeAndActiveTrue(String code);
 
+    Optional<Region> findByCodeAndLevelAndActiveTrue(String code, RegionLevel level);
+
     List<Region> findAllByLevelAndActiveTrue(RegionLevel level);
 }
