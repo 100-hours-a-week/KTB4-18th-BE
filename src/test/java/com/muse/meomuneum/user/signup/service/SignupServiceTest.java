@@ -131,7 +131,7 @@ class SignupServiceTest {
     }
 
     @Test
-    void rejectsUnexpectedRequiredOptionalTerm() {
+    void requiresAnyTermMarkedRequiredByDatabase() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
         SignupRequest request =
@@ -145,7 +145,7 @@ class SignupServiceTest {
                 new SignupRepository.Term(5L, "PRIVACY", false),
                 new SignupRepository.Term(6L, "LOCATIONTERMS", false)));
 
-        assertThrows(IllegalStateException.class, () -> service.signup(request));
+        assertThrows(InvalidSignupRequestException.class, () -> service.signup(request));
         verify(repository, never()).createUser(any(), any(), any(), any(), any(), any());
     }
 
@@ -195,7 +195,7 @@ class SignupServiceTest {
     }
 
     @Test
-    void rejectsSecondTermsTypeMarkedOptionalBeforeUserCreation() {
+    void acceptsSecondTermsTypeMarkedOptionalByDatabase() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
         SignupRequest request =
@@ -208,8 +208,9 @@ class SignupServiceTest {
                 new SignupRepository.Term(5L, "PRIVACY", false),
                 new SignupRepository.Term(6L, "LOCATIONTERMS", false)));
 
-        assertThrows(IllegalStateException.class, () -> service.signup(request));
-        verify(repository, never()).createUser(any(), any(), any(), any(), any(), any());
+        when(repository.createUser(any(), any(), any(), any(), any(), any())).thenReturn(7L);
+        assertEquals(7L, service.signup(request));
+        verify(repository).createTermsAgreement(eq(7L), eq(1L), any());
     }
 
     private List<SignupRepository.Term> currentTerms() {

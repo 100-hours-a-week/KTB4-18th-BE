@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,21 +22,19 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSummary;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.LocationRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.Region;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.RegionPart;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
-import com.muse.meomuneum.musicrecord.provider.KakaoReverseGeocodingClient;
+import com.muse.meomuneum.location.security.LocationResolutionClaims;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
-import com.muse.meomuneum.musicrecord.service.LocationTokenService;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 
 class MusicRecordServiceTest {
     private MusicRecordRepository repository;
-    private LocationTokenService tokens;
-    private KakaoReverseGeocodingClient kakao;
+    private LocationResolutionTokenProvider tokens;
     private ItunesMusicSearchClient itunes;
     private MusicRecordService service;
     private ObjectMapper mapper;
@@ -46,11 +43,10 @@ class MusicRecordServiceTest {
     @BeforeEach
     void setUp() {
         repository = mock(MusicRecordRepository.class);
-        tokens = mock(LocationTokenService.class);
-        kakao = mock(KakaoReverseGeocodingClient.class);
+        tokens = mock(LocationResolutionTokenProvider.class);
         itunes = mock(ItunesMusicSearchClient.class);
         service = new MusicRecordService(repository, itunes,
-                tokens, kakao, new MusicSearchCursorCodec("test-secret"));
+                tokens, new MusicSearchCursorCodec("test-secret"));
         mapper = new ObjectMapper();
         detail = new MusicRecordDetailResponse(7L,
                 new MusicSummary(11L, "밤편지", "아이유", null),
@@ -65,36 +61,6 @@ class MusicRecordServiceTest {
         assertThat(service.detail(1L, 7L)).isEqualTo(detail);
         assertThatThrownBy(() -> service.detail(2L, 7L))
                 .isInstanceOf(MusicRecordException.class);
-    }
-
-    @Test
-    void locationTokenIsIssuedAfterKakaoSucceedsWithResponseExpiry() {
-        var location = new MusicRecordRepository.Location(3L, "dot-3", 4L, "11440", "마포구",
-                5L, "11", "서울특별시");
-        when(repository.findNearestLocation(37.5, 127.0)).thenReturn(Optional.of(location));
-        when(kakao.reverseGeocode(37.5, 127.0)).thenReturn("서울 성동구");
-        when(tokens.create(eq(1L), eq(location), any(Instant.class))).thenReturn("test-token");
-
-        var result = service.resolveLocation(1L, new LocationRequest(37.5, 127.0, 30.0));
-
-        assertThat(result.region().sigungu().name()).isEqualTo("마포구");
-        assertThat(result.location_resolution_token()).isEqualTo("test-token");
-        assertThat(result.expires_in()).isEqualTo(300);
-        var order = inOrder(kakao, tokens);
-        order.verify(kakao).reverseGeocode(37.5, 127.0);
-        order.verify(tokens).create(eq(1L), eq(location), any(Instant.class));
-    }
-
-    @Test
-    void kakaoFailureDoesNotIssueLocationToken() {
-        var location = new MusicRecordRepository.Location(3L, "dot-3", 4L, "11440", "마포구",
-                5L, "11", "서울특별시");
-        when(repository.findNearestLocation(37.5, 127.0)).thenReturn(Optional.of(location));
-        when(kakao.reverseGeocode(37.5, 127.0)).thenThrow(new MusicRecordException("kakao_reverse_geocoding_failed"));
-
-        assertThatThrownBy(() -> service.resolveLocation(1L, new LocationRequest(37.5, 127.0, 30.0)))
-                .isInstanceOf(MusicRecordException.class);
-        verify(tokens, never()).create(any(Long.class), any(), any());
     }
 
     @Test
@@ -129,23 +95,43 @@ class MusicRecordServiceTest {
     @Test
     void searchUsesDatabaseBeforeExternalProviderAndStableCursor() {
         var stored = new MusicItem(8L, "ITUNES", "100", "밤편지", "아이유", null, null, null, false);
-        var external = new MusicItem(null, "ITUNES", "200", "밤의 노래", "가수", null, null, null, false);
         when(repository.highestMusicId()).thenReturn(8L);
         when(repository.searchMusic("밤", Long.MAX_VALUE, 8L, 2)).thenReturn(List.of(stored));
-        when(itunes.search("밤")).thenReturn(List.of(stored, external));
-        when(repository.findStoredMusicByIds(List.of("100", "200"), 8L, "밤"))
-                .thenReturn(java.util.Map.of("100", new MusicRecordRepository.StoredMusic(stored, true)));
 
         var result = service.search("밤", "ITUNES", null, 1);
 
         assertThat(result.items()).containsExactly(stored);
-        assertThat(result.has_next()).isTrue();
-        assertThat(result.next_cursor()).isNotBlank();
-        var next = service.search("밤", "ITUNES", result.next_cursor(), 1);
-        assertThat(next.items()).containsExactly(external);
+        assertThat(result.has_next()).isFalse();
+        assertThat(result.next_cursor()).isNull();
+        verify(itunes, never()).search("밤");
+    }
+
+    @Test
+    void databaseCursorNeverSwitchesToItunesAfterSongsDisappear() {
+        var first = new MusicItem(8L, "ITUNES", "100", "밤편지", "아이유", null, null, null, false);
+        var second = new MusicItem(7L, "ITUNES", "101", "밤의 노래", "가수", null, null, null, false);
+        when(repository.highestMusicId()).thenReturn(8L);
+        when(repository.searchMusic("밤", Long.MAX_VALUE, 8L, 2)).thenReturn(List.of(first, second));
+        when(repository.searchMusic("밤", 8L, 8L, 2)).thenReturn(List.of());
+
+        var initial = service.search("밤", "ITUNES", null, 1);
+        var next = service.search("밤", "ITUNES", initial.next_cursor(), 1);
+
+        assertThat(initial.items()).containsExactly(first);
+        assertThat(next.items()).isEmpty();
         assertThat(next.has_next()).isFalse();
-        verify(repository, org.mockito.Mockito.times(2))
-                .findStoredMusicByIds(List.of("100", "200"), 8L, "밤");
+        verify(itunes, never()).search("밤");
+    }
+
+    @Test
+    void databaseFailureNeverFallsBackToItunes() {
+        when(repository.highestMusicId()).thenReturn(8L);
+        when(repository.searchMusic("밤", Long.MAX_VALUE, 8L, 21))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        assertThatThrownBy(() -> service.search("밤", "ITUNES", null, 20))
+                .isInstanceOf(IllegalStateException.class);
+        verify(itunes, never()).search("밤");
     }
 
     @Test
@@ -191,8 +177,9 @@ class MusicRecordServiceTest {
                 5L, "11", "서울특별시");
         var selected = new MusicItem(null, "ITUNES", "200", "서버 제목", "서버 가수",
                 null, null, null, false);
-        when(tokens.parse("location-token", 1L)).thenReturn(
-                new LocationTokenService.LocationClaims(3L, 4L, 5L, Instant.now().plusSeconds(300)));
+        when(tokens.validate("location-token", 1L)).thenReturn(
+                new LocationResolutionClaims(1L, 5L, "11", 4L, "11440", 3L,
+                        Instant.now().plusSeconds(300)));
         when(repository.findLocation(3L, 4L, 5L)).thenReturn(Optional.of(location));
         when(repository.findMusic("ITUNES", "200")).thenReturn(Optional.empty());
         when(itunes.lookup("200")).thenReturn(Optional.of(selected));
@@ -216,8 +203,9 @@ class MusicRecordServiceTest {
                 5L, "11", "서울특별시");
         var storedMusic = new MusicItem(9L, "ITUNES", "200", "DB 제목", "DB 가수",
                 null, null, null, false);
-        when(tokens.parse("location-token", 1L)).thenReturn(
-                new LocationTokenService.LocationClaims(3L, 4L, 5L, Instant.now().plusSeconds(300)));
+        when(tokens.validate("location-token", 1L)).thenReturn(
+                new LocationResolutionClaims(1L, 5L, "11", 4L, "11440", 3L,
+                        Instant.now().plusSeconds(300)));
         when(repository.findLocation(3L, 4L, 5L)).thenReturn(Optional.of(location));
         when(repository.findMusic("ITUNES", "200")).thenReturn(Optional.of(storedMusic));
         when(repository.saveRecord(eq(1L), eq(9L), eq(location), any(), any(),
@@ -230,5 +218,18 @@ class MusicRecordServiceTest {
         assertThat(created.record_id()).isEqualTo(7L);
         verify(itunes, never()).lookup("200");
         verify(repository, never()).upsertMusic(any(MusicItem.class));
+    }
+
+    @Test
+    void regionOnlyLocationTokenCannotCreateMusicRecord() {
+        when(tokens.validate("old-region-token", 1L)).thenReturn(
+                new LocationResolutionClaims(1L, 5L, "11", 4L, "11440",
+                        Instant.now().plusSeconds(300)));
+
+        assertThatThrownBy(() -> service.create(1L, new CreateRequest(
+                new MusicSelection("ITUNES", "200"), "old-region-token", null, null)))
+                .isInstanceOf(MusicRecordException.class)
+                .hasMessage("invalid request");
+        verify(repository, never()).findLocation(any(Long.class), any(Long.class), any(Long.class));
     }
 }

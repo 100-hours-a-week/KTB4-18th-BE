@@ -26,7 +26,8 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
-import com.muse.meomuneum.musicrecord.service.LocationTokenService;
+import com.muse.meomuneum.location.security.LocationResolutionClaims;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 import com.sun.net.httpserver.HttpExchange;
@@ -75,13 +76,14 @@ class ItunesMusicSearchClientHttpTest {
         searchStatus.set(503);
         lookupStatus.set(503);
         MusicRecordRepository repository = mock(MusicRecordRepository.class);
-        LocationTokenService tokens = mock(LocationTokenService.class);
+        LocationResolutionTokenProvider tokens = mock(LocationResolutionTokenProvider.class);
         MusicRecordService service = new MusicRecordService(repository, client, tokens,
-                mock(KakaoReverseGeocodingClient.class), new MusicSearchCursorCodec("test-only-secret"));
+                new MusicSearchCursorCodec("test-only-secret"));
         when(repository.highestMusicId()).thenReturn(0L);
         when(repository.searchMusic("테스트", Long.MAX_VALUE, 0L, 21)).thenReturn(List.of());
-        when(tokens.parse("location-token", 1L)).thenReturn(
-                new LocationTokenService.LocationClaims(3L, 4L, 5L, Instant.now().plusSeconds(300)));
+        when(tokens.validate("location-token", 1L)).thenReturn(
+                new LocationResolutionClaims(1L, 5L, "11", 4L, "11440", 3L,
+                        Instant.now().plusSeconds(300)));
         when(repository.findLocation(3L, 4L, 5L)).thenReturn(Optional.of(
                 new Location(3L, "dot-3", 4L, "11440", "성동구", 5L, "11", "서울특별시")));
         when(repository.findMusic("ITUNES", "123")).thenReturn(Optional.empty());

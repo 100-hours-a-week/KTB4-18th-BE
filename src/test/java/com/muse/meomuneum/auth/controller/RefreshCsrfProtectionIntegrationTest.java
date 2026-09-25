@@ -10,6 +10,7 @@ import jakarta.servlet.http.Cookie;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpSession;
@@ -24,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "auth.jwt.secret=development-only-secret-with-at-least-32-bytes")
 @ActiveProfiles({"test", "music-record-local"})
+@EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 class RefreshCsrfProtectionIntegrationTest {
 
     @Autowired

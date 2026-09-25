@@ -20,6 +20,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -42,6 +43,7 @@ import com.muse.meomuneum.global.config.JwtProperties;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles({"test", "music-record-signup-local"})
+@EnabledIfEnvironmentVariable(named = "MUSIC_SIGNUP_DB_URL", matches = "jdbc:mysql://.*")
 class SignupLocalProfileIntegrationTest {
     private final String email = "signup-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com";
 
@@ -64,13 +66,19 @@ class SignupLocalProfileIntegrationTest {
     }
 
     @Test
-    void isolatedSchemaMatchesErdAndHasSixTerms() {
+    void isolatedSchemaMatchesErdAndPreservesSixInitialTerms() {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class))
                 .isEqualTo("meomuneum_music_record_signup_test");
         assertThat(jdbc.queryForList("SELECT id FROM terms ORDER BY id", Long.class))
-                .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
-        assertThat(jdbc.queryForList("SELECT id FROM terms WHERE is_required = TRUE ORDER BY id", Long.class))
-                .containsExactly(1L, 2L);
+                .contains(1L, 2L, 3L, 4L, 5L, 6L).hasSize(7);
+        assertThat(jdbc.queryForObject("SELECT is_required FROM terms WHERE id = ?", Boolean.class,
+                currentAiTermId())).isTrue();
+        assertThat(jdbc.queryForObject("SELECT version FROM terms WHERE id = ?", String.class,
+                currentAiTermId())).isEqualTo("v0.3");
+        assertThat(jdbc.queryForObject("""
+                SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns
+                WHERE table_schema = DATABASE() AND table_name = 'terms' AND column_name = 'type'
+                """, Long.class)).isEqualTo(30L);
         assertThat(jdbc.queryForObject("""
                 SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns
                 WHERE table_schema = DATABASE() AND table_name = 'terms' AND column_name = 'version'
@@ -85,7 +93,7 @@ class SignupLocalProfileIntegrationTest {
     void storesAllSelectedAgreementsAndRejectsDuplicateEmail() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, 2, 3, 4, 5, 6))))
+                        .content(signupBody(List.of(1, currentAiTermId(), 3, 4, 5, 6))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("register success"))
                 .andExpect(jsonPath("$.data.user_id").isNumber());
@@ -93,11 +101,11 @@ class SignupLocalProfileIntegrationTest {
         assertThat(jdbc.queryForList("""
                 SELECT a.terms_id FROM terms_agreements a
                 JOIN users u ON u.id = a.user_id WHERE u.email = ? ORDER BY a.terms_id
-                """, Long.class, email)).containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+                """, Long.class, email)).containsExactly(1L, 3L, 4L, 5L, 6L, (long) currentAiTermId());
 
         mvc.perform(post("/api/v1/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, 2))))
+                        .content(signupBody(List.of(1, currentAiTermId()))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("email already exists"));
     }
@@ -117,12 +125,12 @@ class SignupLocalProfileIntegrationTest {
     void rejectsMalformedAndRepeatedAgreementIdsAsCommonBadRequest() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, 2, 2))))
+                        .content(signupBody(List.of(1, currentAiTermId(), currentAiTermId()))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"));
         mvc.perform(post("/api/v1/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, 2)).replace("@example.com", "-invalid")))
+                        .content(signupBody(List.of(1, currentAiTermId())).replace("@example.com", "-invalid")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email))
@@ -131,7 +139,7 @@ class SignupLocalProfileIntegrationTest {
 
     @Test
     void rejectsMissingFirstOrUnknownAgreementId() throws Exception {
-        for (List<Integer> ids : List.of(List.of(2), List.of(1, 2, 99))) {
+        for (List<Integer> ids : List.of(List.of(currentAiTermId()), List.of(1, currentAiTermId(), 99))) {
             mvc.perform(post("/api/v1/users/signup")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(signupBody(ids)))
@@ -174,11 +182,11 @@ class SignupLocalProfileIntegrationTest {
     @Test
     void rollsBackUserAndFirstAgreementWhenSecondAgreementInsertFails() throws Exception {
         doThrow(new IllegalStateException("synthetic agreement insert failure"))
-                .when(signupRepository).createTermsAgreement(anyLong(), eq(2L), any());
+                .when(signupRepository).createTermsAgreement(anyLong(), eq((long) currentAiTermId()), any());
 
         mvc.perform(post("/api/v1/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, 2))))
+                        .content(signupBody(List.of(1, currentAiTermId()))))
                 .andExpect(status().isInternalServerError());
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email))
@@ -192,12 +200,12 @@ class SignupLocalProfileIntegrationTest {
     void storesOnlySelectedAgreementsAndCanLogin() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, 2))))
+                        .content(signupBody(List.of(1, currentAiTermId()))))
                 .andExpect(status().isCreated());
         assertThat(jdbc.queryForList("""
                 SELECT a.terms_id FROM terms_agreements a
                 JOIN users u ON u.id = a.user_id WHERE u.email = ? ORDER BY a.terms_id
-                """, Long.class, email)).containsExactly(1L, 2L);
+                """, Long.class, email)).containsExactly(1L, (long) currentAiTermId());
 
         mvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -209,5 +217,12 @@ class SignupLocalProfileIntegrationTest {
         String idsJson = ids.stream().map(String::valueOf).reduce((left, right) -> left + "," + right).orElse("");
         return "{\"email\":\"" + email + "\",\"password\":\"Testpass1!\","
                 + "\"nickname\":\"가입시험\",\"terms_ids\":[" + idsJson + "]}";
+    }
+
+    private int currentAiTermId() {
+        return jdbc.queryForObject("""
+                SELECT id FROM terms WHERE type = 'AIPERSONAL'
+                ORDER BY effective_at DESC, id DESC LIMIT 1
+                """, Integer.class);
     }
 }

@@ -20,6 +20,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.MediaType;
@@ -35,11 +36,11 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import tools.jackson.databind.ObjectMapper;
 
 import com.muse.meomuneum.global.security.JwtTokenProvider;
-import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
+import com.muse.meomuneum.chat.region.domain.RegionLevel;
+import com.muse.meomuneum.chat.region.repository.RegionRepository;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
-import com.muse.meomuneum.musicrecord.provider.KakaoReverseGeocodingClient;
-import com.muse.meomuneum.musicrecord.service.LocationTokenService;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 import com.muse.meomuneum.user.domain.User;
@@ -47,6 +48,7 @@ import com.muse.meomuneum.user.domain.UserRole;
 
 @SpringBootTest(properties = "auth.jwt.secret=development-only-secret-with-at-least-32-bytes")
 @ActiveProfiles({"test", "music-record-local"})
+@EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 @Transactional
 class MusicRecordApiDatabaseIntegrationTest {
     @Autowired
@@ -56,7 +58,9 @@ class MusicRecordApiDatabaseIntegrationTest {
     @Autowired
     private JwtTokenProvider jwt;
     @Autowired
-    private LocationTokenService locations;
+    private LocationResolutionTokenProvider locations;
+    @Autowired
+    private RegionRepository regions;
     @Autowired
     private MusicRecordRepository musicRepository;
     @Autowired
@@ -76,6 +80,7 @@ class MusicRecordApiDatabaseIntegrationTest {
         long userId = positiveId();
         long sidoId = positiveId();
         long sigunguId = positiveId();
+        long dotSigunguId = positiveId();
         long dotId = positiveId();
         long musicId = positiveId();
         String externalId = String.valueOf(musicId);
@@ -85,8 +90,10 @@ class MusicRecordApiDatabaseIntegrationTest {
                 sidoId, "s" + suffix, "서울특별시", "SIDO");
         jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
                 sigunguId, sidoId, "g" + suffix, "성동구", "SIGUNGU");
+        jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
+                dotSigunguId, sidoId, "x" + suffix, "마포구", "SIGUNGU");
         jdbc.update("INSERT INTO map_dots (id,code,region_id,latitude,longitude,is_active) "
-                        + "VALUES (?,?,?,?,?,TRUE)", dotId, "d" + suffix, sigunguId, 37.5, 127.0);
+                        + "VALUES (?,?,?,?,?,TRUE)", dotId, "d" + suffix, dotSigunguId, 37.5, 127.0);
         jdbc.update("INSERT INTO music (id,provider,external_music_id,title,artist_name) VALUES (?,?,?,?,?)",
                 musicId, "ITUNES", externalId, "테스트 노래", "테스트 가수");
         var mismatched = musicRepository.findStoredMusicByIds(List.of(externalId), musicId, "다른 검색어");
@@ -95,9 +102,10 @@ class MusicRecordApiDatabaseIntegrationTest {
         var matched = musicRepository.findStoredMusicByIds(List.of(externalId), musicId, "테스트");
         assertThat(matched.get(externalId).matchesSearch()).isTrue();
         String bearer = bearer(userId);
-        String locationToken = locations.create(userId,
-                new Location(dotId, "d" + suffix, sigunguId, "g" + suffix, "성동구",
-                        sidoId, "s" + suffix, "서울특별시"), Instant.now().plusSeconds(300));
+        var sido = regions.findByCodeAndLevelAndActiveTrue("s" + suffix, RegionLevel.SIDO).orElseThrow();
+        var sigungu = regions.findByCodeAndLevelAndActiveTrue("g" + suffix, RegionLevel.SIGUNGU)
+                .orElseThrow();
+        String locationToken = locations.issue(userId, sido, sigungu, dotId).value();
         MvcResult csrfResponse = mvc.perform(get("/api/v1/auth/token/csrf"))
                 .andExpect(status().isOk()).andReturn();
         MockHttpSession session = (MockHttpSession) csrfResponse.getRequest().getSession(false);
@@ -218,8 +226,7 @@ class MusicRecordApiDatabaseIntegrationTest {
         }
         ItunesMusicSearchClient itunes = mock(ItunesMusicSearchClient.class);
         when(itunes.search(query)).thenReturn(List.of());
-        MusicRecordService service = new MusicRecordService(musicRepository, itunes, locations,
-                mock(KakaoReverseGeocodingClient.class), searchCursors);
+        MusicRecordService service = new MusicRecordService(musicRepository, itunes, locations, searchCursors);
 
         var first = service.search(query, "ITUNES", null, 20);
         assertThat(first.items()).hasSize(20);
@@ -235,7 +242,7 @@ class MusicRecordApiDatabaseIntegrationTest {
         assertThat(second.items()).hasSize(1);
         assertThat(second.items().getFirst().music_id()).isEqualTo(base);
         assertThat(second.has_next()).isFalse();
-        verify(itunes, times(1)).search(query);
+        verify(itunes, times(0)).search(query);
     }
 
     private String bearer(long userId) {
