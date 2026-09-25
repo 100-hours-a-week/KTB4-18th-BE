@@ -3,6 +3,8 @@ package com.muse.meomuneum.user.signup.repository;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,20 +28,19 @@ public class SignupRepository {
 
     public List<Term> findCurrentSignupTerms(Instant now) {
         return jdbc.query("""
-                SELECT t.id, t.type, t.is_required
-                FROM terms t
-                WHERE t.type IN ('SERVICE', 'PROFILE', 'AIPERSONAL', 'LOCATIONTERMS', 'LOCATION', 'PRIVACY')
-                    AND t.effective_at <= ?
-                    AND t.effective_at = (
-                        SELECT MAX(current_terms.effective_at)
-                        FROM terms current_terms
-                        WHERE current_terms.type = t.type
-                            AND current_terms.effective_at <= ?
-                    )
+                SELECT current_terms.id, current_terms.type, current_terms.is_required
+                FROM (
+                    SELECT t.id, t.type, t.is_required,
+                        ROW_NUMBER() OVER (PARTITION BY t.type ORDER BY t.effective_at DESC, t.id DESC) AS rank_number
+                    FROM terms t
+                    WHERE t.type IN ('SERVICE', 'PROFILE', 'AIPERSONAL', 'LOCATIONTERMS', 'LOCATION', 'PRIVACY')
+                        AND t.effective_at <= ?
+                ) current_terms
+                WHERE current_terms.rank_number = 1
                 """, (row, index) -> new Term(
                 row.getLong("id"),
                 row.getString("type"),
-                row.getBoolean("is_required")), Timestamp.from(now), Timestamp.from(now));
+                row.getBoolean("is_required")), Timestamp.valueOf(LocalDateTime.ofInstant(now, ZoneOffset.UTC)));
     }
 
     public long createUser(

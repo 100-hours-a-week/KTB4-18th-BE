@@ -38,6 +38,7 @@ public class SecurityConfig {
             throws Exception {
         String[] csrfIgnoredPaths = {
                 "/api/v1/auth/login",
+                "/api/v1/auth/logout",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
@@ -64,6 +65,7 @@ public class SecurityConfig {
                     }
                     authorize.requestMatchers("/api/v1/auth/**").permitAll()
                             .requestMatchers(HttpMethod.POST, "/api/v1/users/signup").permitAll()
+                            .requestMatchers(HttpMethod.GET, "/api/v1/terms", "/api/v1/terms/**").permitAll()
                             .requestMatchers(HttpMethod.GET, "/api/v1/map-dots").permitAll()
                             .anyRequest().authenticated();
                 })

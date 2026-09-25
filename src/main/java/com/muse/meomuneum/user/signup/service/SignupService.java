@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.muse.meomuneum.user.signup.dto.SignupRequest;
+import com.muse.meomuneum.user.signup.domain.SignupTermType;
 import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
 import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
 import com.muse.meomuneum.user.signup.repository.SignupRepository;
@@ -25,9 +26,7 @@ import com.muse.meomuneum.user.signup.repository.SignupRepository;
 @Service
 public class SignupService {
     private static final short MIN_BIRTH_YEAR = 1900;
-    private static final String SERVICE = "SERVICE";
-    private static final Set<String> SIGNUP_TERMS_TYPES =
-            Set.of(SERVICE, "PROFILE", "AIPERSONAL", "LOCATIONTERMS", "LOCATION", "PRIVACY");
+    private static final Set<String> SIGNUP_TERMS_TYPES = SignupTermType.names();
 
     private final SignupRepository signupRepository;
     private final PasswordEncoder passwordEncoder;
@@ -44,7 +43,7 @@ public class SignupService {
         this.clock = clock;
     }
 
-    @Transactional
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public long signup(SignupRequest request) {
         validateBirthYear(request.birthYear());
 
@@ -91,9 +90,7 @@ public class SignupService {
         if (currentTermsCountByType.values().stream().anyMatch(count -> count != 1)) {
             throw new IllegalStateException("Current terms are ambiguous");
         }
-        if (!currentTermsCountByType.keySet().equals(SIGNUP_TERMS_TYPES)
-                || currentTerms.stream().anyMatch(term -> term.required()
-                        != (SERVICE.equals(term.type()) || "AIPERSONAL".equals(term.type())))) {
+        if (!currentTermsCountByType.keySet().equals(SIGNUP_TERMS_TYPES)) {
             throw new IllegalStateException("Current signup terms are incomplete or misconfigured");
         }
     }
