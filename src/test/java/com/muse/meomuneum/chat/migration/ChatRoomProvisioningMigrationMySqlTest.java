@@ -28,7 +28,7 @@ class ChatRoomProvisioningMigrationMySqlTest {
             "db/migration/V20260923142421__create_chat_room_foundation.sql");
 
     @Container
-    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4.6")
+    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
             .withDatabaseName("meomuneum_migration_test").withUsername("meomuneum_test").withPassword("meomuneum_test");
 
     @Test

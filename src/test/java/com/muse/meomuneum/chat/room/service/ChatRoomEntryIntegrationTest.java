@@ -44,7 +44,7 @@ import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 class ChatRoomEntryIntegrationTest {
 
     @Container
-    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4.6")
+    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
             .withDatabaseName("meomuneum_chat_entry_test").withUsername("meomuneum_test")
             .withPassword("meomuneum_test");
 
@@ -238,9 +238,13 @@ class ChatRoomEntryIntegrationTest {
     }
 
     private String issueToken(Long userId, Region sigungu) {
-        Region sido = sigungu.getParent();
-        IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu);
-        return token.value();
+        Long sigunguId = sigungu.getId();
+        return new TransactionTemplate(transactionManager).execute(status -> {
+            Region managedSigungu = regionRepository.findById(sigunguId).orElseThrow();
+            Region sido = managedSigungu.getParent();
+            IssuedLocationToken token = tokenProvider.issue(userId, sido, managedSigungu);
+            return token.value();
+        });
     }
 
     @SafeVarargs
