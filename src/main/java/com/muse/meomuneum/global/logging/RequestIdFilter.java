@@ -22,11 +22,8 @@ public class RequestIdFilter extends OncePerRequestFilter {
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
 
     @Override
-    protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain filterChain
-    ) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
         String requestId = UUID.randomUUID().toString();
         MDC.put(REQUEST_ID_ATTRIBUTE, requestId);
         request.setAttribute(REQUEST_ID_ATTRIBUTE, requestId);

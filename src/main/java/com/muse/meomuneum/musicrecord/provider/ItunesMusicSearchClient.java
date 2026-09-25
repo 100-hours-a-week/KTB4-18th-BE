@@ -11,12 +11,15 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
+
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class ItunesMusicSearchClient {
@@ -54,17 +57,21 @@ public class ItunesMusicSearchClient {
             URI uri = URI.create(endpoint + "?" + parameters);
             var response = client.send(HttpRequest.newBuilder(uri).timeout(timeout).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
-            if(response.statusCode()!=200) throw providerFailure(operation + "_http_" + response.statusCode());
+            if (response.statusCode() != 200) {
+                throw providerFailure(operation + "_http_" + response.statusCode());
+            }
             JsonNode root = mapper.readTree(response.body());
             JsonNode results = root == null ? null : root.path("results");
-            if (results == null || !results.isArray()) throw providerFailure(operation + "_invalid_body");
-            var items=new ArrayList<MusicItem>();
-            for(JsonNode result:results) {
-                if(result.path("trackId").canConvertToLong() && !result.path("trackName").asText().isBlank()
+            if (results == null || !results.isArray()) {
+                throw providerFailure(operation + "_invalid_body");
+            }
+            var items = new ArrayList<MusicItem>();
+            for (JsonNode result : results) {
+                if (result.path("trackId").canConvertToLong() && !result.path("trackName").asText().isBlank()
                         && !result.path("artistName").asText().isBlank()) {
-                    items.add(new MusicItem(null,"ITUNES",result.path("trackId").asText(),
-                            result.path("trackName").asText(),result.path("artistName").asText(),
-                            nullable(result,"artworkUrl100"),nullable(result,"previewUrl"),null,false));
+                    items.add(new MusicItem(null, "ITUNES", result.path("trackId").asText(),
+                            result.path("trackName").asText(), result.path("artistName").asText(),
+                            nullable(result, "artworkUrl100"), nullable(result, "previewUrl"), null, false));
                 }
             }
             return items;

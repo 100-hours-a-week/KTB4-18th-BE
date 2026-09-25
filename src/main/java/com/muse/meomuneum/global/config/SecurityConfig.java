@@ -19,8 +19,8 @@ import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
-import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.global.security.SecurityErrorCode;
+import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
@@ -53,15 +53,12 @@ public class SecurityConfig {
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                         .ignoringRequestMatchers(csrfIgnoredPaths))
                 .sessionManagement(
-                        session ->
-                                session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
-                )
+                        session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> {
                     if (allowGuests) {
                         authorize.requestMatchers(
                                 "/api/v1/recommendations",
-                                "/api/v1/recommendations/**"
-                        ).permitAll();
+                                "/api/v1/recommendations/**").permitAll();
                     }
                     authorize.requestMatchers("/api/v1/auth/**").permitAll()
                             .requestMatchers(HttpMethod.POST, "/api/v1/users/signup").permitAll()
@@ -71,11 +68,10 @@ public class SecurityConfig {
                 })
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint((
-                                request, response, authException
-                        ) -> errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_UNAUTHORIZED))
+                                request, response, authException) -> errorResponseWriter.write(request, response,
+                                        SecurityErrorCode.ACCESS_UNAUTHORIZED))
                         .accessDeniedHandler((
-                                request, response, accessDeniedException
-                        ) -> {
+                                request, response, accessDeniedException) -> {
                             String path = request.getRequestURI();
                             SecurityErrorCode code = path.startsWith("/api/v1/auth/")
                                     ? SecurityErrorCode.CSRF_DENIED
@@ -86,8 +82,7 @@ public class SecurityConfig {
                         }))
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter),
-                        UsernamePasswordAuthenticationFilter.class
-                );
+                        UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

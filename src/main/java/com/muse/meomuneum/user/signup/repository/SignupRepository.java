@@ -80,5 +80,6 @@ public class SignupRepository {
                 """, userId, termsId, Timestamp.from(now));
     }
 
-    public record Term(long id, String type, boolean required) {}
+    public record Term(long id, String type, boolean required) {
+    }
 }

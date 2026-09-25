@@ -1,5 +1,10 @@
 package com.muse.meomuneum.chat.room.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -7,11 +12,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.muse.meomuneum.chat.room.repository.ChatRoomRepository;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ChatRoomProvisioningServiceTest {
@@ -48,14 +48,9 @@ class ChatRoomProvisioningServiceTest {
         when(chatRoomRepository.createMissingActiveSigunguRooms()).thenReturn(268);
         when(chatRoomRepository.countMissingActiveSigunguRooms()).thenReturn(1L);
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                provisioningService::provisionMissingRooms
-        );
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                provisioningService::provisionMissingRooms);
 
-        assertEquals(
-                "chat room provisioning incomplete: 1 active SIGUNGU rooms missing",
-                exception.getMessage()
-        );
+        assertEquals("chat room provisioning incomplete: 1 active SIGUNGU rooms missing", exception.getMessage());
     }
 }

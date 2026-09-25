@@ -15,8 +15,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import tools.jackson.databind.JsonNode;
-
+import com.muse.meomuneum.location.exception.LocationException;
+import com.muse.meomuneum.location.security.LocationResolutionClaims;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
@@ -27,12 +28,11 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSearchResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.UpdateResponse;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
-import com.muse.meomuneum.location.exception.LocationException;
-import com.muse.meomuneum.location.security.LocationResolutionClaims;
-import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.StoredMusic;
+
+import tools.jackson.databind.JsonNode;
 
 @Service
 public class MusicRecordService {
@@ -60,7 +60,8 @@ public class MusicRecordService {
         }
         String normalized = query.trim();
         int pageSize = size == null ? PAGE_SIZE : size;
-        MusicSearchCursorCodec.Cursor position = cursor == null || cursor.isBlank() ? null
+        MusicSearchCursorCodec.Cursor position = cursor == null || cursor.isBlank()
+                ? null
                 : searchCursors.decode(cursor, normalized);
         long highWatermark = position == null ? repository.highestMusicId() : position.highWatermark();
         if (position != null && "ITUNES".equals(position.phase())) {
@@ -81,9 +82,12 @@ public class MusicRecordService {
             boolean hasNext = db.size() > pageSize;
             List<MusicItem> items = hasNext ? List.copyOf(db.subList(0, pageSize)) : List.copyOf(db);
             long lastId = items.isEmpty() ? beforeId : items.getLast().music_id();
-            String next = hasNext ? searchCursors.encode(normalized, "DB", lastId,
-                    highWatermark, 0, "", position == null ? searchCursors.newExpiresAt()
-                            : position.expiresAt()) : null;
+            String next = hasNext
+                    ? searchCursors.encode(normalized, "DB", lastId,
+                            highWatermark, 0, "", position == null
+                                    ? searchCursors.newExpiresAt()
+                                    : position.expiresAt())
+                    : null;
             return new MusicSearchResponse(items, next, hasNext);
         }
         List<MusicItem> external = externalCandidates(normalized, highWatermark);
@@ -101,7 +105,8 @@ public class MusicRecordService {
                 .filter(item -> !stored.containsKey(item.external_music_id())
                         || !stored.get(item.external_music_id()).matchesSearch())
                 .map(item -> stored.containsKey(item.external_music_id())
-                        ? mergeSearchMetadata(item, stored.get(item.external_music_id()).music()) : item)
+                        ? mergeSearchMetadata(item, stored.get(item.external_music_id()).music())
+                        : item)
                 .toList();
     }
 
@@ -118,8 +123,10 @@ public class MusicRecordService {
         int end = Math.min(index + pageSize, external.size());
         List<MusicItem> items = List.copyOf(external.subList(index, end));
         boolean hasNext = end < external.size();
-        return new MusicSearchResponse(items, hasNext ? searchCursors.encode(query, "ITUNES",
-                lastDbId, highWatermark, end, hash, expiresAt) : null, hasNext);
+        return new MusicSearchResponse(items, hasNext
+                ? searchCursors.encode(query, "ITUNES",
+                        lastDbId, highWatermark, end, hash, expiresAt)
+                : null, hasNext);
     }
 
     private String externalHash(List<MusicItem> external) {

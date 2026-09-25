@@ -27,18 +27,18 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
-import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.muse.meomuneum.global.config.JwtProperties;
+import com.muse.meomuneum.user.signup.repository.SignupRepository;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.nimbusds.jose.proc.SecurityContext;
-import com.muse.meomuneum.user.signup.repository.SignupRepository;
-import com.muse.meomuneum.global.config.JwtProperties;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -92,8 +92,8 @@ class SignupLocalProfileIntegrationTest {
     @Test
     void storesAllSelectedAgreementsAndRejectsDuplicateEmail() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, currentAiTermId(), 3, 4, 5, 6))))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1, currentAiTermId(), 3, 4, 5, 6))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("register success"))
                 .andExpect(jsonPath("$.data.user_id").isNumber());
@@ -104,8 +104,8 @@ class SignupLocalProfileIntegrationTest {
                 """, Long.class, email)).containsExactly(1L, 3L, 4L, 5L, 6L, (long) currentAiTermId());
 
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, currentAiTermId()))))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1, currentAiTermId()))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("email already exists"));
     }
@@ -113,8 +113,8 @@ class SignupLocalProfileIntegrationTest {
     @Test
     void rejectsMissingRequiredAgreementWithoutPersistingUser() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1))))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email))
@@ -124,13 +124,13 @@ class SignupLocalProfileIntegrationTest {
     @Test
     void rejectsMalformedAndRepeatedAgreementIdsAsCommonBadRequest() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, currentAiTermId(), currentAiTermId()))))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1, currentAiTermId(), currentAiTermId()))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"));
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, currentAiTermId())).replace("@example.com", "-invalid")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1, currentAiTermId())).replace("@example.com", "-invalid")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email))
@@ -141,8 +141,8 @@ class SignupLocalProfileIntegrationTest {
     void rejectsMissingFirstOrUnknownAgreementId() throws Exception {
         for (List<Integer> ids : List.of(List.of(currentAiTermId()), List.of(1, currentAiTermId(), 99))) {
             mvc.perform(post("/api/v1/users/signup")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(signupBody(ids)))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(signupBody(ids)))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.message").value("invalid request"));
         }
@@ -185,8 +185,8 @@ class SignupLocalProfileIntegrationTest {
                 .when(signupRepository).createTermsAgreement(anyLong(), eq((long) currentAiTermId()), any());
 
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, currentAiTermId()))))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1, currentAiTermId()))))
                 .andExpect(status().isInternalServerError());
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email))
@@ -199,8 +199,8 @@ class SignupLocalProfileIntegrationTest {
     @Test
     void storesOnlySelectedAgreementsAndCanLogin() throws Exception {
         mvc.perform(post("/api/v1/users/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(signupBody(List.of(1, currentAiTermId()))))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(signupBody(List.of(1, currentAiTermId()))))
                 .andExpect(status().isCreated());
         assertThat(jdbc.queryForList("""
                 SELECT a.terms_id FROM terms_agreements a
@@ -208,8 +208,8 @@ class SignupLocalProfileIntegrationTest {
                 """, Long.class, email)).containsExactly(1L, (long) currentAiTermId());
 
         mvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"" + email + "\",\"password\":\"Testpass1!\"}"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\",\"password\":\"Testpass1!\"}"))
                 .andExpect(status().isOk());
     }
 

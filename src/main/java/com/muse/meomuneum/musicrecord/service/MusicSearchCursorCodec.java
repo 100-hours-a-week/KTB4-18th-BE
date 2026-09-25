@@ -10,8 +10,8 @@ import java.util.Base64;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -65,7 +65,7 @@ public class MusicSearchCursorCodec {
             String[] fields = payload.split("\\|", -1);
             if (fields.length != 10 || !"2".equals(fields[0]) || !hash(query).equals(fields[1])
                     || !"ITUNES".equals(fields[2]) || !("DB".equals(fields[3])
-                    || "ITUNES".equals(fields[3]))) {
+                            || "ITUNES".equals(fields[3]))) {
                 throw invalid();
             }
             long lastDbId = Long.parseLong(fields[4]);

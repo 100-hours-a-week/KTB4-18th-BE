@@ -22,8 +22,7 @@ public class LocationController {
     }
 
     @PostMapping("/resolve")
-    public ApiResponse<LocationResolveResponse> resolve(
-            @RequestBody LocationResolveRequest request,
+    public ApiResponse<LocationResolveResponse> resolve(@RequestBody LocationResolveRequest request,
             Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
         return ApiResponse.of("location resolved", locationResolutionService.resolve(userId, request));

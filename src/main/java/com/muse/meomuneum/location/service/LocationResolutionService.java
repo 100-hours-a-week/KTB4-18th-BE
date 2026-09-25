@@ -1,8 +1,8 @@
 package com.muse.meomuneum.location.service;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.http.HttpStatus;
 
 import com.muse.meomuneum.chat.region.domain.Region;
 import com.muse.meomuneum.chat.region.domain.RegionLevel;
@@ -55,8 +55,7 @@ public class LocationResolutionService {
                 new LocationResolveResponse.MapDotSummary(mapDot.dotId(), mapDot.dotCode()),
                 new RegionSummaryPair(RegionSummary.from(sido), RegionSummary.from(sigungu)),
                 token.value(),
-                token.expiresIn()
-        );
+                token.expiresIn());
     }
 
     private Region findRegion(String code, RegionLevel level) {

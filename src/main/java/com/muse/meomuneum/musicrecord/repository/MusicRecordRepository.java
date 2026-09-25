@@ -15,16 +15,18 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordResponse;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSummary;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.Region;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.RegionPart;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSummary;
 
 @Repository
 public class MusicRecordRepository {
     private final JdbcTemplate jdbc;
-    public MusicRecordRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public MusicRecordRepository(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
     public long highestMusicId() {
         Long value = jdbc.queryForObject("SELECT COALESCE(MAX(id), 0) FROM music", Long.class);
         return value == null ? 0 : value;
@@ -42,7 +44,6 @@ public class MusicRecordRepository {
                 row.getString("album_cover_url"), row.getString("preview_url"),
                 row.getString("youtube_video_id")), beforeId, highWatermark, pattern, pattern, limit);
     }
-
 
     public Map<String, StoredMusic> findStoredMusicByIds(List<String> externalIds, long highWatermark,
             String query) {
@@ -95,7 +96,7 @@ public class MusicRecordRepository {
     }
     public long upsertMusic(MusicItem music) {
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                        + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
+                + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
                 music.album_cover_url(), music.preview_url());
         Long id = jdbc.queryForObject("SELECT id FROM music WHERE provider=? AND external_music_id=?",
@@ -177,7 +178,8 @@ public class MusicRecordRepository {
                 row.getLong("record_id"), summary(row), row.getLong("map_dot_id"), region(row),
                 row.getString("custom_place_name"), row.getString("emotion_memo"),
                 row.getObject("created_at", LocalDateTime.class).toInstant(ZoneOffset.UTC),
-                row.getObject("updated_at", LocalDateTime.class) == null ? null
+                row.getObject("updated_at", LocalDateTime.class) == null
+                        ? null
                         : row.getObject("updated_at", LocalDateTime.class).toInstant(ZoneOffset.UTC)),
                 recordId, userId).stream().findFirst();
     }
@@ -208,8 +210,9 @@ public class MusicRecordRepository {
 
     private Region region(java.sql.ResultSet row) throws java.sql.SQLException {
         return new Region(new RegionPart(row.getLong("sido_id"), row.getString("sido_code"),
-                row.getString("sido_name")), new RegionPart(row.getLong("sigungu_id"),
-                row.getString("sigungu_code"), row.getString("sigungu_name")));
+                row.getString("sido_name")),
+                new RegionPart(row.getLong("sigungu_id"),
+                        row.getString("sigungu_code"), row.getString("sigungu_name")));
     }
 
     private Location location(java.sql.ResultSet row) throws java.sql.SQLException {

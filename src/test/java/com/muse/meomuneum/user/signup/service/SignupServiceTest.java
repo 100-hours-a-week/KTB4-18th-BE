@@ -10,17 +10,19 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.muse.meomuneum.user.signup.dto.SignupRequest;
-import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
-import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
-import com.muse.meomuneum.user.signup.repository.SignupRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
+import com.muse.meomuneum.user.signup.dto.SignupRequest;
+import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
+import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
+import com.muse.meomuneum.user.signup.repository.SignupRepository;
 
 class SignupServiceTest {
     @Test
@@ -29,8 +31,8 @@ class SignupServiceTest {
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         Instant now = Instant.parse("2026-09-20T00:00:00Z");
         SignupService service = new SignupService(repository, passwordEncoder, Clock.fixed(now, ZoneOffset.UTC));
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L, 2L, 4L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null,
+                List.of(1L, 2L, 4L));
 
         when(repository.findCurrentSignupTerms(eq(now))).thenReturn(currentTerms());
         when(passwordEncoder.encode("password1")).thenReturn("encoded-password1");
@@ -49,8 +51,8 @@ class SignupServiceTest {
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         Instant now = Instant.parse("2026-09-20T00:00:00Z");
         SignupService service = new SignupService(repository, passwordEncoder, Clock.fixed(now, ZoneOffset.UTC));
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L, 2L, 5L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null,
+                List.of(1L, 2L, 5L));
 
         when(repository.findCurrentSignupTerms(eq(now))).thenReturn(currentTerms());
         when(passwordEncoder.encode("password1")).thenReturn("encoded-password1");
@@ -66,8 +68,7 @@ class SignupServiceTest {
     void rejectsMissingSecondRequiredAgreement() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
         when(repository.findCurrentSignupTerms(any())).thenReturn(currentTerms());
 
         assertThrows(InvalidSignupRequestException.class, () -> service.signup(request));
@@ -81,8 +82,7 @@ class SignupServiceTest {
         Instant now = Instant.parse("2026-09-20T00:00:00Z");
         SignupService service = new SignupService(repository, passwordEncoder, Clock.fixed(now, ZoneOffset.UTC));
         List<Long> ids = List.of(1L, 2L, 3L, 4L, 5L, 6L);
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, ids);
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null, ids);
         when(repository.findCurrentSignupTerms(eq(now))).thenReturn(currentTerms());
         when(passwordEncoder.encode("password1")).thenReturn("encoded-password1");
         when(repository.createUser(any(), any(), any(), any(), any(), eq(now))).thenReturn(7L);
@@ -115,8 +115,8 @@ class SignupServiceTest {
     void rejectsPreviousTermsVersionWhenCurrentVersionExists() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L, 2L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null,
+                List.of(1L, 2L));
 
         when(repository.findCurrentSignupTerms(any())).thenReturn(List.of(
                 new SignupRepository.Term(7L, "SERVICE", true),
@@ -134,8 +134,7 @@ class SignupServiceTest {
     void requiresAnyTermMarkedRequiredByDatabase() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
 
         when(repository.findCurrentSignupTerms(any())).thenReturn(List.of(
                 new SignupRepository.Term(1L, "SERVICE", true),
@@ -154,8 +153,8 @@ class SignupServiceTest {
         SignupRepository repository = mock(SignupRepository.class);
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         SignupService service = new SignupService(repository, passwordEncoder, fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L, 2L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null,
+                List.of(1L, 2L));
 
         when(repository.findCurrentSignupTerms(any())).thenReturn(currentTerms());
         when(passwordEncoder.encode("password1")).thenReturn("encoded-password1");
@@ -170,8 +169,8 @@ class SignupServiceTest {
     void rejectsAmbiguousCurrentTerms() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L, 2L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null,
+                List.of(1L, 2L));
 
         when(repository.findCurrentSignupTerms(any())).thenReturn(List.of(
                 new SignupRepository.Term(1L, "SERVICE", true),
@@ -185,8 +184,7 @@ class SignupServiceTest {
     void rejectsMissingSecondTermsTypeBeforeUserCreation() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
         when(repository.findCurrentSignupTerms(any())).thenReturn(currentTerms().stream()
                 .filter(term -> !"AIPERSONAL".equals(term.type())).toList());
 
@@ -198,8 +196,7 @@ class SignupServiceTest {
     void acceptsSecondTermsTypeMarkedOptionalByDatabase() {
         SignupRepository repository = mock(SignupRepository.class);
         SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
-        SignupRequest request =
-                new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "머문음", null, null, List.of(1L));
         when(repository.findCurrentSignupTerms(any())).thenReturn(List.of(
                 new SignupRepository.Term(1L, "SERVICE", true),
                 new SignupRepository.Term(2L, "AIPERSONAL", false),

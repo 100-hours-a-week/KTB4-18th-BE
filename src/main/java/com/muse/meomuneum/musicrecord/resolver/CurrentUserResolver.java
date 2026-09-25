@@ -8,7 +8,9 @@ import org.springframework.stereotype.Component;
 public class CurrentUserResolver {
     public long resolve(Authentication authentication) {
         if (authentication == null || authentication instanceof AnonymousAuthenticationToken
-                || !(authentication.getPrincipal() instanceof Long userId)) throw new IllegalStateException("authenticated user is required");
+                || !(authentication.getPrincipal() instanceof Long userId)) {
+            throw new IllegalStateException("authenticated user is required");
+        }
         return userId;
     }
 }

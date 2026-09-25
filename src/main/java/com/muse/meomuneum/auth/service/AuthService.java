@@ -50,8 +50,7 @@ public class AuthService {
                 AuthSuccessCode.LOGIN_SUCCESS.code(),
                 AuthSuccessCode.LOGIN_SUCCESS.status().value(),
                 user.getId(),
-                MDC.get("requestId")
-        );
+                MDC.get("requestId"));
         return response;
     }
 

@@ -1,10 +1,10 @@
 package com.muse.meomuneum.musicrecord.controller;
 
 import jakarta.validation.Valid;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,8 +13,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import tools.jackson.databind.JsonNode;
 
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
@@ -25,6 +23,8 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSearchResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.UpdateResponse;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
+
+import tools.jackson.databind.JsonNode;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -63,7 +63,7 @@ public class MusicRecordController {
     }
     @PatchMapping("/music-records/{recordId}")
     public ApiResponse<UpdateResponse> update(@PathVariable long recordId, @RequestBody JsonNode body,
-                                              Authentication authentication) {
+            Authentication authentication) {
         return ApiResponse.of("music record updated", service.update(users.resolve(authentication), recordId, body));
     }
 }

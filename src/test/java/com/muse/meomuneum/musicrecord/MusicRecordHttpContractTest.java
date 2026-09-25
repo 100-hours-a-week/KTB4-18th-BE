@@ -14,9 +14,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.controller.MusicRecordController;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
-import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
@@ -39,9 +39,9 @@ class MusicRecordHttpContractTest {
     @Test
     void malformedSearchSizeUsesSingleDocumentedSearchMessage() throws Exception {
         mvc.perform(get("/api/v1/music/search")
-                        .param("query", "밤")
-                        .param("provider", "ITUNES")
-                        .param("size", "abc"))
+                .param("query", "밤")
+                .param("provider", "ITUNES")
+                .param("size", "abc"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("search query required"));
     }

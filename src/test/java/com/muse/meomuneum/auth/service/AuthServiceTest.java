@@ -6,15 +6,17 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import jakarta.servlet.http.Cookie;
 import java.time.Instant;
+
+import jakarta.servlet.http.Cookie;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 
-import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.dto.LoginRequest;
+import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
@@ -39,8 +41,7 @@ class AuthServiceTest {
                 jwtTokenProvider,
                 new JwtProperties("project-api", "project-api", "test-secret", 3600, 1209600),
                 refreshTokenCookieFactory,
-                userAuthenticationService
-        );
+                userAuthenticationService);
     }
 
     @Test

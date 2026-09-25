@@ -22,29 +22,29 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.context.WebApplicationContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.WebApplicationContext;
 
-import tools.jackson.databind.ObjectMapper;
-
-import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.chat.region.domain.RegionLevel;
 import com.muse.meomuneum.chat.region.repository.RegionRepository;
+import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
-import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
+import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
+
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "auth.jwt.secret=development-only-secret-with-at-least-32-bytes")
 @ActiveProfiles({"test", "music-record-local"})
@@ -93,7 +93,7 @@ class MusicRecordApiDatabaseIntegrationTest {
         jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
                 dotSigunguId, sidoId, "x" + suffix, "마포구", "SIGUNGU");
         jdbc.update("INSERT INTO map_dots (id,code,region_id,latitude,longitude,is_active) "
-                        + "VALUES (?,?,?,?,?,TRUE)", dotId, "d" + suffix, dotSigunguId, 37.5, 127.0);
+                + "VALUES (?,?,?,?,?,TRUE)", dotId, "d" + suffix, dotSigunguId, 37.5, 127.0);
         jdbc.update("INSERT INTO music (id,provider,external_music_id,title,artist_name) VALUES (?,?,?,?,?)",
                 musicId, "ITUNES", externalId, "테스트 노래", "테스트 가수");
         var mismatched = musicRepository.findStoredMusicByIds(List.of(externalId), musicId, "다른 검색어");
@@ -113,12 +113,12 @@ class MusicRecordApiDatabaseIntegrationTest {
                 .path("data").path("csrf_token").asText();
 
         MvcResult created = mvc.perform(post("/api/v1/music-records")
-                        .session(session).header("X-CSRF-TOKEN", csrf)
-                        .header("Authorization", "Bearer " + bearer)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""
-                                + externalId + "\"},\"location_resolution_token\":\""
-                                + locationToken + "\",\"emotion_memo\":\"처음\"}"))
+                .session(session).header("X-CSRF-TOKEN", csrf)
+                .header("Authorization", "Bearer " + bearer)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""
+                        + externalId + "\"},\"location_resolution_token\":\""
+                        + locationToken + "\",\"emotion_memo\":\"처음\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("music record created"))
                 .andExpect(jsonPath("$.data.map_dot_id").value(dotId))
@@ -134,13 +134,13 @@ class MusicRecordApiDatabaseIntegrationTest {
         assertThat(responseCreatedAt).isEqualTo(storedCreatedAt.toInstant(ZoneOffset.UTC));
 
         mvc.perform(get("/api/v1/users/me/music-records")
-                        .header("Authorization", "Bearer " + bearer))
+                .header("Authorization", "Bearer " + bearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("my music records retrieved"))
                 .andExpect(jsonPath("$.data.items[0].record_id").value(recordId))
                 .andExpect(jsonPath("$.data.items[0].music.title").value("테스트 노래"));
         mvc.perform(get("/api/v1/music-records/{recordId}", recordId)
-                        .header("Authorization", "Bearer " + bearer))
+                .header("Authorization", "Bearer " + bearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.emotion_memo").value("처음"));
         MvcResult nextCsrf = mvc.perform(get("/api/v1/auth/token/csrf").session(session))
@@ -148,10 +148,10 @@ class MusicRecordApiDatabaseIntegrationTest {
         csrf = mapper.readTree(nextCsrf.getResponse().getContentAsString())
                 .path("data").path("csrf_token").asText();
         MvcResult patched = mvc.perform(patch("/api/v1/music-records/{recordId}", recordId)
-                        .session(session).header("X-CSRF-TOKEN", csrf)
-                        .header("Authorization", "Bearer " + bearer)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"emotion_memo\":\"수정\"}"))
+                .session(session).header("X-CSRF-TOKEN", csrf)
+                .header("Authorization", "Bearer " + bearer)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"emotion_memo\":\"수정\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.record_id").value(recordId))
                 .andReturn();
@@ -161,15 +161,15 @@ class MusicRecordApiDatabaseIntegrationTest {
                 (row, index) -> row.getObject("updated_at", LocalDateTime.class), recordId);
         assertThat(responseUpdatedAt).isEqualTo(storedUpdatedAt.toInstant(ZoneOffset.UTC));
         mvc.perform(get("/api/v1/music-records/{recordId}", recordId)
-                        .header("Authorization", "Bearer " + bearer))
+                .header("Authorization", "Bearer " + bearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.emotion_memo").value("수정"));
         mvc.perform(get("/api/v1/music-records/{recordId}", recordId)
-                        .header("Authorization", "Bearer " + bearer(userId + 1)))
+                .header("Authorization", "Bearer " + bearer(userId + 1)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("forbidden"));
         mvc.perform(get("/api/v1/music-records/{recordId}", Long.MAX_VALUE)
-                        .header("Authorization", "Bearer " + bearer))
+                .header("Authorization", "Bearer " + bearer))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value("music record not found"));
     }
@@ -222,7 +222,7 @@ class MusicRecordApiDatabaseIntegrationTest {
         for (int i = 0; i < 21; i++) {
             long id = base + i;
             jdbc.update("INSERT INTO music (id,provider,external_music_id,title,artist_name) "
-                            + "VALUES (?,?,?,?,?)", id, "ITUNES", String.valueOf(id), query + " 노래", "가수");
+                    + "VALUES (?,?,?,?,?)", id, "ITUNES", String.valueOf(id), query + " 노래", "가수");
         }
         ItunesMusicSearchClient itunes = mock(ItunesMusicSearchClient.class);
         when(itunes.search(query)).thenReturn(List.of());
@@ -235,7 +235,7 @@ class MusicRecordApiDatabaseIntegrationTest {
 
         long newlyInsertedId = base + 21;
         jdbc.update("INSERT INTO music (id,provider,external_music_id,title,artist_name) "
-                        + "VALUES (?,?,?,?,?)", newlyInsertedId, "ITUNES", String.valueOf(newlyInsertedId),
+                + "VALUES (?,?,?,?,?)", newlyInsertedId, "ITUNES", String.valueOf(newlyInsertedId),
                 query + " 새 노래", "가수");
         var second = service.search(query, "ITUNES", first.next_cursor(), 20);
 

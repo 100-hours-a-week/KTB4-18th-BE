@@ -55,8 +55,7 @@ class LocationResolutionServiceTest {
         LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 18.5);
         when(coordinateResolver.resolve(request.latitude(), request.longitude()))
                 .thenReturn(new ResolvedRegionCode("41", "41135"));
-        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO))
-                .thenReturn(Optional.of(sido));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO)).thenReturn(Optional.of(sido));
         when(regionRepository.findByCodeAndLevelAndActiveTrue("41135", RegionLevel.SIGUNGU))
                 .thenReturn(Optional.of(sigungu));
         when(musicRecords.findNearestLocation(request.latitude(), request.longitude()))
@@ -77,8 +76,7 @@ class LocationResolutionServiceTest {
     void rejectsLowAccuracyBeforeCallingExternalResolver() {
         LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 100.1);
 
-        assertThatThrownBy(() -> service.resolve(7L, request))
-                .isInstanceOf(LocationException.class)
+        assertThatThrownBy(() -> service.resolve(7L, request)).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.INVALID_COORDINATES);
         verifyNoInteractions(coordinateResolver, regionRepository, tokenProvider, musicRecords);
@@ -105,13 +103,11 @@ class LocationResolutionServiceTest {
         LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 18.5);
         when(coordinateResolver.resolve(request.latitude(), request.longitude()))
                 .thenReturn(new ResolvedRegionCode("41", "41135"));
-        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO))
-                .thenReturn(Optional.of(sido));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO)).thenReturn(Optional.of(sido));
         when(regionRepository.findByCodeAndLevelAndActiveTrue("41135", RegionLevel.SIGUNGU))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.resolve(7L, request))
-                .isInstanceOf(LocationException.class)
+        assertThatThrownBy(() -> service.resolve(7L, request)).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.REVERSE_GEOCODING_FAILED);
     }
@@ -125,13 +121,11 @@ class LocationResolutionServiceTest {
         LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 18.5);
         when(coordinateResolver.resolve(request.latitude(), request.longitude()))
                 .thenReturn(new ResolvedRegionCode("41", "11110"));
-        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO))
-                .thenReturn(Optional.of(sido));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO)).thenReturn(Optional.of(sido));
         when(regionRepository.findByCodeAndLevelAndActiveTrue("11110", RegionLevel.SIGUNGU))
                 .thenReturn(Optional.of(mismatchedSigungu));
 
-        assertThatThrownBy(() -> service.resolve(7L, request))
-                .isInstanceOf(LocationException.class)
+        assertThatThrownBy(() -> service.resolve(7L, request)).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.REVERSE_GEOCODING_FAILED);
     }

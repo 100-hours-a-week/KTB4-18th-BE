@@ -18,8 +18,8 @@ class RequestIdFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         AtomicReference<String> requestIdInFilterChain = new AtomicReference<>();
 
-        filter.doFilter(request, response, (servletRequest, servletResponse) ->
-                requestIdInFilterChain.set(MDC.get(RequestIdFilter.REQUEST_ID_ATTRIBUTE)));
+        filter.doFilter(request, response, (servletRequest, servletResponse) -> requestIdInFilterChain
+                .set(MDC.get(RequestIdFilter.REQUEST_ID_ATTRIBUTE)));
 
         String requestId = response.getHeader(RequestIdFilter.REQUEST_ID_HEADER);
         assertThat(requestId).isNotBlank();

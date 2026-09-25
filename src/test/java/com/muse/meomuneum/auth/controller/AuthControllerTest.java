@@ -18,9 +18,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.mock.web.MockHttpSession;
 
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
@@ -41,8 +41,7 @@ class AuthControllerTest {
         authService = mock(AuthService.class);
         csrfTokenService = mock(CsrfTokenService.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, csrfTokenService))
-                .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler())
-                .build();
+                .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler()).build();
     }
 
     @Test
@@ -53,12 +52,9 @@ class AuthControllerTest {
             return new TokenResponse("access-token", 3600);
         }).when(authService).login(any(), any(HttpServletRequest.class), any(HttpHeaders.class));
 
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
-                .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE,
-                        "refresh_token=refresh-token; Path=/api/v1/auth"))
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"user@example.com\",\"password\":\"password\"}")).andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, "refresh_token=refresh-token; Path=/api/v1/auth"))
                 .andExpect(jsonPath("$.message").value("login success"))
                 .andExpect(jsonPath("$.data.access_token").value("access-token"))
                 .andExpect(jsonPath("$.data.expires_in").value(3600));
@@ -66,21 +62,15 @@ class AuthControllerTest {
 
     @Test
     void loginWithInvalidRequestReturnsSpecifiedError() throws Exception {
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"invalid-email\",\"password\":\"\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("invalid request"))
-                .andExpect(jsonPath("$.data").doesNotExist());
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"invalid-email\",\"password\":\"\"}")).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("invalid request")).andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
     void loginWithMalformedJsonReturnsSpecifiedError() throws Exception {
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("invalid request"))
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON).content("{"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("invalid request"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
@@ -89,11 +79,9 @@ class AuthControllerTest {
         when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
                 .thenThrow(new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS));
 
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"user@example.com\",\"password\":\"incorrect-password\"}"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("invalid credentials"))
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"user@example.com\",\"password\":\"incorrect-password\"}"))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("invalid credentials"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
@@ -102,9 +90,8 @@ class AuthControllerTest {
         when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
                 .thenThrow(new IllegalStateException("unexpected failure"));
 
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.message").value("internal server error"))
                 .andExpect(jsonPath("$.data").doesNotExist());
@@ -114,8 +101,7 @@ class AuthControllerTest {
     void csrfIssueReturnsSpecifiedResponse() throws Exception {
         when(csrfTokenService.issueToken(any(HttpServletRequest.class))).thenReturn("csrf-token");
 
-        mockMvc.perform(get("/api/v1/auth/token/csrf"))
-                .andExpect(status().isOk())
+        mockMvc.perform(get("/api/v1/auth/token/csrf")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("csrf token issued"))
                 .andExpect(jsonPath("$.data.csrf_token").value("csrf-token"));
     }
@@ -124,8 +110,7 @@ class AuthControllerTest {
     void logoutKeepsCsrfSessionAndReturnsNoContent() throws Exception {
         MockHttpSession session = new MockHttpSession();
 
-        mockMvc.perform(post("/api/v1/auth/logout").session(session))
-                .andExpect(status().isNoContent());
+        mockMvc.perform(post("/api/v1/auth/logout").session(session)).andExpect(status().isNoContent());
 
         assertThat(session.isInvalid()).isFalse();
         verify(authService).logout(any(HttpHeaders.class));

@@ -7,15 +7,11 @@ import com.muse.meomuneum.global.exception.ErrorCode;
 public enum AuthErrorCode implements ErrorCode {
 
     INVALID_REQUEST(
-            "AUTH_400", HttpStatus.BAD_REQUEST, "invalid request"
-    ),
-    INVALID_CREDENTIALS(
-            "AUTH_401", HttpStatus.UNAUTHORIZED, "invalid credentials"
-    ),
+            "AUTH_400", HttpStatus.BAD_REQUEST, "invalid request"), INVALID_CREDENTIALS(
+                    "AUTH_401", HttpStatus.UNAUTHORIZED, "invalid credentials"),
 
     REFRESH_INVALID_TOKEN(
-            "AUTH_REFRESH_401", HttpStatus.UNAUTHORIZED, "invalid refresh token"
-    );
+            "AUTH_REFRESH_401", HttpStatus.UNAUTHORIZED, "invalid refresh token");
 
     private final String code;
     private final String message;

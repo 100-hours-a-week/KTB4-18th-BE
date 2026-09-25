@@ -7,6 +7,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -26,10 +27,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
 
-    public JwtAuthenticationFilter(
-            JwtTokenProvider jwtTokenProvider,
-            SecurityErrorResponseWriter errorResponseWriter
-    ) {
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
     }
@@ -38,8 +36,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String requestUri = request.getRequestURI();
         String method = request.getMethod();
-        return ("POST".equals(method) && (LOGIN_PATH.equals(requestUri) || REFRESH_PATH.equals(requestUri)
-                || LOGOUT_PATH.equals(requestUri))) || ("GET".equals(method) && CSRF_PATH.equals(requestUri));
+        return ("POST".equals(method)
+                && (LOGIN_PATH.equals(requestUri) || REFRESH_PATH.equals(requestUri) || LOGOUT_PATH.equals(requestUri)))
+                || ("GET".equals(method) && CSRF_PATH.equals(requestUri));
     }
 
     @Override
@@ -65,15 +64,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         List<SimpleGrantedAuthority> authorities = claims.roles().stream()
-                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
-                .toList();
-        UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken.authenticated(
-                claims.userId(), null, authorities);
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role)).toList();
+        UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken
+                .authenticated(claims.userId(), null, authorities);
         SecurityContextHolder.getContext().setAuthentication(authentication);
         filterChain.doFilter(request, response);
     }
 
-    private void writeUnauthorizedResponse(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    private void writeUnauthorizedResponse(HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
         SecurityContextHolder.clearContext();
         errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_UNAUTHORIZED);
     }

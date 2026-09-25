@@ -44,9 +44,7 @@ public class AuthController {
             HttpServletRequest servletRequest) {
         HttpHeaders headers = new HttpHeaders();
         TokenResponse tokenResponse = authService.login(request, servletRequest, headers);
-        return new ResponseEntity<>(
-                ApiResponse.success(AuthSuccessCode.LOGIN_SUCCESS, tokenResponse),
-                headers,
+        return new ResponseEntity<>(ApiResponse.success(AuthSuccessCode.LOGIN_SUCCESS, tokenResponse), headers,
                 AuthSuccessCode.LOGIN_SUCCESS.status());
     }
 
@@ -57,11 +55,8 @@ public class AuthController {
             TokenResponse tokenResponse = authService.refresh(request, headers);
             return new ResponseEntity<>(ApiResponse.of("token refreshed", tokenResponse), headers, HttpStatus.OK);
         } catch (AuthenticationFailedException exception) {
-            return new ResponseEntity<>(
-                    ApiResponse.failure(exception.getErrorCode().message()),
-                    headers,
-                    exception.getErrorCode().status()
-            );
+            return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
+                    exception.getErrorCode().status());
         }
     }
 

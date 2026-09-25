@@ -8,19 +8,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
-import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.auth.service.AuthService;
 import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.auth.service.RefreshTokenCookieFactory;
-import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -50,8 +50,7 @@ class RefreshTokenRotationMvcTest {
                 jwtTokenProvider,
                 jwtProperties,
                 new RefreshTokenCookieFactory(jwtProperties),
-                userAuthenticationService
-        );
+                userAuthenticationService);
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, mock(CsrfTokenService.class)))
                 .setControllerAdvice(new AuthExceptionHandler(), new GlobalExceptionHandler())
                 .build();
@@ -63,8 +62,8 @@ class RefreshTokenRotationMvcTest {
         String currentRefreshToken = registerRefreshToken(session);
 
         MvcResult success = mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .cookie(new Cookie("refresh_token", currentRefreshToken)))
+                .session(session)
+                .cookie(new Cookie("refresh_token", currentRefreshToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("token refreshed"))
                 .andExpect(jsonPath("$.data.access_token").exists())
@@ -75,8 +74,8 @@ class RefreshTokenRotationMvcTest {
         assertThat(session.isInvalid()).isFalse();
 
         MvcResult second = mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .cookie(new Cookie("refresh_token", currentRefreshToken)))
+                .session(session)
+                .cookie(new Cookie("refresh_token", currentRefreshToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("token refreshed"))
                 .andReturn();
@@ -90,7 +89,7 @@ class RefreshTokenRotationMvcTest {
         String refreshToken = registerRefreshToken(new MockHttpSession());
 
         MvcResult success = mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .cookie(new Cookie("refresh_token", refreshToken)))
+                .cookie(new Cookie("refresh_token", refreshToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("token refreshed"))
                 .andReturn();

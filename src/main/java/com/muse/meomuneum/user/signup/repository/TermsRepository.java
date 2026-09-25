@@ -49,5 +49,6 @@ public class TermsRepository {
     }
 
     public record TermRow(long id, String type, String version, String title, boolean required,
-            String effectiveAt, String content) {}
+            String effectiveAt, String content) {
+    }
 }

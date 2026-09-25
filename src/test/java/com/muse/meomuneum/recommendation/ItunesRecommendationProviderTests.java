@@ -1,5 +1,8 @@
 package com.muse.meomuneum.recommendation;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
@@ -7,15 +10,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-import tools.jackson.databind.ObjectMapper;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import tools.jackson.databind.ObjectMapper;
 
 class ItunesRecommendationProviderTests {
     private HttpServer server;
@@ -45,7 +47,8 @@ class ItunesRecommendationProviderTests {
                       {"kind":"song","trackId":102,"trackName":"둘째 곡","artistName":"가수"},
                       {"kind":"music-video","trackId":103,"trackName":"영상","artistName":"가수"}
                     ]}
-                    """.getBytes(StandardCharsets.UTF_8);
+                    """
+                    .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);

@@ -15,22 +15,23 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.ObjectMapper;
 
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSummary;
+import com.muse.meomuneum.location.security.LocationResolutionClaims;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSummary;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.Region;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.RegionPart;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
-import com.muse.meomuneum.location.security.LocationResolutionClaims;
-import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+
+import tools.jackson.databind.ObjectMapper;
 
 class MusicRecordServiceTest {
     private MusicRecordRepository repository;
@@ -51,7 +52,8 @@ class MusicRecordServiceTest {
         detail = new MusicRecordDetailResponse(7L,
                 new MusicSummary(11L, "밤편지", "아이유", null),
                 5L, new Region(new RegionPart(5L, "11", "서울특별시"),
-                        new RegionPart(4L, "11440", "마포구")), "홍대", "산책 중",
+                        new RegionPart(4L, "11440", "마포구")),
+                "홍대", "산책 중",
                 Instant.parse("2026-09-22T06:30:00Z"), null);
     }
 

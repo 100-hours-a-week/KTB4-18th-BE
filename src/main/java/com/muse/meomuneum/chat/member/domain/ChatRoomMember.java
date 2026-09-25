@@ -3,9 +3,6 @@ package com.muse.meomuneum.chat.member.domain;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-import com.muse.meomuneum.chat.room.domain.ChatRoom;
-import com.muse.meomuneum.user.domain.User;
-
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -15,6 +12,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+
+import com.muse.meomuneum.chat.room.domain.ChatRoom;
+import com.muse.meomuneum.user.domain.User;
 
 @Entity
 @Table(name = "chat_room_members")

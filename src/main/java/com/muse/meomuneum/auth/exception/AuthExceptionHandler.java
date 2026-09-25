@@ -11,7 +11,6 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -29,40 +28,25 @@ public class AuthExceptionHandler {
     private static final String UNKNOWN_FIELDS = "none";
 
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
-    public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(
-            Exception exception,
-            HttpServletRequest request
-    ) {
+    public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception exception, HttpServletRequest request) {
         log.warn(
                 "event=auth_request_invalid domainCode={} httpStatus={} method={} path={} requestId={} "
                         + "exceptionType={} invalidFields={}",
-                AuthErrorCode.INVALID_REQUEST.code(),
-                AuthErrorCode.INVALID_REQUEST.status().value(),
-                request.getMethod(),
-                request.getRequestURI(),
-                MDC.get(REQUEST_ID_KEY),
-                exception.getClass().getSimpleName(),
-                invalidFields(exception)
-        );
+                AuthErrorCode.INVALID_REQUEST.code(), AuthErrorCode.INVALID_REQUEST.status().value(),
+                request.getMethod(), request.getRequestURI(), MDC.get(REQUEST_ID_KEY),
+                exception.getClass().getSimpleName(), invalidFields(exception));
         return toErrorResponse(AuthErrorCode.INVALID_REQUEST);
     }
 
     @ExceptionHandler(AuthenticationFailedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleAuthenticationFailure(
-            AuthenticationFailedException exception,
-            HttpServletRequest request
-    ) {
+    public ResponseEntity<ApiResponse<Void>> handleAuthenticationFailure(AuthenticationFailedException exception,
+            HttpServletRequest request) {
         ErrorCode errorCode = exception.getErrorCode();
         log.warn(
                 "event=auth_authentication_failed domainCode={} httpStatus={} method={} path={} requestId={} "
                         + "exceptionType={}",
-                errorCode.code(),
-                errorCode.status().value(),
-                request.getMethod(),
-                request.getRequestURI(),
-                MDC.get(REQUEST_ID_KEY),
-                exception.getClass().getSimpleName()
-        );
+                errorCode.code(), errorCode.status().value(), request.getMethod(), request.getRequestURI(),
+                MDC.get(REQUEST_ID_KEY), exception.getClass().getSimpleName());
         return toErrorResponse(errorCode);
     }
 
@@ -72,9 +56,7 @@ public class AuthExceptionHandler {
         }
 
         return validationException.getBindingResult().getFieldErrors().stream()
-                .map(fieldError -> fieldError.getField() + ":" + fieldError.getCode())
-                .distinct()
-                .sorted()
+                .map(fieldError -> fieldError.getField() + ":" + fieldError.getCode()).distinct().sorted()
                 .collect(Collectors.joining(","));
     }
 

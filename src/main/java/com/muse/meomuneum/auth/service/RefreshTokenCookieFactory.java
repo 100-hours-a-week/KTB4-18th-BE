@@ -21,8 +21,7 @@ public class RefreshTokenCookieFactory {
     }
 
     public void addRefreshTokenCookie(HttpHeaders headers, String refreshToken) {
-        ResponseCookie refreshTokenCookie = buildCookie(
-                refreshToken, jwtProperties.refreshTokenExpirationSeconds());
+        ResponseCookie refreshTokenCookie = buildCookie(refreshToken, jwtProperties.refreshTokenExpirationSeconds());
         headers.add(HttpHeaders.SET_COOKIE, refreshTokenCookie.toString());
     }
 
@@ -31,12 +30,7 @@ public class RefreshTokenCookieFactory {
     }
 
     private ResponseCookie buildCookie(String value, long maxAgeSeconds) {
-        return ResponseCookie.from(REFRESH_TOKEN_COOKIE_NAME, value)
-                .httpOnly(true)
-                .secure(true)
-                .sameSite("Lax")
-                .path(AUTH_COOKIE_PATH)
-                .maxAge(Duration.ofSeconds(maxAgeSeconds))
-                .build();
+        return ResponseCookie.from(REFRESH_TOKEN_COOKIE_NAME, value).httpOnly(true).secure(true).sameSite("Lax")
+                .path(AUTH_COOKIE_PATH).maxAge(Duration.ofSeconds(maxAgeSeconds)).build();
     }
 }

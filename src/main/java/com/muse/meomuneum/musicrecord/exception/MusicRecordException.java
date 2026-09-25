@@ -18,7 +18,13 @@ public class MusicRecordException extends RuntimeException {
         this.publicMessage = publicMessage;
     }
 
-    public String reason() { return reason; }
-    public HttpStatus status() { return status; }
-    public String publicMessage() { return publicMessage; }
+    public String reason() {
+        return reason;
+    }
+    public HttpStatus status() {
+        return status;
+    }
+    public String publicMessage() {
+        return publicMessage;
+    }
 }

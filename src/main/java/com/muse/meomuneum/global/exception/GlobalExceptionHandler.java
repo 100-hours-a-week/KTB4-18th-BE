@@ -5,13 +5,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
@@ -53,14 +53,9 @@ public class GlobalExceptionHandler {
         log.error(
                 "event=unexpected_server_error domainCode={} httpStatus={} method={} path={} requestId={} "
                         + "exceptionType={}",
-                GlobalErrorCode.INTERNAL_SERVER_ERROR.code(),
-                GlobalErrorCode.INTERNAL_SERVER_ERROR.status().value(),
-                request.getMethod(),
-                request.getRequestURI(),
-                MDC.get("requestId"),
-                exception.getClass().getSimpleName(),
-                exception
-        );
+                GlobalErrorCode.INTERNAL_SERVER_ERROR.code(), GlobalErrorCode.INTERNAL_SERVER_ERROR.status().value(),
+                request.getMethod(), request.getRequestURI(), MDC.get("requestId"),
+                exception.getClass().getSimpleName(), exception);
         return toErrorResponse(GlobalErrorCode.INTERNAL_SERVER_ERROR);
     }
 

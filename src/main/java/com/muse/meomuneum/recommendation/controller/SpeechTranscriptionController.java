@@ -20,10 +20,10 @@ public class SpeechTranscriptionController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<SpeechTranscriptionResponse>> create(
-            @RequestParam("audio") MultipartFile audio) {
+    public ResponseEntity<ApiResponse<SpeechTranscriptionResponse>> create(@RequestParam("audio") MultipartFile audio) {
         return ResponseEntity.ok(new ApiResponse<>("speech transcription completed", service.transcribe(audio)));
     }
 
-    public record ApiResponse<T>(String message, T data) {}
+    public record ApiResponse<T>(String message, T data) {
+    }
 }

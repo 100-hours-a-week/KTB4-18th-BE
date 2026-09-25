@@ -1,5 +1,11 @@
 package com.muse.meomuneum.chat.domain;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+
 import java.time.LocalDateTime;
 
 import org.junit.jupiter.api.Test;
@@ -10,12 +16,6 @@ import com.muse.meomuneum.chat.region.domain.RegionLevel;
 import com.muse.meomuneum.chat.room.domain.ChatRoom;
 import com.muse.meomuneum.chat.room.domain.ChatRoomStatus;
 import com.muse.meomuneum.user.domain.User;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.mock;
 
 class ChatRoomDomainTest {
 
@@ -61,7 +61,6 @@ class ChatRoomDomainTest {
         assertTrue(sido.isActive());
         assertThrows(IllegalArgumentException.class,
                 () -> Region.create("41135", "성남시 분당구", RegionLevel.SIGUNGU, null));
-        assertThrows(IllegalArgumentException.class,
-                () -> Region.create("11", "서울특별시", RegionLevel.SIDO, sido));
+        assertThrows(IllegalArgumentException.class, () -> Region.create("11", "서울특별시", RegionLevel.SIDO, sido));
     }
 }

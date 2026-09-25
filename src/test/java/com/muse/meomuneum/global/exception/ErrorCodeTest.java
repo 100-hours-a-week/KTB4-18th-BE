@@ -14,8 +14,7 @@ class ErrorCodeTest {
 
     @Test
     void authenticationFailureKeepsTheProvidedApiErrorCode() {
-        AuthenticationFailedException exception = new AuthenticationFailedException(
-                AuthErrorCode.INVALID_CREDENTIALS);
+        AuthenticationFailedException exception = new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS);
 
         assertThat(exception.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
         assertThat(exception.getErrorCode().code()).isEqualTo("AUTH_401");

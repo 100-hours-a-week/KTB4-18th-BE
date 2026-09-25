@@ -1,13 +1,15 @@
 package com.muse.meomuneum.auth.service;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+
 import org.springframework.stereotype.Service;
 
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
@@ -88,8 +90,7 @@ public class RefreshTokenSessionService {
 
     private String hash(String refreshToken) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(refreshToken.getBytes(StandardCharsets.UTF_8));
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(refreshToken.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 algorithm is unavailable", exception);

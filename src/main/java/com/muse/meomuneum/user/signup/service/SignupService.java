@@ -17,8 +17,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.muse.meomuneum.user.signup.dto.SignupRequest;
 import com.muse.meomuneum.user.signup.domain.SignupTermType;
+import com.muse.meomuneum.user.signup.dto.SignupRequest;
 import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
 import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
 import com.muse.meomuneum.user.signup.repository.SignupRepository;

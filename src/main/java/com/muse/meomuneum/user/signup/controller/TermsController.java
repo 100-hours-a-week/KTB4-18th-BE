@@ -5,7 +5,6 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.user.signup.domain.SignupTermType;
 import com.muse.meomuneum.user.signup.repository.TermsRepository;
@@ -52,7 +52,8 @@ public class TermsController {
                 .orElseGet(() -> ResponseEntity.status(404).body(ApiResponse.of("term not found", null)));
     }
 
-    public record TermsList(List<TermSummary> items) {}
+    public record TermsList(List<TermSummary> items) {
+    }
 
     public record TermSummary(@JsonProperty("terms_id") long termsId, String type, String version,
             String title, @JsonProperty("is_required") boolean required,

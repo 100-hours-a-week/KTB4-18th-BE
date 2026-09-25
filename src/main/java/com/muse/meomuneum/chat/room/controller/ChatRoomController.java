@@ -33,16 +33,10 @@ public class ChatRoomController {
     }
 
     @PostMapping("/chat-rooms/{roomId}/members")
-    public ResponseEntity<ApiResponse<ChatRoomMembershipResponse>> join(
-            @PathVariable Long roomId,
-            @RequestBody ChatRoomJoinRequest request,
-            Authentication authentication) {
+    public ResponseEntity<ApiResponse<ChatRoomMembershipResponse>> join(@PathVariable Long roomId,
+            @RequestBody ChatRoomJoinRequest request, Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
-        ChatRoomJoinResult result = chatRoomEntryService.join(
-                userId,
-                roomId,
-                request.locationResolutionToken()
-        );
+        ChatRoomJoinResult result = chatRoomEntryService.join(userId, roomId, request.locationResolutionToken());
         HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
         String message = result.created() ? "chat room joined" : "already joined";
         return ResponseEntity.status(status).body(ApiResponse.of(message, result.membership()));

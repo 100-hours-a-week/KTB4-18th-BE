@@ -26,15 +26,11 @@ public class SecurityErrorResponseWriter {
         this.objectMapper = objectMapper;
     }
 
-    public void write(HttpServletRequest request, HttpServletResponse response, ErrorCode errorCode) throws IOException {
-        log.warn(
-                "event=security_request_rejected domainCode={} httpStatus={} method={} path={} requestId={}",
-                errorCode.code(),
-                errorCode.status().value(),
-                request.getMethod(),
-                request.getRequestURI(),
-                MDC.get("requestId")
-        );
+    public void write(HttpServletRequest request, HttpServletResponse response, ErrorCode errorCode)
+            throws IOException {
+        log.warn("event=security_request_rejected domainCode={} httpStatus={} method={} path={} requestId={}",
+                errorCode.code(), errorCode.status().value(), request.getMethod(), request.getRequestURI(),
+                MDC.get("requestId"));
         response.setStatus(errorCode.status().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");

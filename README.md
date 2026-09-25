@@ -174,20 +174,58 @@ PATCH는 `custom_place_name`과 `emotion_memo`만 받으며 음악·위치·지�
 
 ## 테스트 및 빌드
 
-DB를 준비하고 환경변수를 불러온 상태에서 실행합니다.
+로컬 품질 검증에는 JDK 25, MySQL 9.7.0 테스트 DB와 Docker daemon이 필요합니다. 일반 통합 테스트는
+`TEST_DB_URL`의 MySQL을 사용하고, 채팅방 마이그레이션·동시성 통합 테스트는 Testcontainers로
+MySQL 9.7.0 컨테이너를 실행합니다. Docker를 사용할 수 없으면 해당 테스트가 스킵되므로 전체 품질
+검증이 완료된 것으로 간주하지 않습니다.
+
+DB를 준비하고 환경변수를 불러온 뒤 Docker 실행 상태를 확인합니다.
 
 ```sh
-# contextLoads()는 @ActiveProfiles("test")로 테스트 DB를 사용
-./gradlew test
+set -a
+. ./.env
+set +a
 
-# 테스트를 포함한 전체 빌드
-./gradlew clean build
-
-# 실행 가능한 JAR 생성: 테스트는 실행하지 않음
-./gradlew bootJar
+docker info
 ```
 
-테스트 보고서는 `build/reports/tests/test/index.html`에서 확인합니다. 현재 테스트는 Spring 컨텍스트가 시작되는지 확인하며 기능별 테스트는 추후 추가해야 합니다.
+코드 포맷과 정적 분석은 다음 명령으로 검증합니다.
+
+```sh
+# Java 포맷 검사
+./gradlew spotlessCheck --no-daemon
+
+# 포맷 위반 자동 수정
+./gradlew spotlessApply --no-daemon
+
+# 운영 코드와 테스트 코드 Checkstyle 검사
+./gradlew checkstyleMain checkstyleTest --no-daemon
+```
+
+테스트와 패키징은 다음 명령으로 검증합니다.
+
+```sh
+# 단위·통합 테스트
+./gradlew test --no-daemon
+
+# 테스트를 포함한 전체 빌드
+./gradlew clean build --no-daemon
+
+# 실행 가능한 JAR 생성: 테스트는 실행하지 않음
+./gradlew bootJar --no-daemon
+```
+
+병합 전에는 아래 명령으로 포맷, 정적 분석, 전체 테스트와 패키징을 순서대로 확인합니다.
+
+```sh
+./gradlew clean spotlessCheck checkstyleMain checkstyleTest test --no-daemon
+./gradlew bootJar --no-daemon
+```
+
+모든 태스크가 `BUILD SUCCESSFUL`로 종료되고 테스트 실패나 Docker 미실행에 따른 스킵이 없어야 전체
+검증이 완료된 것으로 판단합니다. 테스트에는 인증, 추천, 음성 전사, 지도, 위치 판정, 채팅방 입장과
+Flyway 마이그레이션 관련 단위·통합 테스트가 포함됩니다. 테스트 보고서는
+`build/reports/tests/test/index.html`에서 확인합니다.
 
 JAR 생성 후 다음과 같이 실행합니다. 버전이 변경되면 파일명도 변경됩니다.
 

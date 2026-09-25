@@ -12,10 +12,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
-import com.sun.net.httpserver.HttpServer;
 import com.muse.meomuneum.location.config.ReverseGeocodingProperties;
 import com.muse.meomuneum.location.exception.LocationErrorCode;
 import com.muse.meomuneum.location.exception.LocationException;
+import com.sun.net.httpserver.HttpServer;
 
 class KakaoRegionCoordinateResolverTest {
 
@@ -72,12 +72,8 @@ class KakaoRegionCoordinateResolverTest {
     }
 
     private KakaoRegionCoordinateResolver resolver(String restApiKey) {
-        ReverseGeocodingProperties properties = new ReverseGeocodingProperties(
-                baseUrl(),
-                restApiKey,
-                Duration.ofSeconds(1),
-                Duration.ofSeconds(1)
-        );
+        ReverseGeocodingProperties properties = new ReverseGeocodingProperties(baseUrl(), restApiKey,
+                Duration.ofSeconds(1), Duration.ofSeconds(1));
         RestClient restClient = RestClient.builder().baseUrl(properties.baseUrl()).build();
         return new KakaoRegionCoordinateResolver(restClient, properties);
     }
@@ -87,8 +83,7 @@ class KakaoRegionCoordinateResolverTest {
         server.createContext("/v2/local/geo/coord2regioncode.json", exchange -> {
             String authorization = exchange.getRequestHeaders().getFirst("Authorization");
             String query = exchange.getRequestURI().getRawQuery();
-            if (!"KakaoAK test-rest-api-key".equals(authorization)
-                    || query == null
+            if (!"KakaoAK test-rest-api-key".equals(authorization) || query == null
                     || !query.contains("input_coord=WGS84")) {
                 exchange.sendResponseHeaders(400, -1);
                 exchange.close();
@@ -111,8 +106,7 @@ class KakaoRegionCoordinateResolverTest {
     }
 
     private void assertReverseGeocodingFailed(Runnable invocation) {
-        assertThatThrownBy(invocation::run)
-                .isInstanceOf(LocationException.class)
+        assertThatThrownBy(invocation::run).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.REVERSE_GEOCODING_FAILED);
     }

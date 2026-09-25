@@ -23,9 +23,6 @@ public class LocationConfig {
         requestFactory.setConnectTimeout(properties.connectTimeout());
         requestFactory.setReadTimeout(properties.readTimeout());
 
-        return RestClient.builder()
-                .baseUrl(properties.baseUrl())
-                .requestFactory(requestFactory)
-                .build();
+        return RestClient.builder().baseUrl(properties.baseUrl()).requestFactory(requestFactory).build();
     }
 }

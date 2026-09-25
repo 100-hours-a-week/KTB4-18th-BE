@@ -15,10 +15,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.web.context.WebApplicationContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -56,8 +56,8 @@ class RefreshCsrfProtectionIntegrationTest {
     @Test
     void rejectsRefreshWhenCsrfHeaderIsMissing() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .cookie(new Cookie("refresh_token", "masked-refresh-token")))
+                .session(session)
+                .cookie(new Cookie("refresh_token", "masked-refresh-token")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("csrf validation failed"))
                 .andExpect(jsonPath("$.data").isEmpty());
@@ -66,9 +66,9 @@ class RefreshCsrfProtectionIntegrationTest {
     @Test
     void rejectsRefreshWhenCsrfHeaderDoesNotMatchSessionToken() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .cookie(new Cookie("refresh_token", "masked-refresh-token"))
-                        .header("X-CSRF-TOKEN", "mismatched-csrf-token"))
+                .session(session)
+                .cookie(new Cookie("refresh_token", "masked-refresh-token"))
+                .header("X-CSRF-TOKEN", "mismatched-csrf-token"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("csrf validation failed"))
                 .andExpect(jsonPath("$.data").isEmpty());
@@ -77,8 +77,8 @@ class RefreshCsrfProtectionIntegrationTest {
     @Test
     void passesCsrfValidationThenRejectsMissingRefreshCookie() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
-                        .session(session)
-                        .header("X-CSRF-TOKEN", csrfToken))
+                .session(session)
+                .header("X-CSRF-TOKEN", csrfToken))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("invalid refresh token"))
                 .andExpect(jsonPath("$.data").doesNotExist());

@@ -11,6 +11,10 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.chat.region.domain.Region;
+import com.muse.meomuneum.location.config.LocationTokenProperties;
+import com.muse.meomuneum.location.exception.LocationErrorCode;
+import com.muse.meomuneum.location.exception.LocationException;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -18,10 +22,6 @@ import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jose.crypto.MACVerifier;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import com.muse.meomuneum.chat.region.domain.Region;
-import com.muse.meomuneum.location.config.LocationTokenProperties;
-import com.muse.meomuneum.location.exception.LocationErrorCode;
-import com.muse.meomuneum.location.exception.LocationException;
 
 @Component
 public class LocationResolutionTokenProvider {
@@ -94,8 +94,7 @@ public class LocationResolutionTokenProvider {
                     numberClaim(claims, "sigungu_region_id"),
                     stringClaim(claims, "sigungu_code"),
                     optionalNumberClaim(claims, "map_dot_id"),
-                    claims.getExpirationTime().toInstant()
-            );
+                    claims.getExpirationTime().toInstant());
         } catch (JOSEException | ParseException | IllegalArgumentException exception) {
             throw invalidToken();
         }
