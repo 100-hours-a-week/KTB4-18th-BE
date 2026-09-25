@@ -13,7 +13,6 @@ public enum AuthErrorCode implements ErrorCode {
             "AUTH_401", HttpStatus.UNAUTHORIZED, "invalid credentials"
     ),
 
-    // POST /api/v1/auth/token/refresh
     REFRESH_INVALID_TOKEN(
             "AUTH_REFRESH_401", HttpStatus.UNAUTHORIZED, "invalid refresh token"
     );
