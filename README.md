@@ -61,11 +61,6 @@ set +a
 | `test` | `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD` | URL: `jdbc:mysql://localhost:3306/meomuneum_test`, 사용자: `meomuneum_test`; 비밀번호 필수 |
 | `prod` | `PROD_DB_URL`, `PROD_DB_USERNAME`, `PROD_DB_PASSWORD` | 모두 필수 |
 
-현재 위치 판정에는 `LOCATION_TOKEN_SECRET`과 `LOCATION_KAKAO_REST_API_KEY`가 필요합니다.
-토큰 비밀값은 32바이트 이상이어야 하며 인증 JWT와 별도로 관리합니다. 역지오코딩 연결·응답 제한은
-`LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT`과 `LOCATION_REVERSE_GEOCODING_READ_TIMEOUT`으로
-설정하며 기본값은 각각 2초와 3초입니다.
-
 음성 전사는 `SPEECH_TRANSCRIPTION_PROVIDER`로 제공자를 선택합니다. `dev` 프로필의 기본값은
 프론트엔드 흐름 확인용 `stub`이며 `SPEECH_TRANSCRIPTION_STUB_TRANSCRIPT`의 문장을 반환합니다.
 운영 기본값은 `unavailable`이고 AI 팀의 실제 계약을 연결하기 전에는 502를 반환합니다.
@@ -131,33 +126,6 @@ gradle/wrapper/                    Gradle Wrapper
 - 테이블 검증 오류: 필요한 Flyway 마이그레이션이 있는지 확인합니다.
 - Java 버전 오류: JDK 25와 `JAVA_HOME` 또는 IDE의 Gradle JVM 설정을 확인합니다.
 - 포트 충돌: 기존 서버를 종료하거나 실행 인자에 `--server.port=8081`을 추가합니다.
-
-## 현재 위치 판정 기능
-
-`POST /api/v1/locations/resolve`는 Bearer access token으로 인증된 사용자의 위도·경도와
-`accuracy_meters`를 받습니다. 위도·경도의 유효 범위를 검사하고 정확도가 100m를 초과하면
-외부 API를 호출하지 않고 `400 Bad Request`를 반환합니다.
-
-허용된 좌표는 카카오 좌표→행정구역 API의 법정동 코드로 변환한 뒤 활성 `SIDO`와 `SIGUNGU`
-데이터에 매칭합니다. 응답에는 행정구역과 5분 유효한 `location_resolution_token`만 포함하며
-원본 좌표는 DB나 토큰에 저장하지 않습니다. 토큰 검증은 서명, 만료, 발급 대상 사용자와
-시·도/시·군·구 클레임을 확인합니다. 역지오코딩 장애나 현재 활성 행정구역 데이터와 매칭되지
-않는 결과는 API 설계서에 따라 `502 Bad Gateway`로 반환합니다.
-
-현재 지도 도트 데이터 기반은 이 이슈 범위에 포함되지 않아 `map_dot`은 `null`입니다. 이후 도트
-판정 기능이 연결되더라도 행정구역 판정과 위치 토큰 검증 경계는 그대로 재사용할 수 있습니다.
-
-## 행정구역 채팅방 조회와 입장
-
-`GET /api/v1/regions/{region_id}/chat-room`은 사전 생성된 활성 시·군·구 채팅방을 조회합니다.
-`POST /api/v1/chat-rooms/{room_id}/members`는 `location_resolution_token`의 사용자와 시·군·구가
-대상 방과 일치하는지 확인한 뒤 입장합니다. 같은 사용자가 같은 방에 다시 요청하면 기존 활성
-membership을 `200 OK`로 반환하고, 최초 입장은 `201 Created`를 반환합니다.
-
-입장 트랜잭션은 사용자와 관련 채팅방을 비관적 잠금으로 직렬화하며 실제 DB의 사용자별 활성
-membership UNIQUE 제약도 함께 적용됩니다. 정원은 활성 membership만 계산합니다. 다른 지역으로
-이동할 때는 기존 membership을 먼저 종료하며, 새 방이 가득 차 `409 Conflict`가 발생하더라도 기존
-membership 종료를 되돌리지 않습니다.
 
 ## 텍스트 음악 추천 기능
 

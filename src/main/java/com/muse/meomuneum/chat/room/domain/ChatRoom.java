@@ -89,10 +89,6 @@ public class ChatRoom {
         return status;
     }
 
-    public boolean isActive() {
-        return status == ChatRoomStatus.ACTIVE;
-    }
-
     public void deactivate() {
         status = ChatRoomStatus.INACTIVE;
     }
