@@ -4,6 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -12,6 +14,7 @@ import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.user.signup.controller.SignupController;
 
 @RestControllerAdvice(assignableTypes = SignupController.class)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class SignupExceptionHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(SignupExceptionHandler.class);
 

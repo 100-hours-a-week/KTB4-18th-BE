@@ -27,7 +27,7 @@ public class SignupService {
     private static final short MIN_BIRTH_YEAR = 1900;
     private static final String SERVICE = "SERVICE";
     private static final Set<String> SIGNUP_TERMS_TYPES =
-            Set.of(SERVICE, "PROFILE", "AIPERSONAL", "LOCATIONTERMS", "LOCATION");
+            Set.of(SERVICE, "PROFILE", "AIPERSONAL", "LOCATIONTERMS", "LOCATION", "PRIVACY");
 
     private final SignupRepository signupRepository;
     private final PasswordEncoder passwordEncoder;
@@ -90,6 +90,11 @@ public class SignupService {
                 .collect(Collectors.groupingBy(SignupRepository.Term::type, Collectors.counting()));
         if (currentTermsCountByType.values().stream().anyMatch(count -> count != 1)) {
             throw new IllegalStateException("Current terms are ambiguous");
+        }
+        if (!currentTermsCountByType.keySet().equals(SIGNUP_TERMS_TYPES)
+                || currentTerms.stream().anyMatch(term -> term.required()
+                        != (SERVICE.equals(term.type()) || "AIPERSONAL".equals(term.type())))) {
+            throw new IllegalStateException("Current signup terms are incomplete or misconfigured");
         }
     }
 

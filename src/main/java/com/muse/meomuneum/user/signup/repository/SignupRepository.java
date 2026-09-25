@@ -28,7 +28,7 @@ public class SignupRepository {
         return jdbc.query("""
                 SELECT t.id, t.type, t.is_required
                 FROM terms t
-                WHERE t.type IN ('SERVICE', 'PROFILE', 'AIPERSONAL', 'LOCATIONTERMS', 'LOCATION')
+                WHERE t.type IN ('SERVICE', 'PROFILE', 'AIPERSONAL', 'LOCATIONTERMS', 'LOCATION', 'PRIVACY')
                     AND t.effective_at <= ?
                     AND t.effective_at = (
                         SELECT MAX(current_terms.effective_at)
