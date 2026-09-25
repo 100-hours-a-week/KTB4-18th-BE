@@ -42,13 +42,15 @@ class ChatRoomDomainTest {
     void marksMembershipInactiveOnlyOnce() {
         Region sido = Region.create("41", "경기도", RegionLevel.SIDO, null);
         Region sigungu = Region.create("41135", "성남시 분당구", RegionLevel.SIGUNGU, sido);
-        ChatRoomMember member = ChatRoomMember.join(mock(User.class), ChatRoom.create(sigungu));
+        LocalDateTime joinedAt = LocalDateTime.of(2026, 9, 23, 14, 0);
+        ChatRoomMember member = ChatRoomMember.join(mock(User.class), ChatRoom.create(sigungu), joinedAt);
         LocalDateTime firstLeaveTime = LocalDateTime.of(2026, 9, 23, 14, 30);
 
         member.leave(firstLeaveTime);
         member.leave(firstLeaveTime.plusMinutes(1));
 
         assertFalse(member.isActive());
+        assertEquals(joinedAt, member.getCreatedAt());
         assertEquals(firstLeaveTime, member.getDeletedAt());
     }
 
