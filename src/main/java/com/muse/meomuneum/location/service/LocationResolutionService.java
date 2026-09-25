@@ -2,6 +2,7 @@ package com.muse.meomuneum.location.service;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
 
 import com.muse.meomuneum.chat.region.domain.Region;
 import com.muse.meomuneum.chat.region.domain.RegionLevel;
@@ -16,6 +17,8 @@ import com.muse.meomuneum.location.provider.RegionCoordinateResolver;
 import com.muse.meomuneum.location.provider.ResolvedRegionCode;
 import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
+import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
+import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 
 @Service
 public class LocationResolutionService {
@@ -23,14 +26,17 @@ public class LocationResolutionService {
     private final RegionCoordinateResolver coordinateResolver;
     private final RegionRepository regionRepository;
     private final LocationResolutionTokenProvider tokenProvider;
+    private final MusicRecordRepository musicRecordRepository;
 
     public LocationResolutionService(
             RegionCoordinateResolver coordinateResolver,
             RegionRepository regionRepository,
-            LocationResolutionTokenProvider tokenProvider) {
+            LocationResolutionTokenProvider tokenProvider,
+            MusicRecordRepository musicRecordRepository) {
         this.coordinateResolver = coordinateResolver;
         this.regionRepository = regionRepository;
         this.tokenProvider = tokenProvider;
+        this.musicRecordRepository = musicRecordRepository;
     }
 
     @Transactional(readOnly = true)
@@ -40,10 +46,13 @@ public class LocationResolutionService {
         Region sido = findRegion(regionCode.sidoCode(), RegionLevel.SIDO);
         Region sigungu = findRegion(regionCode.sigunguCode(), RegionLevel.SIGUNGU);
         validateHierarchy(sido, sigungu);
+        var mapDot = musicRecordRepository.findNearestLocation(request.latitude(), request.longitude())
+                .orElseThrow(() -> new MusicRecordException("map_dot_not_found", HttpStatus.NOT_FOUND,
+                        "map dot not found"));
 
-        IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu);
+        IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu, mapDot.dotId());
         return new LocationResolveResponse(
-                null,
+                new LocationResolveResponse.MapDotSummary(mapDot.dotId(), mapDot.dotCode()),
                 new RegionSummaryPair(RegionSummary.from(sido), RegionSummary.from(sigungu)),
                 token.value(),
                 token.expiresIn()

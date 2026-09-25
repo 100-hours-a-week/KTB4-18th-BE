@@ -3,8 +3,6 @@ package com.muse.meomuneum.musicrecord.service;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
@@ -21,9 +19,6 @@ import tools.jackson.databind.JsonNode;
 
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateResponse;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.LocationRequest;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.LocationResponse;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MapDot;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordListResponse;
@@ -32,7 +27,9 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSearchResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.UpdateResponse;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
-import com.muse.meomuneum.musicrecord.provider.KakaoReverseGeocodingClient;
+import com.muse.meomuneum.location.exception.LocationException;
+import com.muse.meomuneum.location.security.LocationResolutionClaims;
+import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.StoredMusic;
@@ -42,39 +39,17 @@ public class MusicRecordService {
     private static final int PAGE_SIZE = 20;
     private final MusicRecordRepository repository;
     private final ItunesMusicSearchClient itunes;
-    private final LocationTokenService tokens;
-    private final KakaoReverseGeocodingClient kakao;
+    private final LocationResolutionTokenProvider tokens;
     private final MusicSearchCursorCodec searchCursors;
     private final Clock clock = Clock.systemUTC();
 
     public MusicRecordService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
-            LocationTokenService tokens, KakaoReverseGeocodingClient kakao,
+            LocationResolutionTokenProvider tokens,
             MusicSearchCursorCodec searchCursors) {
         this.repository = repository;
         this.itunes = itunes;
         this.tokens = tokens;
-        this.kakao = kakao;
         this.searchCursors = searchCursors;
-    }
-
-    public LocationResponse resolveLocation(long userId, LocationRequest request) {
-        if (request.accuracy_meters() > 100) {
-            throw new MusicRecordException("gps_accuracy_over_100m", HttpStatus.BAD_REQUEST,
-                    "invalid coordinates or location accuracy insufficient");
-        }
-        Location location = repository.findNearestLocation(request.latitude(), request.longitude())
-                .orElseThrow(() -> new MusicRecordException("location_not_mapped", HttpStatus.NOT_FOUND,
-                        "map dot not found"));
-        try {
-            kakao.reverseGeocode(request.latitude(), request.longitude());
-        } catch (MusicRecordException exception) {
-            throw new MusicRecordException(exception.reason(), HttpStatus.BAD_GATEWAY,
-                    "reverse geocoding failed");
-        }
-        Instant expires = clock.instant().plusSeconds(300).truncatedTo(ChronoUnit.SECONDS).plusSeconds(1);
-        String token = tokens.create(userId, location, expires);
-        return new LocationResponse(new MapDot(location.dotId(), location.dotCode()), location.region(),
-                token, 300);
     }
 
     public MusicSearchResponse search(String query, String provider, String cursor, Integer size) {
@@ -95,29 +70,26 @@ public class MusicRecordService {
                 throw invalidSearchCursor("music_external_results_changed");
             }
             return externalPage(external, normalized, highWatermark, position.lastDbId(),
-                    position.externalIndex(), pageSize, hash);
+                    position.externalIndex(), pageSize, hash, position.expiresAt());
         }
         long beforeId = position == null ? Long.MAX_VALUE : position.lastDbId();
         if (beforeId <= 0) {
             throw invalidSearchCursor("music_cursor_invalid_db_position");
         }
         List<MusicItem> db = repository.searchMusic(normalized, beforeId, highWatermark, pageSize + 1);
-        if (db.size() > pageSize) {
-            List<MusicItem> items = List.copyOf(db.subList(0, pageSize));
-            long lastId = items.getLast().music_id();
-            return new MusicSearchResponse(items, searchCursors.encode(normalized, "DB", lastId,
-                    highWatermark, 0, ""), true);
+        if (!db.isEmpty() || position != null) {
+            boolean hasNext = db.size() > pageSize;
+            List<MusicItem> items = hasNext ? List.copyOf(db.subList(0, pageSize)) : List.copyOf(db);
+            long lastId = items.isEmpty() ? beforeId : items.getLast().music_id();
+            String next = hasNext ? searchCursors.encode(normalized, "DB", lastId,
+                    highWatermark, 0, "", position == null ? searchCursors.newExpiresAt()
+                            : position.expiresAt()) : null;
+            return new MusicSearchResponse(items, next, hasNext);
         }
         List<MusicItem> external = externalCandidates(normalized, highWatermark);
         String hash = externalHash(external);
-        List<MusicItem> items = new ArrayList<>(db);
-        int count = Math.min(pageSize - items.size(), external.size());
-        items.addAll(external.subList(0, count));
-        boolean hasNext = count < external.size();
-        long lastDbId = db.isEmpty() ? beforeId : db.getLast().music_id();
-        String next = hasNext ? searchCursors.encode(normalized, "ITUNES", lastDbId,
-                highWatermark, count, hash) : null;
-        return new MusicSearchResponse(List.copyOf(items), next, hasNext);
+        return externalPage(external, normalized, highWatermark, beforeId, 0,
+                pageSize, hash, searchCursors.newExpiresAt());
     }
 
     private List<MusicItem> externalCandidates(String query, long highWatermark) {
@@ -142,12 +114,12 @@ public class MusicRecordService {
     }
 
     private MusicSearchResponse externalPage(List<MusicItem> external, String query, long highWatermark,
-            long lastDbId, int index, int pageSize, String hash) {
+            long lastDbId, int index, int pageSize, String hash, Instant expiresAt) {
         int end = Math.min(index + pageSize, external.size());
         List<MusicItem> items = List.copyOf(external.subList(index, end));
         boolean hasNext = end < external.size();
         return new MusicSearchResponse(items, hasNext ? searchCursors.encode(query, "ITUNES",
-                lastDbId, highWatermark, end, hash) : null, hasNext);
+                lastDbId, highWatermark, end, hash, expiresAt) : null, hasNext);
     }
 
     private String externalHash(List<MusicItem> external) {
@@ -166,10 +138,17 @@ public class MusicRecordService {
                 || !request.music().external_music_id().matches("[0-9]+")) {
             throw new MusicRecordException("music_record_invalid_music");
         }
-        var claims = tokens.parse(request.location_resolution_token(), userId);
-        Location location = repository.findLocation(claims.dotId(), claims.sigunguId(), claims.sidoId())
-                .orElseThrow(() -> new MusicRecordException("location_token_target_missing",
-                        HttpStatus.NOT_FOUND, "map dot or region not found"));
+        LocationResolutionClaims claims;
+        try {
+            claims = tokens.validate(request.location_resolution_token(), userId);
+        } catch (LocationException exception) {
+            throw new MusicRecordException("location_token_invalid");
+        }
+        if (claims.mapDotId() == null) {
+            throw new MusicRecordException("location_token_missing_map_dot");
+        }
+        Location location = repository.findLocation(claims.mapDotId(), claims.sigunguRegionId(),
+                claims.sidoRegionId()).orElseThrow(() -> new MusicRecordException("location_token_target_missing"));
         MusicItem music = repository.findMusic(request.music().provider(),
                 request.music().external_music_id()).orElseGet(() -> lookupMusic(request.music().external_music_id()));
         long musicId = music.music_id() == null ? repository.upsertMusic(music) : music.music_id();

@@ -76,22 +76,21 @@ public class MusicRecordRepository {
 
     public record StoredMusic(MusicItem music, boolean matchesSearch) {
     }
-    public Optional<Location> findNearestLocation(double latitude, double longitude) {
-        String sql = "SELECT d.id dot_id, d.code dot_code, g.id sigungu_id, g.code sigungu_code, "
-                + "g.name sigungu_name, s.id sido_id, s.code sido_code, s.name sido_name FROM map_dots d "
-                + "JOIN regions g ON g.id=d.region_id JOIN regions s ON s.id=g.parent_id "
-                + "WHERE d.is_active=TRUE AND g.is_active=TRUE AND s.is_active=TRUE "
-                + "AND g.level='SIGUNGU' ORDER BY POW(d.latitude-?,2)+POW(d.longitude-?,2) LIMIT 1";
-        return jdbc.query(sql, (row, index) -> location(row), latitude, longitude).stream().findFirst();
+    public Optional<MapDotLocation> findNearestLocation(double latitude, double longitude) {
+        String sql = "SELECT d.id dot_id, d.code dot_code FROM map_dots d "
+                + "WHERE d.is_active=TRUE "
+                + "ORDER BY POW(d.latitude-?,2)+POW(d.longitude-?,2) LIMIT 1";
+        return jdbc.query(sql, (row, index) -> new MapDotLocation(row.getLong("dot_id"),
+                row.getString("dot_code")), latitude, longitude).stream().findFirst();
     }
 
     public Optional<Location> findLocation(long dotId, long sigunguId, long sidoId) {
         String sql = "SELECT d.id dot_id, d.code dot_code, g.id sigungu_id, g.code sigungu_code, "
                 + "g.name sigungu_name, s.id sido_id, s.code sido_code, s.name sido_name FROM map_dots d "
-                + "JOIN regions g ON g.id=d.region_id JOIN regions s ON s.id=g.parent_id "
+                + "JOIN regions g ON g.id=? JOIN regions s ON s.id=g.parent_id "
                 + "WHERE d.id=? AND g.id=? AND s.id=? AND d.is_active=TRUE "
                 + "AND g.is_active=TRUE AND s.is_active=TRUE AND g.level='SIGUNGU'";
-        return jdbc.query(sql, (row, index) -> location(row), dotId, sigunguId, sidoId)
+        return jdbc.query(sql, (row, index) -> location(row), sigunguId, dotId, sigunguId, sidoId)
                 .stream().findFirst();
     }
     public long upsertMusic(MusicItem music) {
@@ -225,5 +224,8 @@ public class MusicRecordRepository {
             return new Region(new RegionPart(sidoId, sidoCode, sidoName),
                     new RegionPart(sigunguId, sigunguCode, sigunguName));
         }
+    }
+
+    public record MapDotLocation(long dotId, String dotCode) {
     }
 }

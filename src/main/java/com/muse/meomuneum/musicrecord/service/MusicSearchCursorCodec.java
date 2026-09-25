@@ -2,12 +2,16 @@ package com.muse.meomuneum.musicrecord.service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -15,16 +19,36 @@ import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 
 @Component
 public class MusicSearchCursorCodec {
+    private static final Duration CURSOR_LIFETIME = Duration.ofMinutes(30);
     private final byte[] secret;
+    private final Clock clock;
 
     public MusicSearchCursorCodec(@Value("${auth.jwt.secret}") String secret) {
+        this(secret, Clock.systemUTC());
+    }
+
+    @Autowired
+    public MusicSearchCursorCodec(@Value("${auth.jwt.secret}") String secret, Clock clock) {
         this.secret = secret.getBytes(StandardCharsets.UTF_8);
+        this.clock = clock;
+    }
+
+    public Instant newExpiresAt() {
+        return clock.instant().plus(CURSOR_LIFETIME);
     }
 
     public String encode(String query, String phase, long lastDbId, long highWatermark,
             int externalIndex, String externalHash) {
-        String payload = "1|" + hash(query) + "|ITUNES|" + phase + "|" + lastDbId + "|"
-                + highWatermark + "|" + externalIndex + "|" + externalHash;
+        return encode(query, phase, lastDbId, highWatermark, externalIndex, externalHash,
+                newExpiresAt());
+    }
+
+    public String encode(String query, String phase, long lastDbId, long highWatermark,
+            int externalIndex, String externalHash, Instant expiresAt) {
+        Instant issuedAt = expiresAt.minus(CURSOR_LIFETIME);
+        String payload = "2|" + hash(query) + "|ITUNES|" + phase + "|" + lastDbId + "|"
+                + highWatermark + "|" + externalIndex + "|" + externalHash + "|"
+                + issuedAt.getEpochSecond() + "|" + expiresAt.getEpochSecond();
         return base64(payload.getBytes(StandardCharsets.UTF_8)) + "." + base64(signature(payload));
     }
 
@@ -39,7 +63,7 @@ public class MusicSearchCursorCodec {
                 throw invalid();
             }
             String[] fields = payload.split("\\|", -1);
-            if (fields.length != 8 || !"1".equals(fields[0]) || !hash(query).equals(fields[1])
+            if (fields.length != 10 || !"2".equals(fields[0]) || !hash(query).equals(fields[1])
                     || !"ITUNES".equals(fields[2]) || !("DB".equals(fields[3])
                     || "ITUNES".equals(fields[3]))) {
                 throw invalid();
@@ -47,11 +71,16 @@ public class MusicSearchCursorCodec {
             long lastDbId = Long.parseLong(fields[4]);
             long highWatermark = Long.parseLong(fields[5]);
             int externalIndex = Integer.parseInt(fields[6]);
+            Instant issuedAt = Instant.ofEpochSecond(Long.parseLong(fields[8]));
+            Instant expiresAt = Instant.ofEpochSecond(Long.parseLong(fields[9]));
             if (lastDbId < 0 || highWatermark < 0 || externalIndex < 0 || externalIndex > 200
-                    || ("ITUNES".equals(fields[3]) && fields[7].isBlank())) {
+                    || ("ITUNES".equals(fields[3]) && fields[7].isBlank())
+                    || ("DB".equals(fields[3]) && (externalIndex != 0 || !fields[7].isBlank()))
+                    || !issuedAt.plus(CURSOR_LIFETIME).equals(expiresAt)
+                    || issuedAt.isAfter(clock.instant()) || !expiresAt.isAfter(clock.instant())) {
                 throw invalid();
             }
-            return new Cursor(fields[3], lastDbId, highWatermark, externalIndex, fields[7]);
+            return new Cursor(fields[3], lastDbId, highWatermark, externalIndex, fields[7], expiresAt);
         } catch (MusicRecordException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -88,6 +117,6 @@ public class MusicSearchCursorCodec {
     }
 
     public record Cursor(String phase, long lastDbId, long highWatermark, int externalIndex,
-            String externalHash) {
+            String externalHash, Instant expiresAt) {
     }
 }

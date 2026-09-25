@@ -19,8 +19,6 @@ import tools.jackson.databind.JsonNode;
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateResponse;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.LocationRequest;
-import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.LocationResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordListResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSearchResponse;
@@ -39,11 +37,6 @@ public class MusicRecordController {
         this.users = users;
     }
 
-    @PostMapping("/locations/resolve")
-    public ApiResponse<LocationResponse> resolve(@Valid @RequestBody LocationRequest body,
-            Authentication authentication) {
-        return ApiResponse.of("location resolved", service.resolveLocation(users.resolve(authentication), body));
-    }
     @GetMapping("/music/search")
     public ApiResponse<MusicSearchResponse> search(@RequestParam(required = false) String query,
             @RequestParam(defaultValue = "ITUNES") String provider,
