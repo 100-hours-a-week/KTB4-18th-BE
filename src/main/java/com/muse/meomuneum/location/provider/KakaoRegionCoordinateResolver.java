@@ -1,6 +1,7 @@
 package com.muse.meomuneum.location.provider;
 
 import java.util.List;
+import java.util.Objects;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -61,6 +62,7 @@ public class KakaoRegionCoordinateResolver implements RegionCoordinateResolver {
         }
 
         String legalCode = response.documents().stream()
+                .filter(Objects::nonNull)
                 .filter(document -> LEGAL_REGION_TYPE.equals(document.regionType()))
                 .map(KakaoRegionDocument::code)
                 .filter(this::isValidLegalCode)

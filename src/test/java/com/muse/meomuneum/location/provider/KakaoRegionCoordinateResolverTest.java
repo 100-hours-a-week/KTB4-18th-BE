@@ -53,6 +53,13 @@ class KakaoRegionCoordinateResolverTest {
     }
 
     @Test
+    void mapsNullDocumentToReverseGeocodingFailure() throws IOException {
+        startServer("{\"documents\":[null]}", 200);
+
+        assertReverseGeocodingFailed(() -> resolver("test-rest-api-key").resolve(37.0, 127.0));
+    }
+
+    @Test
     void mapsUpstreamFailureToReverseGeocodingFailure() throws IOException {
         startServer("{}", 503);
 
