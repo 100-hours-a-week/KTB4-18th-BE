@@ -86,8 +86,10 @@ set +a
 
 ## 음악 기록 로컬 개발 프로필
 
-채팅 테이블이 아직 통합되지 않은 음악 기록 개발 DB는 `dev,music-record-local` 프로필로 실행합니다.
-이 프로필은 Gradle이 준비한 음악 기록용 마이그레이션 디렉터리만 사용하며, 채팅 마이그레이션은 실행하지 않습니다.
+음악 기록용 별도 개발 DB는 `dev,music-record-local` 프로필로 실행합니다.
+이 프로필은 Gradle이 준비한 마이그레이션 중 공유 `regions`·채팅 기반 테이블을 먼저 생성하고,
+후행 도트·음악 기록 테이블을 생성하고 지도 카탈로그의 도트 1,050개를 적재합니다. 일반 `dev` 프로필은 전체 마이그레이션을 실행합니다.
+여러 행정구역에 걸친 도트의 `region_id`는 카탈로그의 첫 지역을 대표 지역으로 사용하며, 사용자에게 표시하는 현재 장소는 별도 위치 판정 결과를 사용합니다.
 
 ```sh
 set -a
@@ -98,18 +100,20 @@ set +a
 
 `bootRun`은 `prepareMusicRecordLocalMigrations`를 먼저 실행합니다. IDE에서 애플리케이션을 직접 실행할 때는
 `./gradlew prepareMusicRecordLocalMigrations`를 먼저 실행하고 두 프로필을 모두 활성화하세요.
-임시 프로필에서는 채팅 테이블이 없으므로 JPA의 전체 스키마 검증을 끕니다. 음악 기록 SQL의 Flyway 검증은 유지됩니다.
+임시 프로필에서는 일부 마이그레이션만 사용하므로 JPA의 전체 스키마 검증을 끕니다. 음악 기록 SQL의 Flyway 검증은 유지됩니다.
 새 음악 기록 마이그레이션을 추가하면 `build.gradle`의 전용 SQL 목록에도 추가해야 합니다.
 이 프로필은 로컬 개발 전용이며 통합 검증이나 배포에 사용하지 않습니다.
+기존 `V20260923093759__create_music_record_tables.sql`이 적용된 로컬 DB는 보존하고,
+병합된 브랜치의 신규 마이그레이션은 별도 빈 DB에서 검증합니다. 기존 DB의 Flyway 이력을
+임의로 삭제하거나 수정하지 마세요.
 
 음악 기록 전용 DB 통합 테스트는 기존 테스트 DB와 분리된 로컬 DB에서
 `test,music-record-local` 프로필로 실행합니다. 테스트 DB 자격 증명은 실행 환경의
 `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`로 주입합니다.
-`./gradlew test`가 필요한 마이그레이션을 먼저 준비합니다.
-
-전체 테스트는 일반 `test` 프로필을 사용하는 기존 테스트도 포함합니다. 현재 음악 기록과
-채팅의 지역 테이블 마이그레이션이 충돌하므로, 전용 프로필 검증과 전체 테스트
-통과를 동일하게 취급하지 않습니다.
+`./gradlew test`가 필요한 마이그레이션을 먼저 준비합니다. 기본 전체 테스트는
+일반 `test` 프로필만 실행합니다. 음악 기록 전용 테스트는 별도의 빈 DB를 지정한 뒤
+`MUSIC_RECORD_LOCAL_TESTS=true ./gradlew test --tests '*MusicRecordApiDatabaseIntegrationTest' --tests '*MusicRecordTestProfileIntegrationTest' --tests '*RefreshCsrfProtectionIntegrationTest' --tests '*SessionCookieScopeHttpIntegrationTest'`로 실행합니다.
+두 테스트 실행의 Flyway 적용 이력이 다르므로 하나의 DB를 공유하지 마세요.
 
 ### 회원가입·음악 기록 격리 로컬 프로필
 
