@@ -23,7 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "auth.jwt.secret=development-only-secret-with-at-least-32-bytes")
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "music-record-local"})
 class RefreshCsrfProtectionIntegrationTest {
 
     @Autowired
@@ -57,7 +57,7 @@ class RefreshCsrfProtectionIntegrationTest {
                         .session(session)
                         .cookie(new Cookie("refresh_token", "masked-refresh-token")))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value("request rejected"))
+                .andExpect(jsonPath("$.message").value("csrf validation failed"))
                 .andExpect(jsonPath("$.data").isEmpty());
     }
 
@@ -68,12 +68,12 @@ class RefreshCsrfProtectionIntegrationTest {
                         .cookie(new Cookie("refresh_token", "masked-refresh-token"))
                         .header("X-CSRF-TOKEN", "mismatched-csrf-token"))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value("request rejected"))
+                .andExpect(jsonPath("$.message").value("csrf validation failed"))
                 .andExpect(jsonPath("$.data").isEmpty());
     }
 
     @Test
-    void passesCsrfValidationThenRejectsMissingRefreshSessionState() throws Exception {
+    void passesCsrfValidationThenRejectsMissingRefreshCookie() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
                         .session(session)
                         .header("X-CSRF-TOKEN", csrfToken))

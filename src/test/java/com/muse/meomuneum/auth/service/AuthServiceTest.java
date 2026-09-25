@@ -27,7 +27,6 @@ class AuthServiceTest {
 
     private JwtTokenProvider jwtTokenProvider;
     private RefreshTokenCookieFactory refreshTokenCookieFactory;
-    private RefreshTokenSessionService refreshTokenSessionService;
     private UserAuthenticationService userAuthenticationService;
     private AuthService authService;
 
@@ -35,19 +34,17 @@ class AuthServiceTest {
     void setUp() {
         jwtTokenProvider = mock(JwtTokenProvider.class);
         refreshTokenCookieFactory = mock(RefreshTokenCookieFactory.class);
-        refreshTokenSessionService = mock(RefreshTokenSessionService.class);
         userAuthenticationService = mock(UserAuthenticationService.class);
         authService = new AuthService(
                 jwtTokenProvider,
                 new JwtProperties("project-api", "project-api", "test-secret", 3600, 1209600),
                 refreshTokenCookieFactory,
-                refreshTokenSessionService,
                 userAuthenticationService
         );
     }
 
     @Test
-    void loginCreatesSessionRotationState() {
+    void loginIssuesStatelessRefreshCookie() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         HttpHeaders headers = new HttpHeaders();
         User user = createUser();
@@ -61,12 +58,11 @@ class AuthServiceTest {
 
         assertThat(response).isEqualTo(new TokenResponse("access-token", 3600));
         assertThat(request.getSession(false)).isNotNull();
-        verify(refreshTokenSessionService).register(request, refreshTokenClaims, "login-refresh-token");
         verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "login-refresh-token");
     }
 
     @Test
-    void refreshRotatesSessionAndReturnsExistingResponseContract() {
+    void refreshUsesSignedCookieWithoutSessionState() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
         HttpHeaders headers = new HttpHeaders();
@@ -82,8 +78,6 @@ class AuthServiceTest {
         TokenResponse response = authService.refresh(request, headers);
 
         assertThat(response).isEqualTo(new TokenResponse("access-token", 3600));
-        verify(refreshTokenSessionService).rotate(
-                request, currentClaims, "current-refresh-token", nextClaims, "next-refresh-token");
         verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "next-refresh-token");
     }
 
@@ -104,15 +98,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void refreshWithoutSessionDoesNotIssueAccessToken() {
-        RefreshTokenSessionService actualRefreshTokenSessionService = new RefreshTokenSessionService();
-        authService = new AuthService(
-                jwtTokenProvider,
-                new JwtProperties("project-api", "project-api", "test-secret", 3600, 1209600),
-                refreshTokenCookieFactory,
-                actualRefreshTokenSessionService,
-                userAuthenticationService
-        );
+    void refreshWithoutSessionStillIssuesAccessToken() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
         HttpHeaders headers = new HttpHeaders();
@@ -123,14 +109,11 @@ class AuthServiceTest {
         when(userAuthenticationService.findActiveUser(1L)).thenReturn(user);
         when(jwtTokenProvider.createRefreshToken(user)).thenReturn("next-refresh-token");
         when(jwtTokenProvider.parseRefreshToken("next-refresh-token")).thenReturn(nextClaims);
+        when(jwtTokenProvider.createAccessToken(user)).thenReturn("access-token");
 
-        assertThatThrownBy(() -> authService.refresh(request, headers))
-                .isInstanceOf(AuthenticationFailedException.class)
-                .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
-                .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
-
-        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
-        verify(jwtTokenProvider, org.mockito.Mockito.never()).createAccessToken(user);
+        assertThat(authService.refresh(request, headers))
+                .isEqualTo(new TokenResponse("access-token", 3600));
+        verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "next-refresh-token");
     }
 
     private RefreshTokenClaims claims() {

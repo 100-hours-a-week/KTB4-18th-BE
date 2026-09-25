@@ -38,7 +38,6 @@ public class SecurityConfig {
             throws Exception {
         String[] csrfIgnoredPaths = {
                 "/api/v1/auth/login",
-                "/api/v1/auth/logout",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
@@ -72,7 +71,15 @@ public class SecurityConfig {
                         ) -> errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_UNAUTHORIZED))
                         .accessDeniedHandler((
                                 request, response, accessDeniedException
-                        ) -> errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_DENIED)))
+                        ) -> {
+                            String path = request.getRequestURI();
+                            SecurityErrorCode code = path.startsWith("/api/v1/auth/")
+                                    ? SecurityErrorCode.CSRF_DENIED
+                                    : path.startsWith("/api/v1/music-records/")
+                                            ? SecurityErrorCode.MUSIC_FORBIDDEN
+                                            : SecurityErrorCode.ACCESS_DENIED;
+                            errorResponseWriter.write(request, response, code);
+                        }))
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter),
                         UsernamePasswordAuthenticationFilter.class
