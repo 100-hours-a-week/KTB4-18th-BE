@@ -36,6 +36,10 @@ recommendation:
     country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
     timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
 
+kakao:
+  maps:
+    rest-api-key: ${KAKAO_REST_API_KEY:}
+
 speech:
   transcription:
     provider: ${SPEECH_TRANSCRIPTION_PROVIDER:unavailable}
