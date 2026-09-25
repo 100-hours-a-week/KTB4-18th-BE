@@ -3,3 +3,24 @@ spring:
     url: ${TEST_DB_URL:jdbc:mysql://localhost:3306/meomuneum_test}
     username: ${TEST_DB_USERNAME:meomuneum_test}
     password: ${TEST_DB_PASSWORD}
+
+auth:
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5174,http://127.0.0.1:5174}
+  jwt:
+    issuer: project-api
+    audience: project-api
+    secret: ${TEST_AUTH_JWT_SECRET:test-only-auth-token-secret-that-is-not-used-outside-tests}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
+
+speech:
+  transcription:
+    provider: stub
+    stub-transcript: 비 올 때 듣기 좋은 노래를 추천해줘
+
+location:
+  token:
+    secret: test-only-location-token-secret-at-least-32-bytes
+  reverse-geocoding:
+    rest-api-key: test-only-kakao-rest-api-key
