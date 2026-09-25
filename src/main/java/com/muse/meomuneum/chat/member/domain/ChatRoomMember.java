@@ -65,6 +65,10 @@ public class ChatRoomMember {
         return chatRoom;
     }
 
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
     public LocalDateTime getDeletedAt() {
         return deletedAt;
     }
