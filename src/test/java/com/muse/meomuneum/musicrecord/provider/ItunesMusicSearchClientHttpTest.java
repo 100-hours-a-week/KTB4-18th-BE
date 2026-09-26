@@ -12,12 +12,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
@@ -28,6 +32,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -43,12 +48,25 @@ class ItunesMusicSearchClientHttpTest {
     private ItunesMusicSearchClient client;
     private final AtomicInteger searchStatus = new AtomicInteger(200);
     private final AtomicInteger lookupStatus = new AtomicInteger(200);
+    private final List<String> configuredQueries = new CopyOnWriteArrayList<>();
 
     @BeforeEach
     void setUp() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/search", exchange -> respond(exchange, searchStatus.get(), TRACK_BODY));
         server.createContext("/lookup", exchange -> respond(exchange, lookupStatus.get(), TRACK_BODY));
+        server.createContext("/configured/search", exchange -> {
+            configuredQueries.add(exchange.getRequestURI().getRawQuery());
+            respond(exchange, 200, TRACK_BODY);
+        });
+        server.createContext("/slow/search", exchange -> {
+            try {
+                Thread.sleep(500);
+                respond(exchange, 200, TRACK_BODY);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+        });
         server.start();
         client = new ItunesMusicSearchClient(new ObjectMapper(),
                 "http://127.0.0.1:" + server.getAddress().getPort() + "/search",
@@ -69,6 +87,69 @@ class ItunesMusicSearchClientHttpTest {
         assertThat(searched.getFirst().external_music_id()).isEqualTo("123");
         assertThat(lookedUp).isPresent();
         assertThat(lookedUp.orElseThrow().title()).isEqualTo("테스트 노래");
+    }
+
+    @Test
+    void musicSearchAndRecommendationShareConfiguredCountryAndUrl() {
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/configured/search";
+        new ApplicationContextRunner()
+                .withInitializer(context -> context.getBeanFactory()
+                        .setConversionService(ApplicationConversionService.getSharedInstance()))
+                .withBean(ObjectMapper.class, ObjectMapper::new)
+                .withBean(ItunesMusicSearchClient.class)
+                .withBean(ItunesRecommendationProvider.class)
+                .withPropertyValues("recommendation.itunes.search-url=" + url,
+                        "recommendation.itunes.country=KR", "recommendation.itunes.timeout=2s")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    context.getBean(ItunesMusicSearchClient.class).search("테스트");
+                    context.getBean(ItunesRecommendationProvider.class).recommend(List.of("테스트"));
+                });
+
+        assertThat(configuredQueries).hasSize(2).allMatch(query -> query.contains("country=KR"));
+    }
+
+    @Test
+    void musicSearchAndRecommendationRetainSharedDefaults() {
+        new ApplicationContextRunner()
+                .withInitializer(context -> context.getBeanFactory()
+                        .setConversionService(ApplicationConversionService.getSharedInstance()))
+                .withBean(ObjectMapper.class, ObjectMapper::new)
+                .withBean(ItunesMusicSearchClient.class)
+                .withBean(ItunesRecommendationProvider.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    var music = context.getBean(ItunesMusicSearchClient.class);
+                    var recommendation = context.getBean(ItunesRecommendationProvider.class);
+                    assertThat(ReflectionTestUtils.getField(music, "country")).isEqualTo("US");
+                    assertThat(ReflectionTestUtils.getField(recommendation, "country")).isEqualTo("US");
+                    assertThat(ReflectionTestUtils.getField(music, "url"))
+                            .isEqualTo("https://itunes.apple.com/search");
+                    assertThat(ReflectionTestUtils.getField(recommendation, "searchUrl"))
+                            .isEqualTo("https://itunes.apple.com/search");
+                    assertThat(ReflectionTestUtils.getField(music, "timeout")).isEqualTo(Duration.ofSeconds(8));
+                    assertThat(ReflectionTestUtils.getField(recommendation, "timeout"))
+                            .isEqualTo(Duration.ofSeconds(8));
+                });
+    }
+
+    @Test
+    void musicSearchUsesConfiguredTimeout() {
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/slow/search";
+        new ApplicationContextRunner()
+                .withInitializer(context -> context.getBeanFactory()
+                        .setConversionService(ApplicationConversionService.getSharedInstance()))
+                .withBean(ObjectMapper.class, ObjectMapper::new)
+                .withBean(ItunesMusicSearchClient.class)
+                .withPropertyValues("recommendation.itunes.search-url=" + url,
+                        "recommendation.itunes.timeout=100ms")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThatThrownBy(() -> context.getBean(ItunesMusicSearchClient.class).search("테스트"))
+                            .isInstanceOf(MusicRecordException.class)
+                            .satisfies(error -> assertThat(((MusicRecordException) error).status())
+                                    .isEqualTo(HttpStatus.BAD_GATEWAY));
+                });
     }
 
     @Test

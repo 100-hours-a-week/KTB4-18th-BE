@@ -30,9 +30,9 @@ public class ItunesMusicSearchClient {
     private final Duration timeout;
 
     public ItunesMusicSearchClient(ObjectMapper mapper,
-            @Value("${music.itunes.search-url:https://itunes.apple.com/search}") String url,
-            @Value("${music.itunes.country:US}") String country,
-            @Value("${music.itunes.timeout:8s}") Duration timeout) {
+            @Value("${recommendation.itunes.search-url:https://itunes.apple.com/search}") String url,
+            @Value("${recommendation.itunes.country:US}") String country,
+            @Value("${recommendation.itunes.timeout:8s}") Duration timeout) {
         this.mapper = mapper;
         this.url = url;
         this.country = country;

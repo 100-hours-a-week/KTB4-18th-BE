@@ -299,6 +299,7 @@ AI 팀 연동 전에는 이 문장들을 합쳐 iTunes Search API에서 직접 �
 `500 Internal Server Error`이며 부분 저장은 트랜잭션으로 롤백합니다.
 기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
 기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
+음악 기록 검색과 텍스트 음악 추천은 이 국가·요청 제한 시간 설정을 공유합니다.
 실제 API 확인 시 `KR` 스토어는 검색 결과가 없었고 `US` 스토어에서는 한국어 곡도 검색됐습니다.
 측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
 각각 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다.
