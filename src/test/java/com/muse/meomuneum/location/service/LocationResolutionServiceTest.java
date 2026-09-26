@@ -23,12 +23,15 @@ import com.muse.meomuneum.location.provider.RegionCoordinateResolver;
 import com.muse.meomuneum.location.provider.ResolvedRegionCode;
 import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
+import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
+import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 
 class LocationResolutionServiceTest {
 
     private RegionCoordinateResolver coordinateResolver;
     private RegionRepository regionRepository;
     private LocationResolutionTokenProvider tokenProvider;
+    private MusicRecordRepository musicRecords;
     private LocationResolutionService service;
     private Region sido;
     private Region sigungu;
@@ -38,7 +41,8 @@ class LocationResolutionServiceTest {
         coordinateResolver = mock(RegionCoordinateResolver.class);
         regionRepository = mock(RegionRepository.class);
         tokenProvider = mock(LocationResolutionTokenProvider.class);
-        service = new LocationResolutionService(coordinateResolver, regionRepository, tokenProvider);
+        musicRecords = mock(MusicRecordRepository.class);
+        service = new LocationResolutionService(coordinateResolver, regionRepository, tokenProvider, musicRecords);
 
         sido = Region.create("41", "경기도", RegionLevel.SIDO, null);
         ReflectionTestUtils.setField(sido, "id", 9L);
@@ -47,18 +51,21 @@ class LocationResolutionServiceTest {
     }
 
     @Test
-    void resolvesActiveRegionsAndIssuesTokenWithoutCoordinatesInResponse() {
+    void resolvesActiveRegionsAndDotBeforeIssuingToken() {
         LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 18.5);
         when(coordinateResolver.resolve(request.latitude(), request.longitude()))
                 .thenReturn(new ResolvedRegionCode("41", "41135"));
         when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO)).thenReturn(Optional.of(sido));
         when(regionRepository.findByCodeAndLevelAndActiveTrue("41135", RegionLevel.SIGUNGU))
                 .thenReturn(Optional.of(sigungu));
-        when(tokenProvider.issue(7L, sido, sigungu)).thenReturn(new IssuedLocationToken("loc_token", 300));
+        when(musicRecords.findNearestLocation(request.latitude(), request.longitude()))
+                .thenReturn(Optional.of(new MusicRecordRepository.MapDotLocation(101L, "DOT-001")));
+        when(tokenProvider.issue(7L, sido, sigungu, 101L))
+                .thenReturn(new IssuedLocationToken("loc_token", 300));
 
         LocationResolveResponse response = service.resolve(7L, request);
 
-        assertThat(response.mapDot()).isNull();
+        assertThat(response.mapDot().mapDotId()).isEqualTo(101L);
         assertThat(response.region().sido().regionId()).isEqualTo(9L);
         assertThat(response.region().sigungu().regionId()).isEqualTo(25L);
         assertThat(response.locationResolutionToken()).isEqualTo("loc_token");
@@ -72,7 +79,23 @@ class LocationResolutionServiceTest {
         assertThatThrownBy(() -> service.resolve(7L, request)).isInstanceOf(LocationException.class)
                 .extracting(exception -> ((LocationException) exception).getErrorCode())
                 .isEqualTo(LocationErrorCode.INVALID_COORDINATES);
-        verifyNoInteractions(coordinateResolver, regionRepository, tokenProvider);
+        verifyNoInteractions(coordinateResolver, regionRepository, tokenProvider, musicRecords);
+    }
+
+    @Test
+    void missingActiveDotReturns404BeforeTokenIssuance() {
+        LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 18.5);
+        when(coordinateResolver.resolve(request.latitude(), request.longitude()))
+                .thenReturn(new ResolvedRegionCode("41", "41135"));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO))
+                .thenReturn(Optional.of(sido));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41135", RegionLevel.SIGUNGU))
+                .thenReturn(Optional.of(sigungu));
+
+        assertThatThrownBy(() -> service.resolve(7L, request))
+                .isInstanceOf(MusicRecordException.class)
+                .hasMessage("map dot not found");
+        verifyNoInteractions(tokenProvider);
     }
 
     @Test
