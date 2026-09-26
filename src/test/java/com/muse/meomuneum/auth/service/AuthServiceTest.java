@@ -45,7 +45,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void loginIssuesStatelessRefreshCookie() {
+    void loginBindsRefreshCookieToAuthenticatedSession() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         HttpHeaders headers = new HttpHeaders();
         User user = createUser();
@@ -59,13 +59,15 @@ class AuthServiceTest {
 
         assertThat(response).isEqualTo(new TokenResponse("access-token", 3600));
         assertThat(request.getSession(false)).isNotNull();
+        assertThat(request.getSession(false).getAttribute("authenticatedUserId")).isEqualTo(1L);
         verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "login-refresh-token");
     }
 
     @Test
-    void refreshUsesSignedCookieWithoutSessionState() {
+    void refreshUsesSignedCookieForMatchingSessionUser() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
+        request.getSession(true).setAttribute("authenticatedUserId", 1L);
         HttpHeaders headers = new HttpHeaders();
         User user = createUser();
         RefreshTokenClaims currentClaims = claims();
@@ -99,22 +101,46 @@ class AuthServiceTest {
     }
 
     @Test
-    void refreshWithoutSessionStillIssuesAccessToken() {
+    void refreshWithoutSessionRejectsSignedRefreshToken() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
         HttpHeaders headers = new HttpHeaders();
-        User user = createUser();
         RefreshTokenClaims currentClaims = claims();
-        RefreshTokenClaims nextClaims = claims();
         when(jwtTokenProvider.parseRefreshToken("current-refresh-token")).thenReturn(currentClaims);
-        when(userAuthenticationService.findActiveUser(1L)).thenReturn(user);
-        when(jwtTokenProvider.createRefreshToken(user)).thenReturn("next-refresh-token");
-        when(jwtTokenProvider.parseRefreshToken("next-refresh-token")).thenReturn(nextClaims);
-        when(jwtTokenProvider.createAccessToken(user)).thenReturn("access-token");
 
-        assertThat(authService.refresh(request, headers))
-                .isEqualTo(new TokenResponse("access-token", 3600));
-        verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "next-refresh-token");
+        assertThatThrownBy(() -> authService.refresh(request, headers))
+                .isInstanceOf(AuthenticationFailedException.class)
+                .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
+                .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
+        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
+    }
+
+    @Test
+    void refreshForDifferentSessionUserDeletesRefreshTokenCookie() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
+        request.getSession(true).setAttribute("authenticatedUserId", 2L);
+        HttpHeaders headers = new HttpHeaders();
+        when(jwtTokenProvider.parseRefreshToken("current-refresh-token")).thenReturn(claims());
+
+        assertThatThrownBy(() -> authService.refresh(request, headers))
+                .isInstanceOf(AuthenticationFailedException.class)
+                .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
+                .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
+
+        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
+    }
+
+    @Test
+    void logoutInvalidatesSession() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession(true).setAttribute("authenticatedUserId", 1L);
+        HttpHeaders headers = new HttpHeaders();
+
+        authService.logout(request, headers);
+
+        assertThat(request.getSession(false)).isNull();
+        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
     }
 
     private RefreshTokenClaims claims() {
@@ -122,6 +148,8 @@ class AuthServiceTest {
     }
 
     private User createUser() {
-        return mock(User.class);
+        User user = mock(User.class);
+        when(user.getId()).thenReturn(1L);
+        return user;
     }
 }

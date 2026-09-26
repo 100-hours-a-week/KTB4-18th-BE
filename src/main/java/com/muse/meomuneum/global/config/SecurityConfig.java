@@ -21,6 +21,7 @@ import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorCode;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
@@ -34,6 +35,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+            UserAuthenticationService userAuthenticationService,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests)
             throws Exception {
         String[] csrfIgnoredPaths = {
@@ -81,7 +83,7 @@ public class SecurityConfig {
                             errorResponseWriter.write(request, response, code);
                         }))
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter),
+                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

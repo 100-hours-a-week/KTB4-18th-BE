@@ -1,6 +1,5 @@
 package com.muse.meomuneum.auth.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -107,12 +106,11 @@ class AuthControllerTest {
     }
 
     @Test
-    void logoutKeepsCsrfSessionAndReturnsNoContent() throws Exception {
+    void logoutPassesRequestAndReturnsNoContent() throws Exception {
         MockHttpSession session = new MockHttpSession();
 
         mockMvc.perform(post("/api/v1/auth/logout").session(session)).andExpect(status().isNoContent());
 
-        assertThat(session.isInvalid()).isFalse();
-        verify(authService).logout(any(HttpHeaders.class));
+        verify(authService).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
     }
 }

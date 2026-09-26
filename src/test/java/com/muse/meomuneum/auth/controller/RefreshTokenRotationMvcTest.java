@@ -57,8 +57,9 @@ class RefreshTokenRotationMvcTest {
     }
 
     @Test
-    void refreshAcceptsValidSignedTokenWithoutSessionRotation() throws Exception {
+    void refreshAcceptsValidSignedTokenForMatchingSessionUser() throws Exception {
         MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticatedUserId", 1L);
         String currentRefreshToken = registerRefreshToken(session);
 
         MvcResult success = mockMvc.perform(post("/api/v1/auth/token/refresh")
@@ -85,28 +86,28 @@ class RefreshTokenRotationMvcTest {
     }
 
     @Test
-    void refreshWithoutSessionAcceptsSignedRefreshToken() throws Exception {
+    void refreshWithoutSessionRejectsSignedRefreshToken() throws Exception {
         String refreshToken = registerRefreshToken(new MockHttpSession());
 
         MvcResult success = mockMvc.perform(post("/api/v1/auth/token/refresh")
                 .cookie(new Cookie("refresh_token", refreshToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("token refreshed"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("invalid refresh token"))
                 .andReturn();
 
         assertThat(success.getResponse().getHeader(HttpHeaders.SET_COOKIE))
-                .contains("refresh_token=", "Path=/api/v1/auth");
+                .contains("refresh_token=", "Max-Age=0");
     }
 
     @Test
-    void logoutPreservesCsrfSessionAndDeletesRefreshTokenCookie() throws Exception {
+    void logoutInvalidatesSessionAndDeletesRefreshTokenCookie() throws Exception {
         MockHttpSession session = new MockHttpSession();
 
         MvcResult result = mockMvc.perform(post("/api/v1/auth/logout").session(session))
                 .andExpect(status().isNoContent())
                 .andReturn();
 
-        assertThat(session.isInvalid()).isFalse();
+        assertThat(session.isInvalid()).isTrue();
         assertThat(result.getResponse().getHeader(HttpHeaders.SET_COOKIE))
                 .contains("refresh_token=", "Max-Age=0");
     }

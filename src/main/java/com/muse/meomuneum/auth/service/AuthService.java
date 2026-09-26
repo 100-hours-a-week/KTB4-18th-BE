@@ -3,6 +3,7 @@ package com.muse.meomuneum.auth.service;
 import java.util.Arrays;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +25,7 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 public class AuthService {
 
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refresh_token";
+    private static final String AUTHENTICATED_USER_ID_ATTRIBUTE = "authenticatedUserId";
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final JwtTokenProvider jwtTokenProvider;
@@ -42,8 +44,9 @@ public class AuthService {
 
     public TokenResponse login(LoginRequest request, HttpServletRequest servletRequest, HttpHeaders headers) {
         User user = userAuthenticationService.authenticate(request.email(), request.password());
-        servletRequest.getSession(true);
+        HttpSession session = servletRequest.getSession(true);
         servletRequest.changeSessionId();
+        session.setAttribute(AUTHENTICATED_USER_ID_ATTRIBUTE, user.getId());
         TokenResponse response = issueTokens(user, headers);
         log.info(
                 "event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
@@ -58,6 +61,7 @@ public class AuthService {
         try {
             String refreshToken = getRefreshToken(request);
             var currentClaims = jwtTokenProvider.parseRefreshToken(refreshToken);
+            requireSessionUser(request, currentClaims.userId());
             User user = userAuthenticationService.findActiveUser(currentClaims.userId());
             return issueTokens(user, headers);
         } catch (AuthenticationFailedException exception) {
@@ -66,7 +70,11 @@ public class AuthService {
         }
     }
 
-    public void logout(HttpHeaders headers) {
+    public void logout(HttpServletRequest request, HttpHeaders headers) {
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
         refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
     }
 
@@ -89,5 +97,12 @@ public class AuthService {
                 .findFirst()
                 .filter(value -> !value.isBlank())
                 .orElseThrow(() -> new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN));
+    }
+
+    private void requireSessionUser(HttpServletRequest request, Long userId) {
+        HttpSession session = request.getSession(false);
+        if (session == null || !userId.equals(session.getAttribute(AUTHENTICATED_USER_ID_ATTRIBUTE))) {
+            throw new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
+        }
     }
 }
