@@ -6,7 +6,7 @@ HELP.md
 
 # Local design and test documents are not part of feature commits.
 /docs/
-/*.md
+*.md
 !/README.md
 .gradle
 build/
