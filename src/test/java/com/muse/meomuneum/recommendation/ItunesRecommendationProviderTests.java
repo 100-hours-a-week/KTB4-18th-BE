@@ -8,13 +8,13 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
+import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.sun.net.httpserver.HttpServer;
 
 import tools.jackson.databind.ObjectMapper;
@@ -57,7 +57,7 @@ class ItunesRecommendationProviderTests {
         server.start();
 
         var provider = new ItunesRecommendationProvider(new ObjectMapper(), searchUrl(), "US", Duration.ofSeconds(2));
-        var tracks = provider.recommend(List.of("비 오는 밤", "드라이브"));
+        var tracks = provider.recommend(command("비 오는 밤 드라이브"));
 
         assertEquals(2, tracks.size());
         assertEquals("101", tracks.get(0).externalId());
@@ -76,7 +76,7 @@ class ItunesRecommendationProviderTests {
 
         var provider = new ItunesRecommendationProvider(new ObjectMapper(), searchUrl(), "US", Duration.ofSeconds(2));
         RecommendationException error = assertThrows(RecommendationException.class,
-                () -> provider.recommend(List.of("노래")));
+                () -> provider.recommend(command("노래")));
         assertEquals(503, error.getStatus());
     }
 
@@ -96,11 +96,15 @@ class ItunesRecommendationProviderTests {
 
         var provider = new ItunesRecommendationProvider(new ObjectMapper(), searchUrl(), "US", Duration.ofMillis(100));
         RecommendationException error = assertThrows(RecommendationException.class,
-                () -> provider.recommend(List.of("노래")));
+                () -> provider.recommend(command("노래")));
         assertEquals(504, error.getStatus());
     }
 
     private String searchUrl() {
         return "http://127.0.0.1:" + server.getAddress().getPort() + "/search";
+    }
+
+    private RecommendationCommand command(String message) {
+        return new RecommendationCommand(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), message);
     }
 }

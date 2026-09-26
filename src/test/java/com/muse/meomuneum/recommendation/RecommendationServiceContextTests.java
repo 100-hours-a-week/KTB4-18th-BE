@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
+import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 import com.muse.meomuneum.recommendation.service.RecommendationService;
@@ -41,7 +42,7 @@ class RecommendationServiceContextTests {
     @BeforeEach
     void setUp() {
         service = new RecommendationService(provider, repository, new SimpleMeterRegistry());
-        when(provider.recommend(anyList())).thenReturn(tracks());
+        when(provider.recommend(any())).thenReturn(tracks());
         when(repository.saveCompleted(any(), any(), any(), anyList()))
                 .thenReturn(new RecommendationResponse(1, "COMPLETED", CONVERSATION_KEY, List.of(), Instant.now()));
     }
@@ -54,11 +55,13 @@ class RecommendationServiceContextTests {
 
         service.create(request("current"), "guest", null);
 
-        var prompts = ArgumentCaptor.forClass(List.class);
-        verify(provider).recommend(prompts.capture());
-        assertEquals(List.of("history-2", "history-3", "history-4", "history-5", "history-6", "history-7", "history-8",
-                "history-9", "history-10", "history-11", "current"), prompts.getValue());
-        assertTrue(String.join(" ", prompts.getValue()).length() <= 250);
+        var command = ArgumentCaptor.forClass(RecommendationCommand.class);
+        verify(provider).recommend(command.capture());
+        assertEquals(String.join("\n", List.of("history-2", "history-3", "history-4", "history-5", "history-6",
+                "history-7", "history-8", "history-9", "history-10", "history-11", "current")),
+                command.getValue().message());
+        assertTrue(command.getValue().message().length() <= 200);
+        assertEquals(java.util.UUID.fromString(CONVERSATION_KEY), command.getValue().threadId());
         verify(repository).findRecentPrompts(CONVERSATION_KEY, "guest", null, 10);
     }
 
@@ -66,9 +69,9 @@ class RecommendationServiceContextTests {
     void skipsHistoryQueryWhenCurrentPromptFillsContext() {
         service.create(request("a".repeat(300)), "guest", null);
 
-        var prompts = ArgumentCaptor.forClass(List.class);
-        verify(provider).recommend(prompts.capture());
-        assertEquals(List.of("a".repeat(250)), prompts.getValue());
+        var command = ArgumentCaptor.forClass(RecommendationCommand.class);
+        verify(provider).recommend(command.capture());
+        assertEquals("a".repeat(200), command.getValue().message());
         verify(repository, never()).findRecentPrompts(any(), any(), any(), anyInt());
     }
 

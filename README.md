@@ -201,19 +201,27 @@ membership 종료를 되돌리지 않습니다.
 
 `POST /api/v1/recommendations`는 `TEXT`와 STT 전사문인 `VOICE`를 같은 경로로 처리합니다.
 같은 소유자의 `conversation_key`에 속한 완료된 이전 요청의 `prompt`를 읽고,
-각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다.
-AI 팀 연동 전에는 이 문장들을 합쳐 iTunes Search API에서 직접 검색합니다.
-이 임시 검색은 감정·상황을 AI로 해석하지 않으며 긴 대화는 최근 250자만 검색어로 사용합니다.
+각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다. AI 내부 계약의
+`message` 길이에 맞춰 현재 입력을 우선한 최근 200자를 `POST /v1/chat/messages`에 전달하며,
+`conversation_key`를 `thread_id`로 사용하고 요청마다 `request_id`를 생성합니다.
+
+추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택합니다. 기본값 `itunes`는 개발용 직접 검색이고,
+운영 프로필 기본값 `ai`는 AI 서버가 반환한 iTunes 곡 정보를 서비스 음악 모델로 변환합니다.
+AI 서버 주소와 선택적 Bearer 인증, 연결·읽기 제한 시간은 각각
+`RECOMMENDATION_AI_BASE_URL`, `RECOMMENDATION_AI_AUTH_TOKEN`,
+`RECOMMENDATION_AI_CONNECT_TIMEOUT`, `RECOMMENDATION_AI_READ_TIMEOUT`으로 주입합니다.
 
 검색에서 중복을 제거한 1~5곡을 얻으면 모두 저장한 뒤 `201 Created`와
-`COMPLETED` 응답으로 반환합니다. 0곡 또는 iTunes 장애는 `503 Service Unavailable`,
+`COMPLETED` 응답으로 반환합니다. 0곡이면 완료 세션을 저장하지 않고 다른 조건을 요청하는 안내와
+`503 Service Unavailable`을 반환합니다. AI 또는 iTunes 장애는 `502` 또는 `503`,
 요청 제한 시간 초과는 `504 Gateway Timeout`으로 반환합니다. DB 저장 실패는
 `500 Internal Server Error`이며 부분 저장은 트랜잭션으로 롤백합니다.
 기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
 기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
 실제 API 확인 시 `KR` 스토어는 검색 결과가 없었고 `US` 스토어에서는 한국어 곡도 검색됐습니다.
 측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
-각각 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다.
+각각 선택된 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다. 인증 정보,
+AI 내부 오류 본문과 사용자의 전체 입력 문장은 로그에 기록하지 않습니다.
 첫 추천 결과는 POST 응답으로 받고, GET은 저장된 결과 재조회에 사용합니다.
 
 ## 음성 전사 기능

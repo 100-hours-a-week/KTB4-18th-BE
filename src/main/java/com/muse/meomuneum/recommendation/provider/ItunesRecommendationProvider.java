@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.recommendation.dto.TrackData;
@@ -26,6 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** AI 팀 연동 전에는 대화의 입력 문장을 iTunes에서 직접 검색합니다. */
 @Component
+@ConditionalOnProperty(prefix = "recommendation", name = "provider", havingValue = "itunes", matchIfMissing = true)
 public class ItunesRecommendationProvider implements RecommendationProvider {
     private final ObjectMapper mapper;
     private final HttpClient client;
@@ -45,8 +47,8 @@ public class ItunesRecommendationProvider implements RecommendationProvider {
     }
 
     @Override
-    public List<TrackData> recommend(List<String> prompts) {
-        String query = String.join(" ", prompts).trim();
+    public List<TrackData> recommend(RecommendationCommand command) {
+        String query = command.message().trim();
         if (query.isEmpty()) {
             return List.of();
         }

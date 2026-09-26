@@ -5,5 +5,9 @@ import java.util.List;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 
 public interface RecommendationProvider {
-    List<TrackData> recommend(List<String> prompts);
+    List<TrackData> recommend(RecommendationCommand command);
+
+    default String providerName() {
+        return getClass().getSimpleName();
+    }
 }
