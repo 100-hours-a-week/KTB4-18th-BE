@@ -1,10 +1,12 @@
 package com.muse.meomuneum.user.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.RefreshTokenClaims;
@@ -32,6 +34,22 @@ class JwtTokenProviderTest {
 
         assertThat(claims.userId()).isEqualTo(1L);
         assertThat(claims.expiresAt()).isAfter(java.time.Instant.now());
+    }
+
+    @Test
+    void rejectsRefreshTokenAtAccessTokenBoundary() {
+        JwtTokenProvider tokenProvider = createTokenProvider();
+
+        assertThatThrownBy(() -> tokenProvider.parseAccessToken(tokenProvider.createRefreshToken(createUser())))
+                .isInstanceOf(AuthenticationFailedException.class);
+    }
+
+    @Test
+    void rejectsAccessTokenAtRefreshTokenBoundary() {
+        JwtTokenProvider tokenProvider = createTokenProvider();
+
+        assertThatThrownBy(() -> tokenProvider.parseRefreshToken(tokenProvider.createAccessToken(createUser())))
+                .isInstanceOf(AuthenticationFailedException.class);
     }
 
     private JwtTokenProvider createTokenProvider() {

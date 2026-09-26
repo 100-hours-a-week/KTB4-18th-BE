@@ -3,6 +3,8 @@ package com.muse.meomuneum.user.account.service;
 import java.time.Clock;
 import java.time.LocalDateTime;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -19,6 +21,8 @@ public class UserAccountService {
 
     private static final String INVALID_CREDENTIALS = "AUTH_401";
     private static final String PASSWORD_RECENT = "USER_PASSWORD_RECENT";
+    private static final String PASSWORD_RECENT_MESSAGE = "최근 1년 내 변경된 비밀번호입니다.";
+    private static final Logger log = LoggerFactory.getLogger(UserAccountService.class);
 
     private final Clock clock;
     private final PasswordEncoder passwordEncoder;
@@ -51,11 +55,15 @@ public class UserAccountService {
     @Transactional
     public void changePassword(Long userId, String currentPassword, String newPassword) {
         User user = findActiveUserForUpdate(userId);
-        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
-            throw invalidCredentials();
+        boolean currentPasswordMatches = passwordEncoder.matches(currentPassword, user.getPasswordHash());
+        boolean newPasswordMatches = passwordEncoder.matches(newPassword, user.getPasswordHash());
+        if (!currentPasswordMatches) {
+            logPasswordChangeRejection("current_password_mismatch");
+            throw passwordRecent();
         }
-        if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
-            throw new UserAccountException(PASSWORD_RECENT, HttpStatus.BAD_REQUEST, "최근 1년 내 변경된 비밀번호입니다.");
+        if (newPasswordMatches) {
+            logPasswordChangeRejection("new_password_matches_current");
+            throw passwordRecent();
         }
         user.updatePassword(passwordEncoder.encode(newPassword), now());
     }
@@ -79,6 +87,14 @@ public class UserAccountService {
 
     private UserAccountException invalidCredentials() {
         return new UserAccountException(INVALID_CREDENTIALS, HttpStatus.UNAUTHORIZED, "invalid credentials");
+    }
+
+    private UserAccountException passwordRecent() {
+        return new UserAccountException(PASSWORD_RECENT, HttpStatus.BAD_REQUEST, PASSWORD_RECENT_MESSAGE);
+    }
+
+    private void logPasswordChangeRejection(String reason) {
+        log.warn("event=user_password_change_rejected reason={}", reason);
     }
 
     private LocalDateTime now() {

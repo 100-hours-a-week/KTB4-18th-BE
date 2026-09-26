@@ -29,6 +29,7 @@ import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = ChatRoomController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
@@ -90,6 +91,13 @@ class ChatRoomSecurityIntegrationTest {
         @Bean
         ChatRoomEntryService chatRoomEntryService() {
             return mock(ChatRoomEntryService.class);
+        }
+
+        @Bean
+        UserAuthenticationService userAuthenticationService() {
+            UserAuthenticationService service = mock(UserAuthenticationService.class);
+            when(service.findActiveUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(mock(User.class));
+            return service;
         }
     }
 }
