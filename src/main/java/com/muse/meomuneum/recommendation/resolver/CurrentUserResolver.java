@@ -13,7 +13,9 @@ public class CurrentUserResolver {
         if (authentication == null || authentication instanceof AnonymousAuthenticationToken) {
             return null;
         }
-        // 로그인 구현 후 검증된 Authentication의 principal에서 실제 users.id를 반환하세요.
-        throw new RecommendationException(503, "로그인 사용자 연결이 아직 구현되지 않았습니다.");
+        if (authentication.getPrincipal() instanceof Long userId) {
+            return userId;
+        }
+        throw new RecommendationException(503, "로그인 사용자 연결을 확인할 수 없습니다.");
     }
 }
