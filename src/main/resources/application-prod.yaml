@@ -1,3 +1,7 @@
+speech:
+  transcription:
+    provider: ${SPEECH_TRANSCRIPTION_PROVIDER:ai}
+
 spring:
   datasource:
     url: ${PROD_DB_URL}
