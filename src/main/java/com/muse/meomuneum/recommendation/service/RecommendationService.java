@@ -1,8 +1,14 @@
 package com.muse.meomuneum.recommendation.service;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayDeque;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 import org.springframework.stereotype.Service;
@@ -10,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
+import com.muse.meomuneum.recommendation.dto.response.RecommendationHistoryResponse;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
@@ -22,6 +29,7 @@ import io.micrometer.core.instrument.Timer;
 public class RecommendationService {
     private static final int MAX_CONTEXT_LENGTH = 250;
     private static final int MAX_HISTORY_COUNT = 10;
+    private static final int HISTORY_PAGE_SIZE = 20;
 
     private final RecommendationProvider provider;
     private final RecommendationRepository repository;
@@ -119,5 +127,70 @@ public class RecommendationService {
         }
         return new RecommendationResponse(id, saved.status(), saved.conversationKey(), repository.findItems(id),
                 saved.completedAt());
+    }
+
+    @Transactional(readOnly = true)
+    public RecommendationHistoryResponse listHistory(long userId, String cursor, Integer size) {
+        int pageSize = size == null ? HISTORY_PAGE_SIZE : Math.min(Math.max(size, 1), HISTORY_PAGE_SIZE);
+        HistoryCursor position = decodeHistoryCursor(cursor);
+        List<RecommendationRepository.HistorySession> rows = repository.findCompletedSessions(userId,
+                position.completedAt(), position.id(), pageSize + 1);
+        boolean hasNext = rows.size() > pageSize;
+        List<RecommendationRepository.HistorySession> sessions = hasNext
+                ? List.copyOf(rows.subList(0, pageSize))
+                : List.copyOf(rows);
+        Map<Long, List<RecommendationHistoryResponse.Item>> itemsBySession = itemsBySession(sessions);
+        Map<String, List<RecommendationHistoryResponse.Recommendation>> byDate = new LinkedHashMap<>();
+        for (RecommendationRepository.HistorySession session : sessions) {
+            String date = session.completedAt().atZone(ZoneOffset.UTC).toLocalDate().toString();
+            byDate.computeIfAbsent(date, ignored -> new java.util.ArrayList<>()).add(
+                    new RecommendationHistoryResponse.Recommendation(session.id(), session.status(),
+                            itemsBySession.getOrDefault(session.id(), List.of())));
+        }
+        List<RecommendationHistoryResponse.Group> groups = byDate.entrySet().stream()
+                .map(entry -> new RecommendationHistoryResponse.Group(entry.getKey(), List.copyOf(entry.getValue())))
+                .toList();
+        String nextCursor = hasNext ? encodeHistoryCursor(sessions.getLast()) : null;
+        return new RecommendationHistoryResponse(groups, nextCursor, hasNext);
+    }
+
+    private Map<Long, List<RecommendationHistoryResponse.Item>> itemsBySession(
+            List<RecommendationRepository.HistorySession> sessions) {
+        List<Long> ids = sessions.stream().map(RecommendationRepository.HistorySession::id).toList();
+        Map<Long, List<RecommendationHistoryResponse.Item>> result = new LinkedHashMap<>();
+        for (RecommendationRepository.HistoryItem item : repository.findHistoryItems(ids)) {
+            result.computeIfAbsent(item.recommendationId(), ignored -> new java.util.ArrayList<>())
+                    .add(new RecommendationHistoryResponse.Item(item.rankNo(), item.musicId(), item.title(),
+                            item.artistName()));
+        }
+        result.replaceAll((id, items) -> List.copyOf(items));
+        return result;
+    }
+
+    private String encodeHistoryCursor(RecommendationRepository.HistorySession session) {
+        String value = session.completedAt() + ":" + session.id();
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private HistoryCursor decodeHistoryCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return new HistoryCursor(null, Long.MAX_VALUE);
+        }
+        try {
+            String[] parts = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8).split(":");
+            if (parts.length != 4) {
+                throw new IllegalArgumentException("invalid cursor");
+            }
+            long id = Long.parseLong(parts[3]);
+            if (id <= 0) {
+                throw new IllegalArgumentException("invalid cursor");
+            }
+            return new HistoryCursor(Instant.parse(parts[0] + ":" + parts[1] + ":" + parts[2]), id);
+        } catch (Exception exception) {
+            throw new RecommendationException(400, "invalid cursor");
+        }
+    }
+
+    private record HistoryCursor(Instant completedAt, long id) {
     }
 }
