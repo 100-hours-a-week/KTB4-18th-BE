@@ -9,8 +9,9 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.muse.meomuneum.recommendation.controller.RecommendationController;
+import com.muse.meomuneum.recommendation.controller.UserRecommendationController;
 
-@RestControllerAdvice(assignableTypes = RecommendationController.class)
+@RestControllerAdvice(assignableTypes = {RecommendationController.class, UserRecommendationController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class RecommendationExceptionHandler {
     @ExceptionHandler(RecommendationException.class)

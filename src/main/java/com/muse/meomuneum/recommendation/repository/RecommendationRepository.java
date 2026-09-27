@@ -3,6 +3,7 @@ package com.muse.meomuneum.recommendation.repository;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -130,7 +131,54 @@ public class RecommendationRepository {
                 id);
     }
 
+    public List<HistorySession> findCompletedSessions(long userId, Instant completedAt, long id, int size) {
+        if (completedAt == null) {
+            return jdbc.query("""
+                    SELECT id, status, completed_at
+                    FROM recommendation_sessions
+                    WHERE user_id = ? AND status = 'COMPLETED' AND completed_at IS NOT NULL
+                    ORDER BY completed_at DESC, id DESC
+                    LIMIT ?
+                    """, (row, index) -> historySession(row.getLong("id"), row.getString("status"),
+                    row.getTimestamp("completed_at")), userId, size);
+        }
+        Timestamp timestamp = Timestamp.from(completedAt);
+        return jdbc.query("""
+                SELECT id, status, completed_at
+                FROM recommendation_sessions
+                WHERE user_id = ? AND status = 'COMPLETED' AND completed_at IS NOT NULL
+                    AND (completed_at < ? OR (completed_at = ? AND id < ?))
+                ORDER BY completed_at DESC, id DESC
+                LIMIT ?
+                """, (row, index) -> historySession(row.getLong("id"), row.getString("status"),
+                row.getTimestamp("completed_at")), userId, timestamp, timestamp, id, size);
+    }
+
+    public List<HistoryItem> findHistoryItems(List<Long> sessionIds) {
+        if (sessionIds.isEmpty()) {
+            return List.of();
+        }
+        String markers = String.join(",", Collections.nCopies(sessionIds.size(), "?"));
+        String sql = "SELECT i.recommendation_session_id, i.rank_no, m.id, m.title, m.artist_name "
+                + "FROM recommendation_items i JOIN music m ON m.id = i.music_id "
+                + "WHERE i.recommendation_session_id IN (" + markers + ") "
+                + "ORDER BY i.recommendation_session_id DESC, i.rank_no ASC";
+        return jdbc.query(sql, (row, index) -> new HistoryItem(row.getLong("recommendation_session_id"),
+                row.getInt("rank_no"), row.getLong("id"), row.getString("title"), row.getString("artist_name")),
+                sessionIds.toArray());
+    }
+
+    private HistorySession historySession(long id, String status, Timestamp completedAt) {
+        return new HistorySession(id, status, completedAt.toInstant());
+    }
+
     public record SavedSession(long id, Long userId, String guestSessionId, String status, String conversationKey,
             Instant completedAt) {
+    }
+
+    public record HistorySession(long id, String status, Instant completedAt) {
+    }
+
+    public record HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName) {
     }
 }

@@ -1,6 +1,7 @@
 package com.muse.meomuneum.global.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -35,6 +36,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -51,13 +53,15 @@ class JwtAuthenticationFilterTest {
     private JwtTokenProvider jwtTokenProvider;
     private FilterChain filterChain;
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    private UserAuthenticationService userAuthenticationService;
 
     @BeforeEach
     void setUp() {
         jwtTokenProvider = mock(JwtTokenProvider.class);
         filterChain = mock(FilterChain.class);
+        userAuthenticationService = mock(UserAuthenticationService.class);
         jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtTokenProvider,
-                new SecurityErrorResponseWriter(objectMapper));
+                new SecurityErrorResponseWriter(objectMapper), userAuthenticationService);
     }
 
     @AfterEach
@@ -126,7 +130,7 @@ class JwtAuthenticationFilterTest {
                 new JwtProperties("project-api", "project-api", JWT_SECRET, 3600, 1209600));
         String expiredToken = createExpiredAccessToken();
         jwtAuthenticationFilter = new JwtAuthenticationFilter(actualTokenProvider,
-                new SecurityErrorResponseWriter(objectMapper));
+                new SecurityErrorResponseWriter(objectMapper), userAuthenticationService);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/users/me");
         request.addHeader("Authorization", "Bearer " + expiredToken);
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -154,6 +158,36 @@ class JwtAuthenticationFilterTest {
         jwtAuthenticationFilter.doFilter(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);
+        verify(userAuthenticationService).findActiveUser(1L);
+    }
+
+    @Test
+    void rejectsDeletedUserTokenWithoutCallingFilterChain() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/users/me");
+        request.addHeader("Authorization", "Bearer deleted-user-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(jwtTokenProvider.parseAccessToken("deleted-user-token")).thenReturn(new TokenClaims(1L, List.of("USER")));
+        when(userAuthenticationService.findActiveUser(1L))
+                .thenThrow(new AuthenticationFailedException(SecurityErrorCode.ACCESS_UNAUTHORIZED));
+
+        jwtAuthenticationFilter.doFilter(request, response, filterChain);
+
+        assertUnauthorizedResponse(response);
+        verifyNoInteractions(filterChain);
+    }
+
+    @Test
+    void propagatesUnexpectedActiveUserLookupFailure() {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/users/me");
+        request.addHeader("Authorization", "Bearer valid-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(jwtTokenProvider.parseAccessToken("valid-token")).thenReturn(new TokenClaims(1L, List.of("USER")));
+        when(userAuthenticationService.findActiveUser(1L)).thenThrow(new IllegalStateException("database unavailable"));
+
+        assertThatThrownBy(() -> jwtAuthenticationFilter.doFilter(request, response, filterChain))
+                .isInstanceOf(IllegalStateException.class).hasMessage("database unavailable");
+
+        verifyNoInteractions(filterChain);
     }
 
     @ParameterizedTest
@@ -189,7 +223,7 @@ class JwtAuthenticationFilterTest {
         Instant now = Instant.now();
         JWTClaimsSet claims = new JWTClaimsSet.Builder().issuer("project-api").audience("project-api").subject("1")
                 .issueTime(Date.from(now.minusSeconds(240))).expirationTime(Date.from(now.minusSeconds(120)))
-                .jwtID("expired-access-token").claim("type", "ACCESS").claim("roles", List.of("USER")).build();
+                .jwtID("expired-access-token").claim("typ", "access").claim("roles", List.of("USER")).build();
         SignedJWT signedJwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims);
         signedJwt.sign(new MACSigner(JWT_SECRET.getBytes(StandardCharsets.UTF_8)));
         return signedJwt.serialize();

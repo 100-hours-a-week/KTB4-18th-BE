@@ -32,8 +32,9 @@ import com.nimbusds.jose.proc.SecurityContext;
 @Component
 public class JwtTokenProvider {
 
-    private static final String ACCESS_TOKEN_TYPE = "ACCESS";
-    private static final String REFRESH_TOKEN_TYPE = "REFRESH";
+    private static final String ACCESS_TOKEN_TYPE = "access";
+    private static final String REFRESH_TOKEN_TYPE = "refresh";
+    private static final String TOKEN_TYPE_CLAIM = "typ";
 
     private final JwtDecoder jwtDecoder;
     private final JwtEncoder jwtEncoder;
@@ -73,7 +74,8 @@ public class JwtTokenProvider {
         Instant issuedAt = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder().issuer(jwtProperties.issuer()).subject(user.getId().toString())
                 .audience(List.of(jwtProperties.audience())).issuedAt(issuedAt)
-                .expiresAt(issuedAt.plusSeconds(expirationSeconds)).id(UUID.randomUUID().toString()).claim("type", type)
+                .expiresAt(issuedAt.plusSeconds(expirationSeconds)).id(UUID.randomUUID().toString())
+                .claim(TOKEN_TYPE_CLAIM, type)
                 .claim("roles", List.of(user.getRole().name())).build();
 
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
@@ -84,7 +86,7 @@ public class JwtTokenProvider {
         try {
             Jwt jwt = jwtDecoder.decode(token);
             boolean hasExpectedAudience = jwt.getAudience().contains(jwtProperties.audience());
-            boolean hasExpectedType = expectedType.equals(jwt.getClaimAsString("type"));
+            boolean hasExpectedType = expectedType.equals(jwt.getClaimAsString(TOKEN_TYPE_CLAIM));
             if (!hasExpectedAudience || !hasExpectedType) {
                 throw new AuthenticationFailedException(errorCode);
             }
