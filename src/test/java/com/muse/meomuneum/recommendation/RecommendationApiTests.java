@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -53,7 +53,7 @@ class RecommendationApiTests {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        when(provider.recommend(anyList()))
+        when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "1", "song 1", "artist", null, null),
                         new TrackData("ITUNES", "2", "song 2", "artist", null, null),
                         new TrackData("ITUNES", "3", "song 3", "artist", null, null),
@@ -87,7 +87,7 @@ class RecommendationApiTests {
 
     @Test
     void returnsPartialResultsAndPassesPreviousPromptsToProvider() throws Exception {
-        when(provider.recommend(anyList()))
+        when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "partial-1", "song", "artist", null, null)));
         var session = new MockHttpSession();
         mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
@@ -98,9 +98,10 @@ class RecommendationApiTests {
                 .andExpect(jsonPath("$.data.items.length()").value(1));
         assertEquals("VOICE", jdbc.queryForObject("SELECT input_type FROM recommendation_sessions WHERE id = ?",
                 String.class, findRecommendationId(session)));
-        var prompts = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
-        verify(provider, times(2)).recommend(prompts.capture());
-        assertEquals(java.util.List.of("비 오는 밤", "드라이브"), prompts.getAllValues().get(1));
+        var commands = org.mockito.ArgumentCaptor
+                .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
+        verify(provider, times(2)).recommend(commands.capture());
+        assertEquals("비 오는 밤\n드라이브", commands.getAllValues().get(1).message());
     }
 
     @Test
@@ -119,11 +120,13 @@ class RecommendationApiTests {
         mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
                 .content(body("current"))).andExpect(status().isCreated());
 
-        var prompts = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
-        verify(provider).recommend(prompts.capture());
-        assertEquals(java.util.List.of("history-2", "history-3", "history-4", "history-5", "history-6", "history-7",
-                "history-8", "history-9", "history-10", "history-11", "current"), prompts.getValue());
-        assertTrue(String.join(" ", prompts.getValue()).length() <= 250);
+        var command = org.mockito.ArgumentCaptor
+                .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
+        verify(provider).recommend(command.capture());
+        assertEquals(String.join("\n", java.util.List.of("history-2", "history-3", "history-4", "history-5",
+                "history-6", "history-7", "history-8", "history-9", "history-10", "history-11", "current")),
+                command.getValue().message());
+        assertTrue(command.getValue().message().length() <= 200);
     }
 
     @Test
@@ -139,18 +142,30 @@ class RecommendationApiTests {
         mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
                 .content(body("a".repeat(300)))).andExpect(status().isCreated());
 
-        var prompts = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
-        verify(provider).recommend(prompts.capture());
-        assertEquals(java.util.List.of("a".repeat(250)), prompts.getValue());
+        var command = org.mockito.ArgumentCaptor
+                .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
+        verify(provider).recommend(command.capture());
+        assertEquals("a".repeat(200), command.getValue().message());
     }
 
     @Test
     void emptySearchReturns503WithoutSavingSession() throws Exception {
-        when(provider.recommend(anyList())).thenReturn(java.util.List.of());
+        when(provider.recommend(any())).thenReturn(java.util.List.of());
         int before = count("recommendation_sessions");
         mvc.perform(post("/api/v1/recommendations").contentType("application/json").content(body("없는 음악")))
-                .andExpect(status().isServiceUnavailable());
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").value("조건에 맞는 추천곡을 찾지 못했습니다. 다른 조건으로 다시 요청해 주세요."));
         assertEquals(before, count("recommendation_sessions"));
+    }
+
+    @Test
+    void savesPartialRecommendationResult() throws Exception {
+        when(provider.recommend(any()))
+                .thenReturn(java.util.List.of(new TrackData("ITUNES", "partial-1", "song", "artist", null, null)));
+
+        mvc.perform(post("/api/v1/recommendations").contentType("application/json").content(body("한 곡만")))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.status").value("COMPLETED"));
     }
 
     @Test
@@ -203,7 +218,7 @@ class RecommendationApiTests {
         String uniqueId = java.util.UUID.randomUUID().toString();
         var good = new TrackData("ITUNES", uniqueId, "test", "test", null, null);
         var bad = new TrackData("ITUNES", uniqueId + "-bad", null, "test", null, null);
-        RecommendationProvider broken = prompts -> java.util.List.of(good, bad,
+        RecommendationProvider broken = command -> java.util.List.of(good, bad,
                 new TrackData("ITUNES", "3", "test", "test", null, null),
                 new TrackData("ITUNES", "4", "test", "test", null, null),
                 new TrackData("ITUNES", "5", "test", "test", null, null));

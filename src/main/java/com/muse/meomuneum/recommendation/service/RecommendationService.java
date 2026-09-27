@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +13,7 @@ import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
+import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 
@@ -20,7 +22,7 @@ import io.micrometer.core.instrument.Timer;
 
 @Service
 public class RecommendationService {
-    private static final int MAX_CONTEXT_LENGTH = 250;
+    private static final int MAX_CONTEXT_LENGTH = 200;
     private static final int MAX_HISTORY_COUNT = 10;
 
     private final RecommendationProvider provider;
@@ -43,7 +45,9 @@ public class RecommendationService {
             String providerOutcome = "failure";
             List<TrackData> tracks;
             try {
-                tracks = provider.recommend(prompts);
+                var command = new RecommendationCommand(UUID.fromString(request.conversation_key()),
+                        UUID.randomUUID(), String.join("\n", prompts));
+                tracks = provider.recommend(command);
                 providerOutcome = "success";
             } catch (RecommendationException exception) {
                 if (exception.getStatus() == 504) {
@@ -51,14 +55,14 @@ public class RecommendationService {
                 }
                 throw exception;
             } finally {
-                providerTimer.stop(Timer.builder("recommendation.provider.duration").tag("provider", "itunes")
+                providerTimer.stop(Timer.builder("recommendation.provider.duration").tag("provider", providerName())
                         .tag("outcome", providerOutcome).register(meterRegistry));
             }
             if (tracks.isEmpty() || tracks.size() > 5
                     || tracks.stream().map(t -> t.provider() + ":" + t.externalId()).distinct().count() != tracks.size()
                     || tracks.stream().map(t -> (t.artistName() + ":" + t.title()).trim().toLowerCase(Locale.ROOT))
                             .distinct().count() != tracks.size()) {
-                throw new RecommendationException(503, "추천 결과를 확보하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                throw new RecommendationException(503, "조건에 맞는 추천곡을 찾지 못했습니다. 다른 조건으로 다시 요청해 주세요.");
             }
             var result = repository.saveCompleted(request, guestSessionId, userId, tracks);
             outcome = "success";
@@ -106,6 +110,11 @@ public class RecommendationService {
 
     private String takeLast(String value, int maxLength) {
         return value.length() <= maxLength ? value : value.substring(value.length() - maxLength);
+    }
+
+    private String providerName() {
+        String name = provider.providerName();
+        return name == null || name.isBlank() ? "unknown" : name;
     }
 
     @Transactional(readOnly = true)
