@@ -28,6 +28,7 @@ import com.muse.meomuneum.location.dto.LocationResolveResponse.RegionSummaryPair
 import com.muse.meomuneum.location.service.LocationResolutionService;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = LocationController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
@@ -96,6 +97,13 @@ class LocationSecurityIntegrationTest {
         @Bean
         LocationResolutionService locationResolutionService() {
             return mock(LocationResolutionService.class);
+        }
+
+        @Bean
+        UserAuthenticationService userAuthenticationService() {
+            UserAuthenticationService service = mock(UserAuthenticationService.class);
+            when(service.findActiveUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(mock(User.class));
+            return service;
         }
     }
 }

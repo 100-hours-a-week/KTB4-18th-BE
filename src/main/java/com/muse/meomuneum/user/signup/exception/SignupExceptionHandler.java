@@ -29,6 +29,11 @@ public class SignupExceptionHandler {
         return ResponseEntity.status(409).body(ApiResponse.failure("email already exists"));
     }
 
+    @ExceptionHandler(DuplicateNicknameException.class)
+    public ResponseEntity<ApiResponse<Void>> duplicateNickname(DuplicateNicknameException exception) {
+        return ResponseEntity.status(409).body(ApiResponse.failure(exception.getMessage()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> unexpected(Exception exception) {
         LOGGER.error("회원가입 요청 처리 중 예외가 발생했습니다.", exception);

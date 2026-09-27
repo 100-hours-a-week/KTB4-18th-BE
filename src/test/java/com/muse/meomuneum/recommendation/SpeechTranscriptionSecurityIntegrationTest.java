@@ -26,6 +26,7 @@ import com.muse.meomuneum.recommendation.dto.response.SpeechTranscriptionRespons
 import com.muse.meomuneum.recommendation.service.SpeechTranscriptionService;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = SpeechTranscriptionController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=true"})
@@ -83,6 +84,13 @@ class SpeechTranscriptionSecurityIntegrationTest {
         @Bean
         SpeechTranscriptionService speechTranscriptionService() {
             return mock(SpeechTranscriptionService.class);
+        }
+
+        @Bean
+        UserAuthenticationService userAuthenticationService() {
+            UserAuthenticationService service = mock(UserAuthenticationService.class);
+            when(service.findActiveUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(mock(User.class));
+            return service;
         }
     }
 }

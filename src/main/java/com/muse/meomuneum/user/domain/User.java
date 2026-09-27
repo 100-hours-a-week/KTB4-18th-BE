@@ -8,10 +8,13 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "users")
+@Table(name = "users", uniqueConstraints = @UniqueConstraint(name = "UK_USERS_NICKNAME", columnNames = "nickname"))
 public class User {
+
+    public static final String NICKNAME_UNIQUE_CONSTRAINT = "UK_USERS_NICKNAME";
 
     @Id
     private Long id;
@@ -55,8 +58,36 @@ public class User {
         return id;
     }
 
+    public String getEmail() {
+        return email;
+    }
+
     public String getPasswordHash() {
         return passwordHash;
+    }
+
+    public String getNickname() {
+        return nickname;
+    }
+
+    public Short getBirthYear() {
+        return birthYear;
+    }
+
+    public UserGender getGender() {
+        return gender;
+    }
+
+    public String getProfileImageUrl() {
+        return profileImageUrl;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
     }
 
     public UserRole getRole() {
@@ -65,5 +96,32 @@ public class User {
 
     public boolean isDeleted() {
         return deletedAt != null;
+    }
+
+    public void updateProfile(String nickname, Short birthYear, UserGender gender, String profileImageUrl,
+            LocalDateTime updatedAt) {
+        if (nickname != null) {
+            this.nickname = nickname;
+        }
+        if (birthYear != null) {
+            this.birthYear = birthYear;
+        }
+        if (gender != null) {
+            this.gender = gender;
+        }
+        if (profileImageUrl != null) {
+            this.profileImageUrl = profileImageUrl;
+        }
+        this.updatedAt = updatedAt;
+    }
+
+    public void updatePassword(String passwordHash, LocalDateTime updatedAt) {
+        this.passwordHash = passwordHash;
+        this.updatedAt = updatedAt;
+    }
+
+    public void withdraw(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
+        this.updatedAt = deletedAt;
     }
 }

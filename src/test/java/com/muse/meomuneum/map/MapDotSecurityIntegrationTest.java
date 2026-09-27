@@ -26,6 +26,8 @@ import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.map.catalog.MapZoneCatalog;
 import com.muse.meomuneum.map.controller.MapDotController;
+import com.muse.meomuneum.user.domain.User;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = MapDotController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes"})
@@ -73,6 +75,13 @@ class MapDotSecurityIntegrationTest {
         @Bean
         MapZoneCatalog mapZoneCatalog() {
             return mock(MapZoneCatalog.class);
+        }
+
+        @Bean
+        UserAuthenticationService userAuthenticationService() {
+            UserAuthenticationService service = mock(UserAuthenticationService.class);
+            when(service.findActiveUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(mock(User.class));
+            return service;
         }
     }
 }
