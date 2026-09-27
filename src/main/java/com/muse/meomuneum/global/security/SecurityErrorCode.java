@@ -7,7 +7,8 @@ import com.muse.meomuneum.global.exception.ErrorCode;
 public enum SecurityErrorCode implements ErrorCode {
 
     ACCESS_UNAUTHORIZED("SECURITY_401", HttpStatus.UNAUTHORIZED, "unauthorized"), ACCESS_DENIED("SECURITY_403",
-            HttpStatus.FORBIDDEN, "request rejected");
+            HttpStatus.FORBIDDEN, "request rejected"), CSRF_DENIED("SECURITY_CSRF_403", HttpStatus.FORBIDDEN,
+                    "csrf validation failed"), MUSIC_FORBIDDEN("SECURITY_MUSIC_403", HttpStatus.FORBIDDEN, "forbidden");
 
     private final String code;
     private final String message;

@@ -63,9 +63,6 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
-        if (request.getSession(false) != null) {
-            request.getSession(false).invalidate();
-        }
         authService.logout(headers);
         return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);
     }

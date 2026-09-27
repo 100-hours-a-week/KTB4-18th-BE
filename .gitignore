@@ -3,6 +3,11 @@ HELP.md
 .env
 .env.*
 !.env.example
+
+# Local design and test documents are not part of feature commits.
+/docs/
+/*.md
+!/README.md
 .gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar

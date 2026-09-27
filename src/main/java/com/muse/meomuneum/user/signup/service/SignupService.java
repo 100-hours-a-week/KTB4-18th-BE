@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.muse.meomuneum.user.signup.domain.SignupTermType;
 import com.muse.meomuneum.user.signup.dto.SignupRequest;
 import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
 import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
@@ -25,9 +26,7 @@ import com.muse.meomuneum.user.signup.repository.SignupRepository;
 @Service
 public class SignupService {
     private static final short MIN_BIRTH_YEAR = 1900;
-    private static final String SERVICE = "SERVICE";
-    private static final Set<String> SIGNUP_TERMS_TYPES = Set.of(SERVICE, "PROFILE", "AIPERSONAL", "LOCATIONTERMS",
-            "LOCATION");
+    private static final Set<String> SIGNUP_TERMS_TYPES = SignupTermType.names();
 
     private final SignupRepository signupRepository;
     private final PasswordEncoder passwordEncoder;
@@ -44,7 +43,7 @@ public class SignupService {
         this.clock = clock;
     }
 
-    @Transactional
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public long signup(SignupRequest request) {
         validateBirthYear(request.birthYear());
 
@@ -65,12 +64,14 @@ public class SignupService {
         Map<Long, SignupRepository.Term> termsById = currentTerms.stream()
                 .filter(term -> requestedTermsIds.contains(term.id()))
                 .collect(Collectors.toMap(SignupRepository.Term::id, Function.identity()));
-        if (termsById.size() != requestedTermsIds.size()
-                || termsById.values().stream().anyMatch(term -> !SIGNUP_TERMS_TYPES.contains(term.type()))) {
+        if (termsById.size() != requestedTermsIds.size() || termsById.values().stream()
+                .anyMatch(term -> !SIGNUP_TERMS_TYPES.contains(term.type()))) {
             throw new InvalidSignupRequestException();
         }
-        Set<Long> requiredTermsIds = currentTerms.stream().filter(SignupRepository.Term::required)
-                .map(SignupRepository.Term::id).collect(Collectors.toSet());
+        Set<Long> requiredTermsIds = currentTerms.stream()
+                .filter(SignupRepository.Term::required)
+                .map(SignupRepository.Term::id)
+                .collect(Collectors.toSet());
         if (requiredTermsIds.isEmpty()) {
             throw new IllegalStateException("Current required terms are missing");
         }
@@ -89,12 +90,20 @@ public class SignupService {
         if (currentTermsCountByType.values().stream().anyMatch(count -> count != 1)) {
             throw new IllegalStateException("Current terms are ambiguous");
         }
+        if (!currentTermsCountByType.keySet().equals(SIGNUP_TERMS_TYPES)) {
+            throw new IllegalStateException("Current signup terms are incomplete or misconfigured");
+        }
     }
 
     private long createUser(SignupRequest request, String email, Instant now) {
         try {
-            return signupRepository.createUser(email, passwordEncoder.encode(request.password()),
-                    request.nickname().trim(), request.birthYear(), request.gender(), now);
+            return signupRepository.createUser(
+                    email,
+                    passwordEncoder.encode(request.password()),
+                    request.nickname().trim(),
+                    request.birthYear(),
+                    request.gender(),
+                    now);
         } catch (DuplicateKeyException exception) {
             throw new DuplicateEmailException();
         }

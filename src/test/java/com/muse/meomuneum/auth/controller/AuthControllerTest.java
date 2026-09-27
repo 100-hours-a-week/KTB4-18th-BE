@@ -107,12 +107,12 @@ class AuthControllerTest {
     }
 
     @Test
-    void logoutInvalidatesSessionAndReturnsNoContent() throws Exception {
+    void logoutKeepsCsrfSessionAndReturnsNoContent() throws Exception {
         MockHttpSession session = new MockHttpSession();
 
         mockMvc.perform(post("/api/v1/auth/logout").session(session)).andExpect(status().isNoContent());
 
-        assertThat(session.isInvalid()).isTrue();
+        assertThat(session.isInvalid()).isFalse();
         verify(authService).logout(any(HttpHeaders.class));
     }
 }

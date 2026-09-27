@@ -1,0 +1,6 @@
+spring:
+  flyway:
+    locations: filesystem:build/music-record-local-migrations
+  jpa:
+    hibernate:
+      ddl-auto: none

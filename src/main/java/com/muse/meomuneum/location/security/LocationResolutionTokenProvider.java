@@ -42,12 +42,28 @@ public class LocationResolutionTokenProvider {
     }
 
     public IssuedLocationToken issue(Long userId, Region sido, Region sigungu) {
+        return issue(userId, sido, sigungu, null);
+    }
+
+    public IssuedLocationToken issue(Long userId, Region sido, Region sigungu, Long mapDotId) {
         Instant issuedAt = clock.instant();
         Instant expiresAt = issuedAt.plus(TOKEN_LIFETIME);
-        JWTClaimsSet claims = new JWTClaimsSet.Builder().issuer(ISSUER).subject(userId.toString()).audience(AUDIENCE)
-                .issueTime(Date.from(issuedAt)).expirationTime(Date.from(expiresAt)).jwtID(UUID.randomUUID().toString())
-                .claim("type", TOKEN_TYPE).claim("sido_region_id", sido.getId()).claim("sido_code", sido.getCode())
-                .claim("sigungu_region_id", sigungu.getId()).claim("sigungu_code", sigungu.getCode()).build();
+        JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
+                .issuer(ISSUER)
+                .subject(userId.toString())
+                .audience(AUDIENCE)
+                .issueTime(Date.from(issuedAt))
+                .expirationTime(Date.from(expiresAt))
+                .jwtID(UUID.randomUUID().toString())
+                .claim("type", TOKEN_TYPE)
+                .claim("sido_region_id", sido.getId())
+                .claim("sido_code", sido.getCode())
+                .claim("sigungu_region_id", sigungu.getId())
+                .claim("sigungu_code", sigungu.getCode());
+        if (mapDotId != null) {
+            builder.claim("map_dot_id", mapDotId);
+        }
+        JWTClaimsSet claims = builder.build();
 
         try {
             SignedJWT signedJwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims);
@@ -71,9 +87,14 @@ public class LocationResolutionTokenProvider {
                 throw invalidToken();
             }
 
-            return new LocationResolutionClaims(userId, numberClaim(claims, "sido_region_id"),
-                    stringClaim(claims, "sido_code"), numberClaim(claims, "sigungu_region_id"),
-                    stringClaim(claims, "sigungu_code"), claims.getExpirationTime().toInstant());
+            return new LocationResolutionClaims(
+                    userId,
+                    numberClaim(claims, "sido_region_id"),
+                    stringClaim(claims, "sido_code"),
+                    numberClaim(claims, "sigungu_region_id"),
+                    stringClaim(claims, "sigungu_code"),
+                    optionalNumberClaim(claims, "map_dot_id"),
+                    claims.getExpirationTime().toInstant());
         } catch (JOSEException | ParseException | IllegalArgumentException exception) {
             throw invalidToken();
         }
@@ -89,15 +110,30 @@ public class LocationResolutionTokenProvider {
     private boolean hasExpectedStandardClaims(SignedJWT signedJwt, JWTClaimsSet claims) throws ParseException {
         Date issueTime = claims.getIssueTime();
         Date expirationTime = claims.getExpirationTime();
-        return JWSAlgorithm.HS256.equals(signedJwt.getHeader().getAlgorithm()) && ISSUER.equals(claims.getIssuer())
-                && List.of(AUDIENCE).equals(claims.getAudience()) && TOKEN_TYPE.equals(claims.getStringClaim("type"))
-                && issueTime != null && !issueTime.toInstant().isAfter(clock.instant()) && expirationTime != null
+        return JWSAlgorithm.HS256.equals(signedJwt.getHeader().getAlgorithm())
+                && ISSUER.equals(claims.getIssuer())
+                && List.of(AUDIENCE).equals(claims.getAudience())
+                && TOKEN_TYPE.equals(claims.getStringClaim("type"))
+                && issueTime != null
+                && !issueTime.toInstant().isAfter(clock.instant())
+                && expirationTime != null
                 && expirationTime.toInstant().isAfter(clock.instant());
     }
 
     private Long numberClaim(JWTClaimsSet claims, String name) throws ParseException {
         Object value = claims.getClaim(name);
         if (!(value instanceof Number number)) {
+            throw invalidToken();
+        }
+        return number.longValue();
+    }
+
+    private Long optionalNumberClaim(JWTClaimsSet claims, String name) {
+        Object value = claims.getClaim(name);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Number number) || number.longValue() <= 0) {
             throw invalidToken();
         }
         return number.longValue();

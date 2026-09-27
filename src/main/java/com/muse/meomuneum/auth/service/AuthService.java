@@ -17,7 +17,6 @@ import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.response.AuthSuccessCode;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
-import com.muse.meomuneum.global.security.RefreshTokenClaims;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
 
@@ -30,16 +29,14 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
     private final RefreshTokenCookieFactory refreshTokenCookieFactory;
-    private final RefreshTokenSessionService refreshTokenSessionService;
     private final UserAuthenticationService userAuthenticationService;
 
     public AuthService(JwtTokenProvider jwtTokenProvider, JwtProperties jwtProperties,
-            RefreshTokenCookieFactory refreshTokenCookieFactory, RefreshTokenSessionService refreshTokenSessionService,
+            RefreshTokenCookieFactory refreshTokenCookieFactory,
             UserAuthenticationService userAuthenticationService) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
         this.refreshTokenCookieFactory = refreshTokenCookieFactory;
-        this.refreshTokenSessionService = refreshTokenSessionService;
         this.userAuthenticationService = userAuthenticationService;
     }
 
@@ -47,9 +44,12 @@ public class AuthService {
         User user = userAuthenticationService.authenticate(request.email(), request.password());
         servletRequest.getSession(true);
         servletRequest.changeSessionId();
-        TokenResponse response = issueTokens(user, servletRequest, headers);
-        log.info("event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
-                AuthSuccessCode.LOGIN_SUCCESS.code(), AuthSuccessCode.LOGIN_SUCCESS.status().value(), user.getId(),
+        TokenResponse response = issueTokens(user, headers);
+        log.info(
+                "event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
+                AuthSuccessCode.LOGIN_SUCCESS.code(),
+                AuthSuccessCode.LOGIN_SUCCESS.status().value(),
+                user.getId(),
                 MDC.get("requestId"));
         return response;
     }
@@ -57,9 +57,9 @@ public class AuthService {
     public TokenResponse refresh(HttpServletRequest request, HttpHeaders headers) {
         try {
             String refreshToken = getRefreshToken(request);
-            RefreshTokenClaims currentClaims = jwtTokenProvider.parseRefreshToken(refreshToken);
+            var currentClaims = jwtTokenProvider.parseRefreshToken(refreshToken);
             User user = userAuthenticationService.findActiveUser(currentClaims.userId());
-            return rotateTokens(user, request, headers, refreshToken, currentClaims);
+            return issueTokens(user, headers);
         } catch (AuthenticationFailedException exception) {
             refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
             throw exception;
@@ -70,22 +70,11 @@ public class AuthService {
         refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
     }
 
-    private TokenResponse issueTokens(User user, HttpServletRequest request, HttpHeaders headers) {
+    private TokenResponse issueTokens(User user, HttpHeaders headers) {
         String refreshToken = jwtTokenProvider.createRefreshToken(user);
-        RefreshTokenClaims refreshTokenClaims = jwtTokenProvider.parseRefreshToken(refreshToken);
-        refreshTokenSessionService.register(request, refreshTokenClaims, refreshToken);
         refreshTokenCookieFactory.addRefreshTokenCookie(headers, refreshToken);
-        return new TokenResponse(jwtTokenProvider.createAccessToken(user),
-                jwtProperties.accessTokenExpirationSeconds());
-    }
-
-    private TokenResponse rotateTokens(User user, HttpServletRequest request, HttpHeaders headers,
-            String currentRefreshToken, RefreshTokenClaims currentClaims) {
-        String nextRefreshToken = jwtTokenProvider.createRefreshToken(user);
-        RefreshTokenClaims nextClaims = jwtTokenProvider.parseRefreshToken(nextRefreshToken);
-        refreshTokenSessionService.rotate(request, currentClaims, currentRefreshToken, nextClaims, nextRefreshToken);
-        refreshTokenCookieFactory.addRefreshTokenCookie(headers, nextRefreshToken);
-        return new TokenResponse(jwtTokenProvider.createAccessToken(user),
+        return new TokenResponse(
+                jwtTokenProvider.createAccessToken(user),
                 jwtProperties.accessTokenExpirationSeconds());
     }
 
@@ -94,8 +83,11 @@ public class AuthService {
             throw new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
         }
 
-        return Arrays.stream(request.getCookies()).filter(cookie -> REFRESH_TOKEN_COOKIE_NAME.equals(cookie.getName()))
-                .map(cookie -> cookie.getValue()).findFirst().filter(value -> !value.isBlank())
+        return Arrays.stream(request.getCookies())
+                .filter(cookie -> REFRESH_TOKEN_COOKIE_NAME.equals(cookie.getName()))
+                .map(cookie -> cookie.getValue())
+                .findFirst()
+                .filter(value -> !value.isBlank())
                 .orElseThrow(() -> new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN));
     }
 }

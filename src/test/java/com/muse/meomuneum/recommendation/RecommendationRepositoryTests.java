@@ -22,7 +22,6 @@ class RecommendationRepositoryTests {
         RecommendationRequest request = new RecommendationRequest("TEXT", "CHATBOT",
                 "550e8400-e29b-41d4-a716-446655440000", "비 오는 밤");
 
-        // Mock은 생성 키를 채우지 않으므로 저장 ID가 누락된 상황을 재현합니다.
         RecommendationException exception = assertThrows(RecommendationException.class,
                 () -> repository.createSession(request, "guest", null, Instant.now()));
 
@@ -35,7 +34,6 @@ class RecommendationRepositoryTests {
         RecommendationRepository repository = new RecommendationRepository(jdbc);
         TrackData track = new TrackData("ITUNES", "sample", "sample", "artist", null, null);
 
-        // Mock의 ID 조회 반환값은 NULL입니다.
         RecommendationException exception = assertThrows(RecommendationException.class,
                 () -> repository.saveMusic(track));
 
