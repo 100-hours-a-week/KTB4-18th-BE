@@ -207,9 +207,9 @@ membership 종료를 되돌리지 않습니다.
 
 추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택합니다. 기본값 `itunes`는 개발용 직접 검색이고,
 운영 프로필 기본값 `ai`는 AI 서버가 반환한 iTunes 곡 정보를 서비스 음악 모델로 변환합니다.
-AI 서버 주소와 선택적 Bearer 인증, 연결·읽기 제한 시간은 각각
-`RECOMMENDATION_AI_BASE_URL`, `RECOMMENDATION_AI_AUTH_TOKEN`,
+AI 서버 주소와 연결·읽기 제한 시간은 각각 `RECOMMENDATION_AI_BASE_URL`,
 `RECOMMENDATION_AI_CONNECT_TIMEOUT`, `RECOMMENDATION_AI_READ_TIMEOUT`으로 주입합니다.
+V1의 백엔드와 AI 간 내부 요청에는 별도의 `Authorization` 헤더를 보내지 않습니다.
 
 검색에서 중복을 제거한 1~5곡을 얻으면 모두 저장한 뒤 `201 Created`와
 `COMPLETED` 응답으로 반환합니다. 0곡이면 완료 세션을 저장하지 않고 다른 조건을 요청하는 안내와

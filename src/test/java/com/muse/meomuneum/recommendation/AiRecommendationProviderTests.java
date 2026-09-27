@@ -1,6 +1,7 @@
 package com.muse.meomuneum.recommendation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,7 +40,7 @@ class AiRecommendationProviderTests {
             assertTrue(requestBody.contains("\"thread_id\":\"" + threadId + "\""));
             assertTrue(requestBody.contains("\"request_id\":\"" + requestId + "\""));
             assertTrue(requestBody.contains("\"message\":\"비 오는 밤\""));
-            assertEquals("Bearer test-token", exchange.getRequestHeaders().getFirst("Authorization"));
+            assertNull(exchange.getRequestHeaders().getFirst("Authorization"));
             respond(exchange, 200, """
                     {"message":"추천 결과입니다.","tracks":[
                       {"title":"첫 곡","artist":"가수","track_id":"101","preview_url":null,
@@ -112,8 +113,7 @@ class AiRecommendationProviderTests {
     }
 
     private AiRecommendationProvider provider(Duration timeout) {
-        return new AiRecommendationProvider(new ObjectMapper(), baseUrl(), "test-token", Duration.ofSeconds(1),
-                timeout);
+        return new AiRecommendationProvider(new ObjectMapper(), baseUrl(), Duration.ofSeconds(1), timeout);
     }
 
     private RecommendationCommand command() {

@@ -32,17 +32,14 @@ public class AiRecommendationProvider implements RecommendationProvider {
     private final ObjectMapper mapper;
     private final HttpClient client;
     private final URI endpoint;
-    private final String authToken;
     private final Duration readTimeout;
 
     public AiRecommendationProvider(ObjectMapper mapper,
             @Value("${recommendation.ai.base-url}") String baseUrl,
-            @Value("${recommendation.ai.auth-token:}") String authToken,
             @Value("${recommendation.ai.connect-timeout:3s}") Duration connectTimeout,
             @Value("${recommendation.ai.read-timeout:10s}") Duration readTimeout) {
         this.mapper = mapper;
         this.endpoint = URI.create(baseUrl.replaceAll("/+$", "") + "/v1/chat/messages");
-        this.authToken = authToken;
         this.readTimeout = readTimeout;
         this.client = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
     }
@@ -50,15 +47,12 @@ public class AiRecommendationProvider implements RecommendationProvider {
     @Override
     public List<TrackData> recommend(RecommendationCommand command) {
         String body = requestBody(command);
-        var requestBuilder = HttpRequest.newBuilder(endpoint).timeout(readTimeout)
+        HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(readTimeout)
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        if (!authToken.isBlank()) {
-            requestBuilder.header("Authorization", "Bearer " + authToken);
-        }
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build();
 
         try {
-            var response = client.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 503) {
                 throw new RecommendationException(503, "AI 추천 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.");
             }

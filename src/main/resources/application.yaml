@@ -38,7 +38,6 @@ recommendation:
     timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
   ai:
     base-url: ${RECOMMENDATION_AI_BASE_URL:http://localhost:8000}
-    auth-token: ${RECOMMENDATION_AI_AUTH_TOKEN:}
     connect-timeout: ${RECOMMENDATION_AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${RECOMMENDATION_AI_READ_TIMEOUT:10s}
 
