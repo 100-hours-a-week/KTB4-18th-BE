@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -33,6 +34,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
+import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -103,7 +105,8 @@ class ItunesMusicSearchClientHttpTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     context.getBean(ItunesMusicSearchClient.class).search("테스트");
-                    context.getBean(ItunesRecommendationProvider.class).recommend(List.of("테스트"));
+                    context.getBean(ItunesRecommendationProvider.class)
+                            .recommend(new RecommendationCommand(UUID.randomUUID(), UUID.randomUUID(), "테스트"));
                 });
 
         assertThat(configuredQueries).hasSize(2).allMatch(query -> query.contains("country=KR"));
