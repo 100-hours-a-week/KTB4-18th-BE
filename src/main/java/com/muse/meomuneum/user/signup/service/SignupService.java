@@ -17,9 +17,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.signup.domain.SignupTermType;
 import com.muse.meomuneum.user.signup.dto.SignupRequest;
 import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
+import com.muse.meomuneum.user.signup.exception.DuplicateNicknameException;
 import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
 import com.muse.meomuneum.user.signup.repository.SignupRepository;
 
@@ -50,6 +52,9 @@ public class SignupService {
         String email = request.email().trim().toLowerCase(Locale.ROOT);
         if (signupRepository.existsUserByEmail(email)) {
             throw new DuplicateEmailException();
+        }
+        if (signupRepository.existsUserByNickname(request.nickname().trim())) {
+            throw new DuplicateNicknameException();
         }
 
         Set<Long> requestedTermsIds = new LinkedHashSet<>(request.termsIds());
@@ -105,8 +110,21 @@ public class SignupService {
                     request.gender(),
                     now);
         } catch (DuplicateKeyException exception) {
+            if (isNicknameDuplicate(exception)) {
+                throw new DuplicateNicknameException();
+            }
             throw new DuplicateEmailException();
         }
+    }
+
+    private boolean isNicknameDuplicate(DuplicateKeyException exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause.getMessage() != null
+                    && cause.getMessage().toUpperCase(Locale.ROOT).contains(User.NICKNAME_UNIQUE_CONSTRAINT)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void validateBirthYear(Short birthYear) {

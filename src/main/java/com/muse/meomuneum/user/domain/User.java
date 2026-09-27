@@ -8,10 +8,13 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "users")
+@Table(name = "users", uniqueConstraints = @UniqueConstraint(name = "UK_USERS_NICKNAME", columnNames = "nickname"))
 public class User {
+
+    public static final String NICKNAME_UNIQUE_CONSTRAINT = "UK_USERS_NICKNAME";
 
     @Id
     private Long id;

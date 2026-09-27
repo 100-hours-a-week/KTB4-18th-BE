@@ -7,15 +7,18 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -94,7 +97,7 @@ class UserAccountServiceTest {
         UserAccountService service = new UserAccountService(userRepository, passwordEncoder,
                 Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
         when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
-        when(userRepository.existsByNicknameAndDeletedAtIsNullAndIdNot("다른닉", 1L)).thenReturn(true);
+        when(userRepository.existsByNicknameAndIdNot("다른닉", 1L)).thenReturn(true);
 
         assertThatThrownBy(() -> service.updateProfile(1L, "다른닉", null, null, null))
                 .isInstanceOfSatisfying(UserAccountException.class, exception -> {
@@ -104,15 +107,36 @@ class UserAccountServiceTest {
     }
 
     @Test
-    void allowsCurrentNicknameAndNicknameReleasedByDeletedUser() {
+    void allowsCurrentNicknameWhenNoOtherUserOwnsIt() {
         User user = mock(User.class);
         UserAccountService service = new UserAccountService(userRepository, passwordEncoder,
                 Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
         when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
-        when(userRepository.existsByNicknameAndDeletedAtIsNullAndIdNot("기존닉", 1L)).thenReturn(false);
+        when(userRepository.existsByNicknameAndIdNot("기존닉", 1L)).thenReturn(false);
 
         assertThat(service.updateProfile(1L, "기존닉", null, UserGender.FEMALE, null)).isSameAs(user);
-        verify(userRepository).existsByNicknameAndDeletedAtIsNullAndIdNot("기존닉", 1L);
+        verify(userRepository).existsByNicknameAndIdNot("기존닉", 1L);
+    }
+
+    @Test
+    void mapsNicknameUniqueConstraintRaceToConflictResponse() {
+        User user = mock(User.class);
+        UserAccountService service = new UserAccountService(userRepository, passwordEncoder,
+                Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
+        when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
+        when(userRepository.existsByNicknameAndIdNot("경합닉", 1L)).thenReturn(false);
+        SQLException sqlException = new SQLException("duplicate key", "23000", 1062);
+        ConstraintViolationException constraintViolation = new ConstraintViolationException("duplicate nickname",
+                sqlException, User.NICKNAME_UNIQUE_CONSTRAINT);
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("duplicate nickname", constraintViolation))
+                .when(userRepository).flush();
+
+        assertThatThrownBy(() -> service.updateProfile(1L, "경합닉", null, null, null))
+                .isInstanceOfSatisfying(UserAccountException.class, exception -> {
+                    assertThat(exception.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(exception.getCode()).isEqualTo("USER_NICKNAME_DUPLICATE");
+                    assertThat(exception.getMessage()).isEqualTo("nickname already exists");
+                });
     }
 
     @Test
