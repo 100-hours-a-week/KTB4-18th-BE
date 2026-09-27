@@ -19,6 +19,9 @@ speech:
     provider: stub
     stub-transcript: 비 올 때 듣기 좋은 노래를 추천해줘
 
+recommendation:
+  provider: itunes
+
 location:
   token:
     secret: test-only-location-token-secret-at-least-32-bytes

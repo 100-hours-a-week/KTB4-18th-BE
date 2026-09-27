@@ -289,12 +289,19 @@ membership 종료를 되돌리지 않습니다.
 
 `POST /api/v1/recommendations`는 `TEXT`와 STT 전사문인 `VOICE`를 같은 경로로 처리합니다.
 같은 소유자의 `conversation_key`에 속한 완료된 이전 요청의 `prompt`를 읽고,
-각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다.
-AI 팀 연동 전에는 이 문장들을 합쳐 iTunes Search API에서 직접 검색합니다.
-이 임시 검색은 감정·상황을 AI로 해석하지 않으며 긴 대화는 최근 250자만 검색어로 사용합니다.
+각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다. AI 내부 계약의
+`message` 길이에 맞춰 현재 입력을 우선한 최근 200자를 `POST /v1/chat/messages`에 전달하며,
+`conversation_key`를 `thread_id`로 사용하고 요청마다 `request_id`를 생성합니다.
+
+추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택합니다. 기본값 `itunes`는 개발용 직접 검색이고,
+운영 프로필 기본값 `ai`는 AI 서버가 반환한 iTunes 곡 정보를 서비스 음악 모델로 변환합니다.
+AI 서버 주소와 연결·읽기 제한 시간은 각각 `RECOMMENDATION_AI_BASE_URL`,
+`RECOMMENDATION_AI_CONNECT_TIMEOUT`, `RECOMMENDATION_AI_READ_TIMEOUT`으로 주입합니다.
+V1의 백엔드와 AI 간 내부 요청에는 별도의 `Authorization` 헤더를 보내지 않습니다.
 
 검색에서 중복을 제거한 1~5곡을 얻으면 모두 저장한 뒤 `201 Created`와
-`COMPLETED` 응답으로 반환합니다. 0곡 또는 iTunes 장애는 `503 Service Unavailable`,
+`COMPLETED` 응답으로 반환합니다. 0곡이면 완료 세션을 저장하지 않고 다른 조건을 요청하는 안내와
+`503 Service Unavailable`을 반환합니다. AI 또는 iTunes 장애는 `502` 또는 `503`,
 요청 제한 시간 초과는 `504 Gateway Timeout`으로 반환합니다. DB 저장 실패는
 `500 Internal Server Error`이며 부분 저장은 트랜잭션으로 롤백합니다.
 기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
@@ -302,7 +309,8 @@ AI 팀 연동 전에는 이 문장들을 합쳐 iTunes Search API에서 직접 �
 음악 기록 검색과 텍스트 음악 추천은 이 국가·요청 제한 시간 설정을 공유합니다.
 실제 API 확인 시 `KR` 스토어는 검색 결과가 없었고 `US` 스토어에서는 한국어 곡도 검색됐습니다.
 측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
-각각 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다.
+각각 선택된 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다. 인증 정보,
+AI 내부 오류 본문과 사용자의 전체 입력 문장은 로그에 기록하지 않습니다.
 첫 추천 결과는 POST 응답으로 받고, GET은 저장된 결과 재조회에 사용합니다.
 
 ## 음성 전사 기능
@@ -313,8 +321,20 @@ WebM 또는 MP4만 허용하며 최대 10MB, 최대 60초로 제한합니다. �
 `data.transcript`는 프론트엔드 입력창에 표시되고 사용자가 확인·수정한 뒤 별도 추천 요청의
 `prompt`와 `input_type=VOICE`로 전달됩니다.
 
-AI 팀 연동 전에는 `SpeechToTextProvider`의 개발용 대역을 사용합니다. 실제 AI 연동 시에는
-이 인터페이스의 운영 어댑터를 추가하고 URL·인증 정보·제한 시간을 환경 변수로 주입합니다.
+`SpeechToTextProvider` 구현은 `SPEECH_TRANSCRIPTION_PROVIDER`로 선택합니다. 개발 환경은
+고정 transcript를 반환하는 `stub`, 운영 프로필은 기본적으로 `ai`를 사용합니다. AI 어댑터는
+검증된 음성 파일을 `audio` 파트의 `multipart/form-data`로 구성해 `POST /v1/transcriptions`에
+전달하며, 파일 파트의 `Content-Type`으로 MIME 타입을 보냅니다. 원본 음성·transcript를 저장하거나
+로그에 기록하지 않습니다.
+
+AI 서버 주소와 연결·읽기 제한 시간은 `SPEECH_TRANSCRIPTION_AI_BASE_URL`,
+`SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT`, `SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT`으로 주입합니다.
+AI의 형식 오류는 서비스 `400`, 크기 초과는 `413`, 서비스 장애는 `502`, 시간 초과는 `504`로
+변환하며 내부 오류 본문은 공개 응답에 노출하지 않습니다.
+V1의 백엔드와 AI 간 내부 요청에는 별도의 `Authorization` 헤더를 보내지 않으며 자동 재시도도
+수행하지 않습니다. 운영 타임아웃, `request_id` 및 재시도 정책은 운영 환경 배포 전에
+AI·클라우드 팀과 확정합니다.
+서비스와 AI 내부 전사 제한은 최대 60초로 동일하게 적용합니다.
 
 전사 실패 응답은 공통 `{ message, data }` 형식을 유지하며 `data`는 `null`입니다. 별도의
 Custom Code를 추가하지 않고 다음 HTTP 상태를 프론트엔드의 복구 동작 판별 코드로 사용합니다.

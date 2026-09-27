@@ -35,9 +35,14 @@ auth:
     refresh-token-expiration-seconds: 1209600
 
 recommendation:
+  provider: ${RECOMMENDATION_PROVIDER:itunes}
   itunes:
     country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
     timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
+  ai:
+    base-url: ${RECOMMENDATION_AI_BASE_URL:http://localhost:8000}
+    connect-timeout: ${RECOMMENDATION_AI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${RECOMMENDATION_AI_READ_TIMEOUT:10s}
 
 kakao:
   maps:
@@ -46,6 +51,10 @@ kakao:
 speech:
   transcription:
     provider: ${SPEECH_TRANSCRIPTION_PROVIDER:unavailable}
+    ai:
+      base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL:http://localhost:8001}
+      connect-timeout: ${SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT:3s}
+      read-timeout: ${SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT:15s}
 
 location:
   token:
