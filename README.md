@@ -313,8 +313,20 @@ WebM 또는 MP4만 허용하며 최대 10MB, 최대 60초로 제한합니다. �
 `data.transcript`는 프론트엔드 입력창에 표시되고 사용자가 확인·수정한 뒤 별도 추천 요청의
 `prompt`와 `input_type=VOICE`로 전달됩니다.
 
-AI 팀 연동 전에는 `SpeechToTextProvider`의 개발용 대역을 사용합니다. 실제 AI 연동 시에는
-이 인터페이스의 운영 어댑터를 추가하고 URL·인증 정보·제한 시간을 환경 변수로 주입합니다.
+`SpeechToTextProvider` 구현은 `SPEECH_TRANSCRIPTION_PROVIDER`로 선택합니다. 개발 환경은
+고정 transcript를 반환하는 `stub`, 운영 프로필은 기본적으로 `ai`를 사용합니다. AI 어댑터는
+검증된 음성 파일을 `audio` 파트의 `multipart/form-data`로 구성해 `POST /v1/transcriptions`에
+전달하며, 파일 파트의 `Content-Type`으로 MIME 타입을 보냅니다. 원본 음성·transcript를 저장하거나
+로그에 기록하지 않습니다.
+
+AI 서버 주소와 선택적 Bearer 인증, 연결·읽기 제한 시간은
+`SPEECH_TRANSCRIPTION_AI_BASE_URL`, `SPEECH_TRANSCRIPTION_AI_AUTH_TOKEN`,
+`SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT`, `SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT`으로 주입합니다.
+AI의 형식 오류는 서비스 `400`, 크기 초과는 `413`, 서비스 장애는 `502`, 시간 초과는 `504`로
+변환하며 내부 오류 본문과 인증 정보는 공개 응답에 노출하지 않습니다.
+인증 방식, 운영 타임아웃, `request_id` 및 재시도 정책은 운영 환경 배포 전에 AI·클라우드 팀과
+확정합니다. 현재 인증 토큰은 선택값이며 자동 재시도는 수행하지 않습니다.
+서비스와 AI 내부 전사 제한은 최대 60초로 동일하게 적용합니다.
 
 전사 실패 응답은 공통 `{ message, data }` 형식을 유지하며 `data`는 `null`입니다. 별도의
 Custom Code를 추가하지 않고 다음 HTTP 상태를 프론트엔드의 복구 동작 판별 코드로 사용합니다.
