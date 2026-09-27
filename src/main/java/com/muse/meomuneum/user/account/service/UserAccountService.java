@@ -4,9 +4,11 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.Year;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,8 @@ public class UserAccountService {
     private static final String INVALID_CREDENTIALS = "AUTH_401";
     private static final String PASSWORD_RECENT = "USER_PASSWORD_RECENT";
     private static final String PASSWORD_RECENT_MESSAGE = "최근 1년 내 변경된 비밀번호입니다.";
+    private static final String NICKNAME_DUPLICATE = "USER_NICKNAME_DUPLICATE";
+    private static final String NICKNAME_DUPLICATE_MESSAGE = "nickname already exists";
     private static final short MIN_BIRTH_YEAR = 1900;
     private static final Logger log = LoggerFactory.getLogger(UserAccountService.class);
 
@@ -51,11 +55,18 @@ public class UserAccountService {
             String profileImageUrl) {
         User user = findActiveUserForUpdate(userId);
         validateBirthYear(birthYear);
-        if (nickname != null && userRepository.existsByNicknameAndDeletedAtIsNullAndIdNot(nickname, userId)) {
-            throw new UserAccountException("USER_NICKNAME_DUPLICATE", HttpStatus.CONFLICT,
-                    "nickname already exists");
+        if (nickname != null && userRepository.existsByNicknameAndIdNot(nickname, userId)) {
+            throw duplicateNickname();
         }
         user.updateProfile(nickname, birthYear, gender, profileImageUrl, now());
+        try {
+            userRepository.flush();
+        } catch (DataIntegrityViolationException exception) {
+            if (isNicknameUniqueViolation(exception)) {
+                throw duplicateNickname();
+            }
+            throw exception;
+        }
         return user;
     }
 
@@ -98,6 +109,20 @@ public class UserAccountService {
 
     private UserAccountException passwordRecent() {
         return new UserAccountException(PASSWORD_RECENT, HttpStatus.BAD_REQUEST, PASSWORD_RECENT_MESSAGE);
+    }
+
+    private UserAccountException duplicateNickname() {
+        return new UserAccountException(NICKNAME_DUPLICATE, HttpStatus.CONFLICT, NICKNAME_DUPLICATE_MESSAGE);
+    }
+
+    private boolean isNicknameUniqueViolation(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConstraintViolationException violation
+                    && User.NICKNAME_UNIQUE_CONSTRAINT.equalsIgnoreCase(violation.getConstraintName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void validateBirthYear(Short birthYear) {

@@ -20,4 +20,14 @@ class SignupExceptionHandlerTest {
         assertEquals("email already exists", response.getBody().message());
         assertNull(response.getBody().data());
     }
+
+    @Test
+    void mapsDuplicateNicknameToConflictResponse() {
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler
+                .duplicateNickname(new DuplicateNicknameException());
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("nickname already exists", response.getBody().message());
+        assertNull(response.getBody().data());
+    }
 }

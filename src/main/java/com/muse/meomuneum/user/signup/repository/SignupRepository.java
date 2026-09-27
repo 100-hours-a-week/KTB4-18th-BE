@@ -26,6 +26,11 @@ public class SignupRepository {
         return count != null && count > 0;
     }
 
+    public boolean existsUserByNickname(String nickname) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE nickname = ?", Integer.class, nickname);
+        return count != null && count > 0;
+    }
+
     public List<Term> findCurrentSignupTerms(Instant now) {
         return jdbc.query("""
                 SELECT current_terms.id, current_terms.type, current_terms.is_required

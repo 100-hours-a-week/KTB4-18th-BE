@@ -21,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.muse.meomuneum.user.signup.dto.SignupRequest;
 import com.muse.meomuneum.user.signup.exception.DuplicateEmailException;
+import com.muse.meomuneum.user.signup.exception.DuplicateNicknameException;
 import com.muse.meomuneum.user.signup.exception.InvalidSignupRequestException;
 import com.muse.meomuneum.user.signup.repository.SignupRepository;
 
@@ -162,6 +163,36 @@ class SignupServiceTest {
                 .thenThrow(new DuplicateKeyException("duplicate email"));
 
         assertThrows(DuplicateEmailException.class, () -> service.signup(request));
+        verify(repository, never()).createTermsAgreement(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void returnsNicknameConflictWhenNicknameAlreadyExists() {
+        SignupRepository repository = mock(SignupRepository.class);
+        SignupService service = new SignupService(repository, mock(PasswordEncoder.class), fixedClock());
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "이미사용중", null, null,
+                List.of(1L, 2L));
+
+        when(repository.existsUserByNickname("이미사용중")).thenReturn(true);
+
+        assertThrows(DuplicateNicknameException.class, () -> service.signup(request));
+        verify(repository, never()).createUser(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void convertsNicknameUniqueConstraintViolationToNicknameConflict() {
+        SignupRepository repository = mock(SignupRepository.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        SignupService service = new SignupService(repository, passwordEncoder, fixedClock());
+        SignupRequest request = new SignupRequest("member@example.com", "password1", "경합닉", null, null,
+                List.of(1L, 2L));
+
+        when(repository.findCurrentSignupTerms(any())).thenReturn(currentTerms());
+        when(passwordEncoder.encode("password1")).thenReturn("encoded-password1");
+        when(repository.createUser(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new DuplicateKeyException("Duplicate entry for key 'UK_USERS_NICKNAME'"));
+
+        assertThrows(DuplicateNicknameException.class, () -> service.signup(request));
         verify(repository, never()).createTermsAgreement(anyLong(), anyLong(), any());
     }
 
