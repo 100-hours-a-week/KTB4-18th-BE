@@ -27,17 +27,14 @@ public class AiSpeechToTextProvider implements SpeechToTextProvider {
     private final ObjectMapper mapper;
     private final HttpClient client;
     private final URI endpoint;
-    private final String authToken;
     private final Duration readTimeout;
 
     public AiSpeechToTextProvider(ObjectMapper mapper,
             @Value("${speech.transcription.ai.base-url}") String baseUrl,
-            @Value("${speech.transcription.ai.auth-token:}") String authToken,
             @Value("${speech.transcription.ai.connect-timeout:3s}") Duration connectTimeout,
             @Value("${speech.transcription.ai.read-timeout:15s}") Duration readTimeout) {
         this.mapper = mapper;
         this.endpoint = URI.create(baseUrl.replaceAll("/+$", "") + "/v1/transcriptions");
-        this.authToken = authToken;
         this.readTimeout = readTimeout;
         this.client = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
     }
@@ -45,14 +42,11 @@ public class AiSpeechToTextProvider implements SpeechToTextProvider {
     @Override
     public String transcribe(SpeechAudio audio) {
         MultipartRequest multipart = multipartRequest(audio);
-        var requestBuilder = HttpRequest.newBuilder(endpoint).timeout(readTimeout)
-                .header("Content-Type", multipart.contentType()).POST(multipart.bodyPublisher());
-        if (!authToken.isBlank()) {
-            requestBuilder.header("Authorization", "Bearer " + authToken);
-        }
+        HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(readTimeout)
+                .header("Content-Type", multipart.contentType()).POST(multipart.bodyPublisher()).build();
 
         try {
-            var response = client.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 throw mapError(response.statusCode(), response.body());
             }

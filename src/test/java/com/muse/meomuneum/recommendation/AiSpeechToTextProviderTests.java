@@ -2,6 +2,7 @@ package com.muse.meomuneum.recommendation;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,7 +54,7 @@ class AiSpeechToTextProviderTests {
             assertTrue(headers.contains("name=\"audio\"; filename=\"audio.webm\""));
             assertTrue(headers.contains("Content-Type: audio/webm"));
             assertArrayEquals(audioBytes, Arrays.copyOfRange(requestBody, audioStart, audioEnd));
-            assertEquals("Bearer test-token", exchange.getRequestHeaders().getFirst("Authorization"));
+            assertNull(exchange.getRequestHeaders().getFirst("Authorization"));
             respond(exchange, 200, "{\"transcript\":\"  비 오는 날의 노래  \"}");
         });
 
@@ -132,7 +133,7 @@ class AiSpeechToTextProviderTests {
     }
 
     private AiSpeechToTextProvider provider(Duration timeout) {
-        return new AiSpeechToTextProvider(mapper, baseUrl(), "test-token", Duration.ofSeconds(1), timeout);
+        return new AiSpeechToTextProvider(mapper, baseUrl(), Duration.ofSeconds(1), timeout);
     }
 
     private String baseUrl() {
