@@ -1,7 +1,7 @@
 package com.muse.meomuneum.recommendation;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,7 +9,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Base64;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 class AiSpeechToTextProviderTests {
@@ -36,14 +35,24 @@ class AiSpeechToTextProviderTests {
     }
 
     @Test
-    void sendsPureBase64AndMimeTypeAndReturnsTrimmedTranscript() throws IOException {
+    void sendsMultipartAudioAndReturnsTrimmedTranscript() throws IOException {
         byte[] audioBytes = {1, 2, 3, 4};
         server = server(exchange -> {
-            JsonNode request = mapper.readTree(exchange.getRequestBody());
-            String encoded = request.path("audio_base64").asText();
-            assertEquals(Base64.getEncoder().encodeToString(audioBytes), encoded);
-            assertFalse(encoded.startsWith("data:"));
-            assertEquals("audio/webm", request.path("mime_type").asText());
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            assertTrue(contentType.startsWith("multipart/form-data; boundary="));
+            String boundary = contentType.substring(contentType.indexOf("boundary=") + "boundary=".length());
+            byte[] requestBody = exchange.getRequestBody().readAllBytes();
+            byte[] separator = "\r\n\r\n".getBytes(StandardCharsets.UTF_8);
+            byte[] closing = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
+            int audioStart = indexOf(requestBody, separator, 0) + separator.length;
+            int audioEnd = indexOf(requestBody, closing, audioStart);
+            assertTrue(audioStart >= separator.length);
+            assertTrue(audioEnd >= audioStart);
+            String headers = new String(requestBody, 0, audioStart, StandardCharsets.UTF_8);
+
+            assertTrue(headers.contains("name=\"audio\"; filename=\"audio.webm\""));
+            assertTrue(headers.contains("Content-Type: audio/webm"));
+            assertArrayEquals(audioBytes, Arrays.copyOfRange(requestBody, audioStart, audioEnd));
             assertEquals("Bearer test-token", exchange.getRequestHeaders().getFirst("Authorization"));
             respond(exchange, 200, "{\"transcript\":\"  비 오는 날의 노래  \"}");
         });
@@ -136,5 +145,21 @@ class AiSpeechToTextProviderTests {
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+
+    private int indexOf(byte[] source, byte[] target, int fromIndex) {
+        for (int index = fromIndex; index <= source.length - target.length; index++) {
+            boolean matches = true;
+            for (int offset = 0; offset < target.length; offset++) {
+                if (source[index + offset] != target[offset]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return index;
+            }
+        }
+        return -1;
     }
 }

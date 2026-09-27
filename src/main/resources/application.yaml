@@ -40,7 +40,7 @@ speech:
   transcription:
     provider: ${SPEECH_TRANSCRIPTION_PROVIDER:unavailable}
     ai:
-      base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL:http://localhost:8000}
+      base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL:http://localhost:8001}
       auth-token: ${SPEECH_TRANSCRIPTION_AI_AUTH_TOKEN:}
       connect-timeout: ${SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT:3s}
       read-timeout: ${SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT:15s}

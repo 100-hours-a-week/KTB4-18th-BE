@@ -8,7 +8,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Base64;
+import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -44,9 +44,9 @@ public class AiSpeechToTextProvider implements SpeechToTextProvider {
 
     @Override
     public String transcribe(SpeechAudio audio) {
+        MultipartRequest multipart = multipartRequest(audio);
         var requestBuilder = HttpRequest.newBuilder(endpoint).timeout(readTimeout)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBody(audio), StandardCharsets.UTF_8));
+                .header("Content-Type", multipart.contentType()).POST(multipart.bodyPublisher());
         if (!authToken.isBlank()) {
             requestBuilder.header("Authorization", "Bearer " + authToken);
         }
@@ -73,13 +73,18 @@ public class AiSpeechToTextProvider implements SpeechToTextProvider {
         }
     }
 
-    private String requestBody(SpeechAudio audio) {
-        try {
-            return mapper.writeValueAsString(new AiTranscriptionRequest(
-                    Base64.getEncoder().encodeToString(audio.content()), audio.mediaType()));
-        } catch (JacksonException exception) {
-            throw new SpeechTranscriptionException(500, "음성 변환 요청을 생성할 수 없습니다.");
-        }
+    private MultipartRequest multipartRequest(SpeechAudio audio) {
+        String boundary = "----MeomuneumBoundary" + UUID.randomUUID();
+        String filename = "audio/mp4".equalsIgnoreCase(audio.mediaType()) ? "audio.mp4" : "audio.webm";
+        byte[] preamble = ("--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"audio\"; filename=\"" + filename + "\"\r\n"
+                + "Content-Type: " + audio.mediaType() + "\r\n\r\n").getBytes(StandardCharsets.UTF_8);
+        byte[] closing = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
+        HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.concat(
+                HttpRequest.BodyPublishers.ofByteArray(preamble),
+                HttpRequest.BodyPublishers.ofByteArray(audio.content()),
+                HttpRequest.BodyPublishers.ofByteArray(closing));
+        return new MultipartRequest("multipart/form-data; boundary=" + boundary, body);
     }
 
     private SpeechTranscriptionException mapError(int status, String body) {
@@ -109,6 +114,6 @@ public class AiSpeechToTextProvider implements SpeechToTextProvider {
         return new SpeechTranscriptionException(502, "음성 변환 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.");
     }
 
-    private record AiTranscriptionRequest(String audio_base64, String mime_type) {
+    private record MultipartRequest(String contentType, HttpRequest.BodyPublisher bodyPublisher) {
     }
 }
