@@ -18,6 +18,7 @@ spring:
 server:
   servlet:
     session:
+      timeout: 15d
       cookie:
         http-only: true
         same-site: lax

@@ -71,7 +71,8 @@ class RefreshTokenRotationMvcTest {
                 .andExpect(jsonPath("$.data.expires_in").value(3600))
                 .andReturn();
 
-        assertThat(success.getResponse().getHeader(HttpHeaders.SET_COOKIE)).contains("refresh_token=");
+        assertThat(success.getResponse().getHeader(HttpHeaders.SET_COOKIE))
+                .contains("refresh_token=", "Max-Age=1209600");
         assertThat(session.isInvalid()).isFalse();
 
         MvcResult second = mockMvc.perform(post("/api/v1/auth/token/refresh")
