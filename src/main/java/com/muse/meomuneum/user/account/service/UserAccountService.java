@@ -2,6 +2,7 @@ package com.muse.meomuneum.user.account.service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.Year;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ public class UserAccountService {
     private static final String INVALID_CREDENTIALS = "AUTH_401";
     private static final String PASSWORD_RECENT = "USER_PASSWORD_RECENT";
     private static final String PASSWORD_RECENT_MESSAGE = "최근 1년 내 변경된 비밀번호입니다.";
+    private static final short MIN_BIRTH_YEAR = 1900;
     private static final Logger log = LoggerFactory.getLogger(UserAccountService.class);
 
     private final Clock clock;
@@ -48,6 +50,11 @@ public class UserAccountService {
     public User updateProfile(Long userId, String nickname, Short birthYear, UserGender gender,
             String profileImageUrl) {
         User user = findActiveUserForUpdate(userId);
+        validateBirthYear(birthYear);
+        if (nickname != null && userRepository.existsByNicknameAndDeletedAtIsNullAndIdNot(nickname, userId)) {
+            throw new UserAccountException("USER_NICKNAME_DUPLICATE", HttpStatus.CONFLICT,
+                    "nickname already exists");
+        }
         user.updateProfile(nickname, birthYear, gender, profileImageUrl, now());
         return user;
     }
@@ -91,6 +98,12 @@ public class UserAccountService {
 
     private UserAccountException passwordRecent() {
         return new UserAccountException(PASSWORD_RECENT, HttpStatus.BAD_REQUEST, PASSWORD_RECENT_MESSAGE);
+    }
+
+    private void validateBirthYear(Short birthYear) {
+        if (birthYear != null && (birthYear < MIN_BIRTH_YEAR || birthYear > Year.now(clock).getValue())) {
+            throw new UserAccountException("USER_PROFILE_INVALID", HttpStatus.BAD_REQUEST, "invalid request");
+        }
     }
 
     private void logPasswordChangeRejection(String reason) {
