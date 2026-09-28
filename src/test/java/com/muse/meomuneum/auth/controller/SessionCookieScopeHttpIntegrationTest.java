@@ -139,6 +139,7 @@ class SessionCookieScopeHttpIntegrationTest {
         assertThat(logout.statusCode()).isEqualTo(204);
         String refreshHeader = logout.headers().firstValue("Set-Cookie").orElseThrow();
         assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Secure");
+        assertThat(refreshHeader.toLowerCase()).contains("samesite=lax");
     }
 
     private HttpResponse<String> post(HttpClient client, URI base, String body, String bearer, String csrf)
