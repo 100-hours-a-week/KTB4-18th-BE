@@ -18,6 +18,7 @@ import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.response.AuthSuccessCode;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
+import com.muse.meomuneum.global.security.RefreshTokenClaims;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
 
@@ -25,7 +26,6 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 public class AuthService {
 
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refresh_token";
-    private static final String AUTHENTICATED_USER_ID_ATTRIBUTE = "authenticatedUserId";
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final JwtTokenProvider jwtTokenProvider;
@@ -44,9 +44,9 @@ public class AuthService {
 
     public TokenResponse login(LoginRequest request, HttpServletRequest servletRequest, HttpHeaders headers) {
         User user = userAuthenticationService.authenticate(request.email(), request.password());
-        HttpSession session = servletRequest.getSession(true);
-        servletRequest.changeSessionId();
-        session.setAttribute(AUTHENTICATED_USER_ID_ATTRIBUTE, user.getId());
+        if (servletRequest.getSession(false) != null) {
+            servletRequest.changeSessionId();
+        }
         TokenResponse response = issueTokens(user, headers);
         log.info(
                 "event=auth_login_succeeded domainCode={} httpStatus={} userId={} requestId={}",
@@ -58,16 +58,16 @@ public class AuthService {
     }
 
     public TokenResponse refresh(HttpServletRequest request, HttpHeaders headers) {
+        String refreshToken = getRefreshToken(request);
+        var currentClaims = parseRefreshToken(refreshToken);
+        User user;
         try {
-            String refreshToken = getRefreshToken(request);
-            var currentClaims = jwtTokenProvider.parseRefreshToken(refreshToken);
-            requireSessionUser(request, currentClaims.userId());
-            User user = userAuthenticationService.findActiveUser(currentClaims.userId());
-            return issueTokens(user, headers);
+            user = userAuthenticationService.findActiveUser(currentClaims.userId());
         } catch (AuthenticationFailedException exception) {
-            refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
+            logRefreshFailure("user_unavailable");
             throw exception;
         }
+        return issueTokens(user, headers);
     }
 
     public void logout(HttpServletRequest request, HttpHeaders headers) {
@@ -88,21 +88,35 @@ public class AuthService {
 
     private String getRefreshToken(HttpServletRequest request) {
         if (request.getCookies() == null) {
-            throw new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
+            throw invalidRefreshToken("refresh_cookie_missing");
         }
 
-        return Arrays.stream(request.getCookies())
+        String refreshToken = Arrays.stream(request.getCookies())
                 .filter(cookie -> REFRESH_TOKEN_COOKIE_NAME.equals(cookie.getName()))
                 .map(cookie -> cookie.getValue())
                 .findFirst()
-                .filter(value -> !value.isBlank())
-                .orElseThrow(() -> new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN));
+                .orElseThrow(() -> invalidRefreshToken("refresh_cookie_missing"));
+        if (refreshToken.isBlank()) {
+            throw invalidRefreshToken("refresh_cookie_empty");
+        }
+        return refreshToken;
     }
 
-    private void requireSessionUser(HttpServletRequest request, Long userId) {
-        HttpSession session = request.getSession(false);
-        if (session == null || !userId.equals(session.getAttribute(AUTHENTICATED_USER_ID_ATTRIBUTE))) {
-            throw new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
+    private RefreshTokenClaims parseRefreshToken(String refreshToken) {
+        try {
+            return jwtTokenProvider.parseRefreshToken(refreshToken);
+        } catch (AuthenticationFailedException exception) {
+            logRefreshFailure("refresh_token_invalid");
+            throw exception;
         }
+    }
+
+    private AuthenticationFailedException invalidRefreshToken(String reason) {
+        logRefreshFailure(reason);
+        return new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN);
+    }
+
+    private void logRefreshFailure(String reason) {
+        log.warn("event=auth_refresh_rejected reason={} requestId={}", reason, MDC.get("requestId"));
     }
 }

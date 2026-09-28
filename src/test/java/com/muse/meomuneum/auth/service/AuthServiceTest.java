@@ -45,7 +45,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void loginBindsRefreshCookieToAuthenticatedSession() {
+    void loginIssuesTokensWithoutBindingRefreshToAuthenticatedSession() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         HttpHeaders headers = new HttpHeaders();
         User user = createUser();
@@ -58,16 +58,14 @@ class AuthServiceTest {
         TokenResponse response = authService.login(new LoginRequest("user@example.com", "password"), request, headers);
 
         assertThat(response).isEqualTo(new TokenResponse("access-token", 3600));
-        assertThat(request.getSession(false)).isNotNull();
-        assertThat(request.getSession(false).getAttribute("authenticatedUserId")).isEqualTo(1L);
+        assertThat(request.getSession(false)).isNull();
         verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "login-refresh-token");
     }
 
     @Test
-    void refreshUsesSignedCookieForMatchingSessionUser() {
+    void refreshUsesSignedCookieWithoutLoginSession() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
-        request.getSession(true).setAttribute("authenticatedUserId", 1L);
         HttpHeaders headers = new HttpHeaders();
         User user = createUser();
         RefreshTokenClaims currentClaims = claims();
@@ -85,7 +83,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void refreshFailureDeletesRefreshTokenCookie() {
+    void refreshFailureDoesNotDeleteCookieThatMayHaveBeenReplacedConcurrently() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "invalid-refresh-token"));
         HttpHeaders headers = new HttpHeaders();
@@ -97,38 +95,24 @@ class AuthServiceTest {
                 .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
                 .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
 
-        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
+        verify(refreshTokenCookieFactory, org.mockito.Mockito.never()).deleteRefreshTokenCookie(headers);
     }
 
     @Test
-    void refreshWithoutSessionRejectsSignedRefreshToken() {
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
-        HttpHeaders headers = new HttpHeaders();
-        RefreshTokenClaims currentClaims = claims();
-        when(jwtTokenProvider.parseRefreshToken("current-refresh-token")).thenReturn(currentClaims);
-
-        assertThatThrownBy(() -> authService.refresh(request, headers))
-                .isInstanceOf(AuthenticationFailedException.class)
-                .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
-                .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
-        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
-    }
-
-    @Test
-    void refreshForDifferentSessionUserDeletesRefreshTokenCookie() {
+    void refreshForDifferentPriorSessionStillUsesSignedCookieSubject() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setCookies(new Cookie("refresh_token", "current-refresh-token"));
         request.getSession(true).setAttribute("authenticatedUserId", 2L);
         HttpHeaders headers = new HttpHeaders();
+        User user = createUser();
         when(jwtTokenProvider.parseRefreshToken("current-refresh-token")).thenReturn(claims());
+        when(userAuthenticationService.findActiveUser(1L)).thenReturn(user);
+        when(jwtTokenProvider.createRefreshToken(user)).thenReturn("next-refresh-token");
+        when(jwtTokenProvider.createAccessToken(user)).thenReturn("access-token");
 
-        assertThatThrownBy(() -> authService.refresh(request, headers))
-                .isInstanceOf(AuthenticationFailedException.class)
-                .extracting(exception -> ((AuthenticationFailedException) exception).getErrorCode())
-                .isEqualTo(AuthErrorCode.REFRESH_INVALID_TOKEN);
-
-        verify(refreshTokenCookieFactory).deleteRefreshTokenCookie(headers);
+        assertThat(authService.refresh(request, headers)).isEqualTo(new TokenResponse("access-token", 3600));
+        verify(userAuthenticationService).findActiveUser(1L);
+        verify(refreshTokenCookieFactory).addRefreshTokenCookie(headers, "next-refresh-token");
     }
 
     @Test

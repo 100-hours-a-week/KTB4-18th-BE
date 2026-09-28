@@ -19,6 +19,7 @@ import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
+import com.muse.meomuneum.global.security.RequestOriginValidationFilter;
 import com.muse.meomuneum.global.security.SecurityErrorCode;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -36,17 +37,20 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             UserAuthenticationService userAuthenticationService,
-            @Value("${recommendation.allow-guests:false}") boolean allowGuests)
+            @Value("${recommendation.allow-guests:false}") boolean allowGuests,
+            @Value("${auth.cors.allowed-origins}") String allowedOrigins)
             throws Exception {
         String[] csrfIgnoredPaths = {
                 "/api/v1/auth/login",
-                "/api/v1/auth/logout",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
                 "/api/v1/locations/resolve",
                 "/api/v1/chat-rooms/**",
-                "/api/v1/users/signup"
+                "/api/v1/users/signup",
+                "/api/v1/music-records/**",
+                "/api/v1/users/me",
+                "/api/v1/users/me/**"
         };
 
         http.cors(Customizer.withDefaults())
@@ -84,7 +88,10 @@ public class SecurityConfig {
                         }))
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService),
-                        UsernamePasswordAuthenticationFilter.class);
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(
+                        new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter),
+                        JwtAuthenticationFilter.class);
         return http.build();
     }
 

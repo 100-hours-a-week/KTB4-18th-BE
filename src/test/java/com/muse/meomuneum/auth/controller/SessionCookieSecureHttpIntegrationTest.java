@@ -21,14 +21,14 @@ class SessionCookieSecureHttpIntegrationTest {
     private int port;
 
     @Test
-    void defaultSessionCookieIsSecureAndAvailableToMusicRecordPath() throws Exception {
+    void defaultSessionCookieIsSecureAndScopedToAuthPaths() throws Exception {
         URI uri = URI.create("http://127.0.0.1:" + port + "/api/v1/auth/token/csrf");
         HttpResponse<String> response = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofString());
 
         assertThat(response.statusCode()).isEqualTo(200);
         String cookie = response.headers().firstValue("Set-Cookie").orElseThrow();
-        assertThat(cookie).contains("JSESSIONID=", "Path=/", "HttpOnly", "Secure");
+        assertThat(cookie).contains("JSESSIONID=", "Path=/api/v1/auth", "HttpOnly", "Secure");
         assertThat(cookie.toLowerCase()).contains("samesite=lax");
     }
 }

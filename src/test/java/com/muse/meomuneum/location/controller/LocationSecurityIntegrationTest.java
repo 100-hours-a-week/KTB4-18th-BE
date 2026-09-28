@@ -47,7 +47,9 @@ class LocationSecurityIntegrationTest {
     @Test
     void rejectsAnonymousLocationResolution() throws Exception {
         mockMvc.perform(
-                post("/api/v1/locations/resolve").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+                post("/api/v1/locations/resolve")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody()))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"));
     }
 
@@ -57,6 +59,7 @@ class LocationSecurityIntegrationTest {
 
         mockMvc.perform(
                 post("/api/v1/locations/resolve").header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
                         .contentType(MediaType.APPLICATION_JSON).content(requestBody()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("location resolved"));
     }

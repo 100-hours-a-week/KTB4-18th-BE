@@ -71,7 +71,8 @@ class RecommendationApiTests {
     @Test
     void savesFiveSongsAndPromptAndGuestCanRetrieve() throws Exception {
         var session = new MockHttpSession();
-        mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
+                .contentType("application/json")
                 .content(body("비 오는 밤"))).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.items.length()").value(5))
                 .andExpect(jsonPath("$.data.status").value("COMPLETED"));
@@ -90,10 +91,12 @@ class RecommendationApiTests {
         when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "partial-1", "song", "artist", null, null)));
         var session = new MockHttpSession();
-        mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
+                .contentType("application/json")
                 .content(body("비 오는 밤"))).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.items.length()").value(1));
-        mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
+                .contentType("application/json")
                 .content(body("드라이브").replace("TEXT", "VOICE"))).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.items.length()").value(1));
         assertEquals("VOICE", jdbc.queryForObject("SELECT input_type FROM recommendation_sessions WHERE id = ?",
@@ -117,7 +120,8 @@ class RecommendationApiTests {
         }
         clearInvocations(provider);
 
-        mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
+                .contentType("application/json")
                 .content(body("current"))).andExpect(status().isCreated());
 
         var command = org.mockito.ArgumentCaptor
@@ -139,7 +143,8 @@ class RecommendationApiTests {
                 """, session.getId(), "550e8400-e29b-41d4-a716-446655440000");
         clearInvocations(provider);
 
-        mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
+                .contentType("application/json")
                 .content(body("a".repeat(300)))).andExpect(status().isCreated());
 
         var command = org.mockito.ArgumentCaptor
@@ -152,7 +157,8 @@ class RecommendationApiTests {
     void emptySearchReturns503WithoutSavingSession() throws Exception {
         when(provider.recommend(any())).thenReturn(java.util.List.of());
         int before = count("recommendation_sessions");
-        mvc.perform(post("/api/v1/recommendations").contentType("application/json").content(body("없는 음악")))
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                .contentType("application/json").content(body("없는 음악")))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.message").value("조건에 맞는 추천곡을 찾지 못했습니다. 다른 조건으로 다시 요청해 주세요."));
         assertEquals(before, count("recommendation_sessions"));
@@ -163,7 +169,8 @@ class RecommendationApiTests {
         when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "partial-1", "song", "artist", null, null)));
 
-        mvc.perform(post("/api/v1/recommendations").contentType("application/json").content(body("한 곡만")))
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                .contentType("application/json").content(body("한 곡만")))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.data.items.length()").value(1))
                 .andExpect(jsonPath("$.data.status").value("COMPLETED"));
     }
@@ -172,10 +179,12 @@ class RecommendationApiTests {
     void rejectsBlankLongAndUnsupportedInputBeforeSaving() throws Exception {
         int before = count("recommendation_sessions");
         for (String prompt : new String[]{"   ", "a".repeat(1001)}) {
-            mvc.perform(post("/api/v1/recommendations").contentType("application/json").content(body(prompt)))
+            mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                    .contentType("application/json").content(body(prompt)))
                     .andExpect(status().isBadRequest());
         }
-        mvc.perform(post("/api/v1/recommendations").contentType("application/json")
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                .contentType("application/json")
                 .content(body("노래").replace("TEXT", "IMAGE"))).andExpect(status().isBadRequest());
         assertEquals(before, count("recommendation_sessions"));
     }
@@ -183,7 +192,8 @@ class RecommendationApiTests {
     @Test
     void cannotReadAnotherGuestsResult() throws Exception {
         var owner = new MockHttpSession();
-        mvc.perform(post("/api/v1/recommendations").session(owner).contentType("application/json").content(body("노래")))
+        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(owner)
+                .contentType("application/json").content(body("노래")))
                 .andExpect(status().isCreated());
         long id = findRecommendationId(owner);
         mvc.perform(get("/api/v1/recommendations/" + id).session(new MockHttpSession()))
@@ -199,7 +209,8 @@ class RecommendationApiTests {
         int musicAfterFirst = 0;
         var session = new MockHttpSession();
         for (int i = 0; i < 2; i++) {
-            mvc.perform(post("/api/v1/recommendations").session(session).contentType("application/json")
+            mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
+                    .contentType("application/json")
                     .content(body("신나는 노래"))).andExpect(status().isCreated());
             if (i == 0) {
                 musicAfterFirst = count("music");

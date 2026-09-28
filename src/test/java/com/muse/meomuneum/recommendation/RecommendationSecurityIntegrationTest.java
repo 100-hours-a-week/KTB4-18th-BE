@@ -1,14 +1,16 @@
 package com.muse.meomuneum.recommendation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -36,7 +38,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = RecommendationController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
-@Import({SecurityConfig.class, RecommendationSecurityIntegrationTest.SecurityTestConfiguration.class})
+@Import({SecurityConfig.class, CurrentUserResolver.class,
+        RecommendationSecurityIntegrationTest.SecurityTestConfiguration.class})
 class RecommendationSecurityIntegrationTest {
 
     @Autowired
@@ -49,15 +52,7 @@ class RecommendationSecurityIntegrationTest {
     private RecommendationService recommendationService;
 
     @Autowired
-    private CurrentUserResolver currentUserResolver;
-
-    @Autowired
     private ApplicationContext applicationContext;
-
-    @BeforeEach
-    void setUp() {
-        when(currentUserResolver.resolve(org.mockito.ArgumentMatchers.any())).thenReturn(1L);
-    }
 
     @Test
     void rejectsAnonymousRecommendationRequestWhenGuestsAreDisabled() throws Exception {
@@ -72,29 +67,50 @@ class RecommendationSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousRecommendationPostWhenGuestsAreDisabled() throws Exception {
-        mockMvc.perform(post("/api/v1/recommendations").contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(post("/api/v1/recommendations").header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                .contentType(MediaType.APPLICATION_JSON)
                 .content(recommendationRequest())).andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("unauthorized")).andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
     void rejectsInvalidBearerRecommendationPostWithoutCsrfToken() throws Exception {
-        mockMvc.perform(post("/api/v1/recommendations").header(HttpHeaders.AUTHORIZATION, "Bearer invalid-token")
+        mockMvc.perform(post("/api/v1/recommendations").header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer invalid-token")
                 .contentType(MediaType.APPLICATION_JSON).content(recommendationRequest()))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"))
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
-    void passesCsrfFilterForValidBearerRecommendationPost() throws Exception {
+    void rejectsRefreshTokenAsBearerForProtectedRecommendationPost() throws Exception {
+        clearInvocations(recommendationService);
+
+        mockMvc.perform(post("/api/v1/recommendations")
+                .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + createRefreshToken())
+                .contentType(MediaType.APPLICATION_JSON).content(recommendationRequest()))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        verify(recommendationService, never()).create(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void allowsAccessBearerRecommendationPostWithoutSessionCsrf() throws Exception {
         when(recommendationService.create(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.eq(1L)))
                 .thenReturn(new RecommendationResponse(1L, "COMPLETED", "conversation-key", java.util.List.of(), null));
 
         mockMvc.perform(
-                post("/api/v1/recommendations").header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
+                post("/api/v1/recommendations").header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
                         .contentType(MediaType.APPLICATION_JSON).content(recommendationRequest()))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.message").value("recommendation completed"));
+
+        verify(recommendationService).create(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(1L));
     }
 
     private String createAccessToken() {
@@ -102,6 +118,13 @@ class RecommendationSecurityIntegrationTest {
         when(user.getId()).thenReturn(1L);
         when(user.getRole()).thenReturn(UserRole.USER);
         return jwtTokenProvider.createAccessToken(user);
+    }
+
+    private String createRefreshToken() {
+        User user = mock(User.class);
+        when(user.getId()).thenReturn(1L);
+        when(user.getRole()).thenReturn(UserRole.USER);
+        return jwtTokenProvider.createRefreshToken(user);
     }
 
     private String recommendationRequest() {
@@ -132,11 +155,6 @@ class RecommendationSecurityIntegrationTest {
         @Bean
         RecommendationService recommendationService() {
             return mock(RecommendationService.class);
-        }
-
-        @Bean
-        CurrentUserResolver currentUserResolver() {
-            return mock(CurrentUserResolver.class);
         }
 
         @Bean
