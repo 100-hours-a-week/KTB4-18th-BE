@@ -3,10 +3,9 @@ package com.muse.meomuneum.recommendation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -48,31 +47,25 @@ class RecommendationServiceContextTests {
     }
 
     @Test
-    void limitsHistoryRowsAndProviderContextLength() {
-        when(repository.findRecentPrompts(CONVERSATION_KEY, "guest", null, 10))
-                .thenReturn(List.of("history-11", "history-10", "history-9", "history-8", "history-7", "history-6",
-                        "history-5", "history-4", "history-3", "history-2"));
-
+    void sendsOnlyCurrentPromptToProvider() {
         service.create(request("current"), "guest", null);
 
         var command = ArgumentCaptor.forClass(RecommendationCommand.class);
         verify(provider).recommend(command.capture());
-        assertEquals(String.join("\n", List.of("history-2", "history-3", "history-4", "history-5", "history-6",
-                "history-7", "history-8", "history-9", "history-10", "history-11", "current")),
-                command.getValue().message());
+        assertEquals("current", command.getValue().message());
         assertTrue(command.getValue().message().length() <= 200);
         assertEquals(java.util.UUID.fromString(CONVERSATION_KEY), command.getValue().threadId());
-        verify(repository).findRecentPrompts(CONVERSATION_KEY, "guest", null, 10);
+        verify(repository).saveCompleted(any(), any(), any(), anyList());
+        verifyNoMoreInteractions(repository);
     }
 
     @Test
-    void skipsHistoryQueryWhenCurrentPromptFillsContext() {
+    void limitsCurrentPromptToAiMessageLength() {
         service.create(request("a".repeat(300)), "guest", null);
 
         var command = ArgumentCaptor.forClass(RecommendationCommand.class);
         verify(provider).recommend(command.capture());
         assertEquals("a".repeat(200), command.getValue().message());
-        verify(repository, never()).findRecentPrompts(any(), any(), any(), anyInt());
     }
 
     private RecommendationRequest request(String prompt) {

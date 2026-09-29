@@ -3,7 +3,6 @@ package com.muse.meomuneum.recommendation.service;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,8 +28,7 @@ import io.micrometer.core.instrument.Timer;
 
 @Service
 public class RecommendationService {
-    private static final int MAX_CONTEXT_LENGTH = 200;
-    private static final int MAX_HISTORY_COUNT = 10;
+    private static final int MAX_AI_MESSAGE_LENGTH = 200;
     private static final int HISTORY_PAGE_SIZE = 20;
 
     private final RecommendationProvider provider;
@@ -48,13 +46,12 @@ public class RecommendationService {
         var requestTimer = Timer.start(meterRegistry);
         String outcome = "failure";
         try {
-            var prompts = buildProviderPrompts(request, guestSessionId, userId);
             var providerTimer = Timer.start(meterRegistry);
             String providerOutcome = "failure";
             List<TrackData> tracks;
             try {
                 var command = new RecommendationCommand(UUID.fromString(request.conversation_key()),
-                        UUID.randomUUID(), String.join("\n", prompts));
+                        UUID.randomUUID(), takeLast(request.prompt().trim(), MAX_AI_MESSAGE_LENGTH));
                 tracks = provider.recommend(command);
                 providerOutcome = "success";
             } catch (RecommendationException exception) {
@@ -66,7 +63,7 @@ public class RecommendationService {
                 providerTimer.stop(Timer.builder("recommendation.provider.duration").tag("provider", providerName())
                         .tag("outcome", providerOutcome).register(meterRegistry));
             }
-            if (tracks.isEmpty() || tracks.size() > 5
+            if (tracks.size() > 5
                     || tracks.stream().map(t -> t.provider() + ":" + t.externalId()).distinct().count() != tracks.size()
                     || tracks.stream().map(t -> (t.artistName() + ":" + t.title()).trim().toLowerCase(Locale.ROOT))
                             .distinct().count() != tracks.size()) {
@@ -84,36 +81,6 @@ public class RecommendationService {
             requestTimer.stop(
                     Timer.builder("recommendation.request.duration").tag("outcome", outcome).register(meterRegistry));
         }
-    }
-
-    private List<String> buildProviderPrompts(RecommendationRequest request, String guestSessionId, Long userId) {
-        String currentPrompt = takeLast(request.prompt().trim(), MAX_CONTEXT_LENGTH);
-        var prompts = new ArrayDeque<String>();
-        prompts.addFirst(currentPrompt);
-
-        int remainingLength = MAX_CONTEXT_LENGTH - currentPrompt.length();
-        if (remainingLength <= 1) {
-            return List.copyOf(prompts);
-        }
-
-        var recentPrompts = repository.findRecentPrompts(request.conversation_key(), guestSessionId, userId,
-                MAX_HISTORY_COUNT);
-        for (String prompt : recentPrompts) {
-            String trimmedPrompt = prompt.trim();
-            if (trimmedPrompt.isEmpty()) {
-                continue;
-            }
-
-            int availableLength = remainingLength - 1;
-            if (availableLength <= 0) {
-                break;
-            }
-
-            String includedPrompt = takeLast(trimmedPrompt, availableLength);
-            prompts.addFirst(includedPrompt);
-            remainingLength -= includedPrompt.length() + 1;
-        }
-        return List.copyOf(prompts);
     }
 
     private String takeLast(String value, int maxLength) {

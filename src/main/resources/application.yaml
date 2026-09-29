@@ -37,14 +37,14 @@ auth:
     refresh-token-expiration-seconds: 1209600
 
 recommendation:
-  provider: ${RECOMMENDATION_PROVIDER:itunes}
+  provider: ${RECOMMENDATION_PROVIDER:ai}
   itunes:
     country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
     timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
   ai:
-    base-url: ${RECOMMENDATION_AI_BASE_URL:http://localhost:8000}
+    base-url: ${RECOMMENDATION_AI_BASE_URL}
     connect-timeout: ${RECOMMENDATION_AI_CONNECT_TIMEOUT:3s}
-    read-timeout: ${RECOMMENDATION_AI_READ_TIMEOUT:10s}
+    read-timeout: ${RECOMMENDATION_AI_READ_TIMEOUT:120s}
 
 kakao:
   maps:
@@ -52,17 +52,17 @@ kakao:
 
 speech:
   transcription:
-    provider: ${SPEECH_TRANSCRIPTION_PROVIDER:unavailable}
+    provider: ${SPEECH_TRANSCRIPTION_PROVIDER:ai}
     ai:
-      base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL:http://localhost:8001}
+      base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL}
       connect-timeout: ${SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT:3s}
-      read-timeout: ${SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT:15s}
+      read-timeout: ${SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT:70s}
 
 location:
   token:
     secret: ${LOCATION_TOKEN_SECRET}
   reverse-geocoding:
-    base-url: ${LOCATION_REVERSE_GEOCODING_BASE_URL:https://dapi.kakao.com}
+    base-url: ${LOCATION_REVERSE_GEOCODING_BASE_URL}
     rest-api-key: ${LOCATION_KAKAO_REST_API_KEY:}
     connect-timeout: ${LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT:2s}
     read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
