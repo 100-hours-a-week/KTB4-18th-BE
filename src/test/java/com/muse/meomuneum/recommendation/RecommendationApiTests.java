@@ -87,7 +87,7 @@ class RecommendationApiTests {
     }
 
     @Test
-    void returnsPartialResultsAndPassesPreviousPromptsToProvider() throws Exception {
+    void returnsPartialResultsAndPassesOnlyCurrentPromptToProvider() throws Exception {
         when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "partial-1", "song", "artist", null, null)));
         var session = new MockHttpSession();
@@ -104,11 +104,11 @@ class RecommendationApiTests {
         var commands = org.mockito.ArgumentCaptor
                 .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
         verify(provider, times(2)).recommend(commands.capture());
-        assertEquals("비 오는 밤\n드라이브", commands.getAllValues().get(1).message());
+        assertEquals("드라이브", commands.getAllValues().get(1).message());
     }
 
     @Test
-    void limitsPreviousPromptsBeforeBuildingProviderContext() throws Exception {
+    void doesNotPassSavedPromptsToProvider() throws Exception {
         var session = new MockHttpSession();
         String conversationKey = "550e8400-e29b-41d4-a716-446655440000";
         for (int i = 0; i < 12; i++) {
@@ -127,14 +127,12 @@ class RecommendationApiTests {
         var command = org.mockito.ArgumentCaptor
                 .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
         verify(provider).recommend(command.capture());
-        assertEquals(String.join("\n", java.util.List.of("history-2", "history-3", "history-4", "history-5",
-                "history-6", "history-7", "history-8", "history-9", "history-10", "history-11", "current")),
-                command.getValue().message());
+        assertEquals("current", command.getValue().message());
         assertTrue(command.getValue().message().length() <= 200);
     }
 
     @Test
-    void skipsPreviousPromptsWhenCurrentPromptFillsContext() throws Exception {
+    void limitsCurrentPromptToAiMessageLength() throws Exception {
         var session = new MockHttpSession();
         jdbc.update("""
                 INSERT INTO recommendation_sessions
@@ -154,14 +152,14 @@ class RecommendationApiTests {
     }
 
     @Test
-    void emptySearchReturns503WithoutSavingSession() throws Exception {
+    void emptySearchReturnsCompletedResultAndSavesSession() throws Exception {
         when(provider.recommend(any())).thenReturn(java.util.List.of());
         int before = count("recommendation_sessions");
         mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
                 .contentType("application/json").content(body("없는 음악")))
-                .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.message").value("조건에 맞는 추천곡을 찾지 못했습니다. 다른 조건으로 다시 요청해 주세요."));
-        assertEquals(before, count("recommendation_sessions"));
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.items.length()").value(0));
+        assertEquals(before + 1, count("recommendation_sessions"));
     }
 
     @Test
