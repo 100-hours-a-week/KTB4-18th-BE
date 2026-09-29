@@ -1,17 +1,5 @@
 package com.muse.meomuneum.auth.service;
 
-import java.util.Arrays;
-import java.util.Optional;
-
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
-import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Service;
-
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
@@ -23,6 +11,16 @@ import com.muse.meomuneum.global.security.RefreshTokenClaims;
 import com.muse.meomuneum.global.security.TokenClaims;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.http.HttpHeaders;
+import org.springframework.stereotype.Service;
+
+import java.util.Arrays;
+import java.util.Optional;
 
 @Service
 public class AuthService {
@@ -145,16 +143,18 @@ public class AuthService {
     }
 
     private Optional<String> getOptionalCookie(HttpServletRequest request, String name) {
-        if (request.getCookies() == null)
+        if (request.getCookies() == null) {
             return Optional.empty();
+        }
         return Arrays.stream(request.getCookies()).filter(cookie -> name.equals(cookie.getName()))
                 .map(cookie -> cookie.getValue()).filter(value -> !value.isBlank()).findFirst();
     }
 
     private Optional<TokenClaims> getAccessTokenLocator(HttpServletRequest request) {
         String authorization = request.getHeader("Authorization");
-        if (authorization == null || authorization.isBlank())
+        if (authorization == null || authorization.isBlank()){
             return Optional.empty();
+        }
         if (!authorization.startsWith("Bearer ") || authorization.length() <= 7) {
             throw new AuthenticationFailedException(AuthErrorCode.LOGOUT_SESSION_MISMATCH);
         }
