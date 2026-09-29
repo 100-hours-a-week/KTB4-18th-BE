@@ -43,7 +43,8 @@ class SpeechTranscriptionSecurityIntegrationTest {
 
     @Test
     void rejectsAnonymousRequestWhenRecommendationGuestsAreAllowed() throws Exception {
-        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio())).andExpect(status().isUnauthorized())
+        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio())
+                .header(HttpHeaders.ORIGIN, "http://localhost:5173")).andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("unauthorized")).andExpect(jsonPath("$.data").doesNotExist());
     }
 
@@ -52,8 +53,10 @@ class SpeechTranscriptionSecurityIntegrationTest {
         when(service.transcribe(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new SpeechTranscriptionResponse("비 오는 날 듣기 좋은 노래"));
 
-        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio()).header(HttpHeaders.AUTHORIZATION,
-                "Bearer " + createAccessToken())).andExpect(status().isOk())
+        mockMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio())
+                .header(HttpHeaders.ORIGIN, "http://localhost:5173").header(HttpHeaders.AUTHORIZATION,
+                        "Bearer " + createAccessToken()))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.transcript").value("비 오는 날 듣기 좋은 노래"));
     }
 

@@ -11,7 +11,8 @@ public enum AuthErrorCode implements ErrorCode {
                     "AUTH_401", HttpStatus.UNAUTHORIZED, "invalid credentials"),
 
     REFRESH_INVALID_TOKEN(
-            "AUTH_REFRESH_401", HttpStatus.UNAUTHORIZED, "invalid refresh token");
+            "AUTH_REFRESH_401", HttpStatus.UNAUTHORIZED, "invalid refresh token"), LOGOUT_SESSION_MISMATCH(
+                    "AUTH_LOGOUT_403", HttpStatus.FORBIDDEN, "session mismatch");
 
     private final String code;
     private final String message;

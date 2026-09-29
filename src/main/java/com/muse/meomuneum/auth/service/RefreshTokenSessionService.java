@@ -1,104 +1,80 @@
 package com.muse.meomuneum.auth.service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.HexFormat;
-
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
-
-import org.springframework.stereotype.Service;
-
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.security.RefreshTokenClaims;
+import com.muse.meomuneum.global.security.TokenClaims;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+
+/** Keeps the stable refresh token's signed identity bound to the servlet session. */
 @Service
 public class RefreshTokenSessionService {
 
     static final String USER_ID_ATTRIBUTE = "auth.refresh.user-id";
-    static final String ACTIVE_TOKEN_HASH_ATTRIBUTE = "auth.refresh.active-token-hash";
-    static final String CONSUMED_TOKEN_HASH_ATTRIBUTE = "auth.refresh.consumed-token-hash";
+    static final String SESSION_ID_ATTRIBUTE = "auth.refresh.session-id";
+    static final String TOKEN_ID_ATTRIBUTE = "auth.refresh.token-id";
     static final String EXPIRES_AT_ATTRIBUTE = "auth.refresh.expires-at";
 
-    public void register(HttpServletRequest request, RefreshTokenClaims claims, String refreshToken) {
-        HttpSession session = request.getSession(true);
+    public void register(HttpSession session, RefreshTokenClaims claims) {
         synchronized (session) {
-            setSessionAttributes(session, claims.userId(), hash(refreshToken), claims.expiresAt());
-            session.removeAttribute(CONSUMED_TOKEN_HASH_ATTRIBUTE);
+            if (claims.sessionId() == null || claims.tokenId() == null
+                    || !claims.sessionId().equals(session.getId()) || claims.expiresAt() == null) {
+                throw invalidRefreshToken();
+            }
+            session.setAttribute(USER_ID_ATTRIBUTE, claims.userId());
+            session.setAttribute(SESSION_ID_ATTRIBUTE, claims.sessionId());
+            session.setAttribute(TOKEN_ID_ATTRIBUTE, claims.tokenId());
+            session.setAttribute(EXPIRES_AT_ATTRIBUTE, claims.expiresAt());
+            long remainingSeconds = java.time.Duration.between(Instant.now(), claims.expiresAt()).toSeconds();
+            if (remainingSeconds <= 0) {
+                throw invalidRefreshToken();
+            }
+            session.setMaxInactiveInterval((int) Math.min(remainingSeconds, Integer.MAX_VALUE));
         }
     }
 
-    public void rotate(HttpServletRequest request, RefreshTokenClaims currentClaims, String currentRefreshToken,
-            RefreshTokenClaims nextClaims, String nextRefreshToken) {
-        HttpSession session = request.getSession(false);
-        if (session == null) {
-            throw invalidRefreshToken();
-        }
-
+    public void validate(HttpSession session, RefreshTokenClaims claims) {
         synchronized (session) {
-            try {
-                validateActiveSession(session, currentClaims, currentRefreshToken);
-                String currentTokenHash = hash(currentRefreshToken);
-                setSessionAttributes(session, nextClaims.userId(), hash(nextRefreshToken), nextClaims.expiresAt());
-                session.setAttribute(CONSUMED_TOKEN_HASH_ATTRIBUTE, currentTokenHash);
-            } catch (AuthenticationFailedException exception) {
-                invalidate(session);
-                throw exception;
-            } catch (IllegalStateException exception) {
+            if (claims.expiresAt() == null || !claims.expiresAt().isAfter(Instant.now())
+                    || !claims.userId().equals(session.getAttribute(USER_ID_ATTRIBUTE))
+                    || !claims.sessionId().equals(session.getId())
+                    || !claims.sessionId().equals(session.getAttribute(SESSION_ID_ATTRIBUTE))
+                    || !claims.tokenId().equals(session.getAttribute(TOKEN_ID_ATTRIBUTE))
+                    || !claims.expiresAt().equals(session.getAttribute(EXPIRES_AT_ATTRIBUTE))) {
                 throw invalidRefreshToken();
             }
         }
     }
 
-    private void validateActiveSession(HttpSession session, RefreshTokenClaims claims, String refreshToken) {
-        if (!claims.userId().equals(session.getAttribute(USER_ID_ATTRIBUTE))) {
-            throw invalidRefreshToken();
-        }
-
-        String refreshTokenHash = hash(refreshToken);
-        Object consumedTokenHash = session.getAttribute(CONSUMED_TOKEN_HASH_ATTRIBUTE);
-        if (refreshTokenHash.equals(consumedTokenHash)) {
-            throw invalidRefreshToken();
-        }
-
-        Object activeTokenHash = session.getAttribute(ACTIVE_TOKEN_HASH_ATTRIBUTE);
-        if (!(activeTokenHash instanceof String) || !refreshTokenHash.equals(activeTokenHash)) {
-            throw invalidRefreshToken();
+    public boolean matchesAccessLocator(HttpSession session, TokenClaims claims) {
+        synchronized (session) {
+            return claims.sessionId() != null
+                    && claims.userId().equals(session.getAttribute(USER_ID_ATTRIBUTE))
+                    && claims.sessionId().equals(session.getId())
+                    && claims.sessionId().equals(session.getAttribute(SESSION_ID_ATTRIBUTE));
         }
     }
 
-    private void setSessionAttributes(HttpSession session, Long userId, String refreshTokenHash, Instant expiresAt) {
-        int maxInactiveInterval = getMaxInactiveInterval(expiresAt);
-        session.setAttribute(USER_ID_ATTRIBUTE, userId);
-        session.setAttribute(ACTIVE_TOKEN_HASH_ATTRIBUTE, refreshTokenHash);
-        session.setAttribute(EXPIRES_AT_ATTRIBUTE, expiresAt);
-        session.setMaxInactiveInterval(maxInactiveInterval);
-    }
-
-    private int getMaxInactiveInterval(Instant expiresAt) {
-        long remainingSeconds = Duration.between(Instant.now(), expiresAt).toSeconds();
-        if (remainingSeconds <= 0) {
-            throw invalidRefreshToken();
-        }
-
-        return (int) Math.min(remainingSeconds, Integer.MAX_VALUE);
-    }
-
-    private String hash(String refreshToken) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(refreshToken.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 algorithm is unavailable", exception);
+    public boolean matchesRefreshLocator(HttpSession session, RefreshTokenClaims claims) {
+        synchronized (session) {
+            return claims.sessionId() != null
+                    && claims.userId().equals(session.getAttribute(USER_ID_ATTRIBUTE))
+                    && claims.sessionId().equals(session.getId())
+                    && claims.sessionId().equals(session.getAttribute(SESSION_ID_ATTRIBUTE))
+                    && claims.tokenId().equals(session.getAttribute(TOKEN_ID_ATTRIBUTE));
         }
     }
 
-    private void invalidate(HttpSession session) {
-        session.invalidate();
+    public void clear(HttpSession session) {
+        synchronized (session) {
+            session.removeAttribute(USER_ID_ATTRIBUTE);
+            session.removeAttribute(SESSION_ID_ATTRIBUTE);
+            session.removeAttribute(TOKEN_ID_ATTRIBUTE);
+            session.removeAttribute(EXPIRES_AT_ATTRIBUTE);
+        }
     }
 
     private AuthenticationFailedException invalidRefreshToken() {

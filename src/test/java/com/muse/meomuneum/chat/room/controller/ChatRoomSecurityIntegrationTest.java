@@ -48,7 +48,9 @@ class ChatRoomSecurityIntegrationTest {
     @Test
     void rejectsAnonymousJoinRequests() throws Exception {
         mockMvc.perform(
-                post("/api/v1/chat-rooms/700/members").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+                post("/api/v1/chat-rooms/700/members")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody()))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"));
     }
 
@@ -58,6 +60,7 @@ class ChatRoomSecurityIntegrationTest {
                 new ChatRoomMembershipResponse(900L, 700L, 25L, OffsetDateTime.parse("2026-09-25T00:00:00Z")), true));
 
         mockMvc.perform(post("/api/v1/chat-rooms/700/members")
+                .header(HttpHeaders.ORIGIN, "http://localhost:5173")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
                 .contentType(MediaType.APPLICATION_JSON).content(requestBody())).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("chat room joined"));

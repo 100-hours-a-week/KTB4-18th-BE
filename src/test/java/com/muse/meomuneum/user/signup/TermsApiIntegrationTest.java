@@ -54,7 +54,9 @@ class TermsApiIntegrationTest {
         String body = "{\"email\":\"" + email + "\",\"password\":\"Testpass1!\","
                 + "\"nickname\":\"약관검증\",\"terms_ids\":[1," + currentAiId + "]}";
 
-        mvc.perform(post("/api/v1/users/signup").contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(post("/api/v1/users/signup")
+                .header("Origin", "http://localhost:5174")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("register success"));
 
@@ -69,7 +71,9 @@ class TermsApiIntegrationTest {
     void oldRequiredVersionUsesExistingBadRequestContract() throws Exception {
         String body = "{\"email\":\"old-terms@example.com\",\"password\":\"Testpass1!\","
                 + "\"nickname\":\"약관검증\",\"terms_ids\":[1,2]}";
-        mvc.perform(post("/api/v1/users/signup").contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(post("/api/v1/users/signup")
+                .header("Origin", "http://localhost:5174")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid request"));
     }

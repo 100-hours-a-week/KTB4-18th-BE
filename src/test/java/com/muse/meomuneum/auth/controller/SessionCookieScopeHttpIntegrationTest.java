@@ -29,7 +29,8 @@ import com.muse.meomuneum.user.domain.UserRole;
 
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "server.servlet.session.cookie.secure=false")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "server.servlet.session.cookie.secure=false", "auth.cookie.secure=true"})
 @ActiveProfiles({"test", "music-record-local"})
 @EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 class SessionCookieScopeHttpIntegrationTest {
@@ -47,7 +48,7 @@ class SessionCookieScopeHttpIntegrationTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void csrfSessionCookieIsSentToMusicRecordWritePath() throws Exception {
+    void csrfSessionCookieIsScopedToAuthAndBearerWritesNeedNoSessionCsrf() throws Exception {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         long userId = positiveId();
         long sidoId = positiveId();
@@ -86,12 +87,12 @@ class SessionCookieScopeHttpIntegrationTest {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(csrf.statusCode()).isEqualTo(200);
         String sessionHeader = csrf.headers().firstValue("Set-Cookie").orElseThrow();
-        assertThat(sessionHeader).contains("JSESSIONID=", "Path=/", "HttpOnly");
+        assertThat(sessionHeader).contains("JSESSIONID=", "Path=/api/v1/auth", "HttpOnly");
         assertThat(sessionHeader.toLowerCase()).contains("samesite=lax").doesNotContain("secure");
         String path = cookies.getCookieStore().getCookies().stream()
                 .filter(cookie -> "JSESSIONID".equals(cookie.getName()))
                 .map(java.net.HttpCookie::getPath).findFirst().orElseThrow();
-        assertThat(path).isEqualTo("/");
+        assertThat(path).isEqualTo("/api/v1/auth");
         String token = mapper.readTree(csrf.body()).path("data").path("csrf_token").asText();
         User user = mock(User.class);
         when(user.getId()).thenReturn(userId);
@@ -103,13 +104,13 @@ class SessionCookieScopeHttpIntegrationTest {
         String body = "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""
                 + musicId + "\"},\"location_resolution_token\":\"" + locationToken + "\"}";
 
-        assertError(post(client, base, body, bearer, null), 403, "request rejected");
-        assertError(post(client, base, body, bearer, "invalid"), 403, "request rejected");
+        assertError(post(client, base, body, bearer, null, null), 403, "request rejected");
+        assertError(post(client, base, body, bearer, null, "https://attacker.example"), 403, "request rejected");
 
         HttpResponse<String> write = client.send(HttpRequest.newBuilder(
                 base.resolve("/api/v1/music-records"))
                 .header("Content-Type", "application/json")
-                .header("X-CSRF-TOKEN", token)
+                .header("Origin", "http://localhost:5174")
                 .header("Authorization", "Bearer " + bearer)
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build(), HttpResponse.BodyHandlers.ofString());
@@ -117,32 +118,29 @@ class SessionCookieScopeHttpIntegrationTest {
         long recordId = mapper.readTree(write.body()).path("data").path("record_id").asLong();
         assertThat(recordId).isPositive();
 
-        HttpResponse<String> nextCsrf = client.send(HttpRequest.newBuilder(
-                base.resolve("/api/v1/auth/token/csrf")).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertThat(nextCsrf.statusCode()).isEqualTo(200);
-        String patchToken = mapper.readTree(nextCsrf.body()).path("data").path("csrf_token").asText();
         URI record = base.resolve("/api/v1/music-records/" + recordId);
-        assertError(patch(client, record, bearer, null), 403, "forbidden");
-        assertError(patch(client, record, bearer, "invalid"), 403, "forbidden");
-        assertThat(patch(client, record, bearer, patchToken).statusCode()).isEqualTo(200);
+        assertError(patch(client, record, bearer, null, null), 403, "request rejected");
+        assertThat(patch(client, record, bearer, null, "http://localhost:5174").statusCode()).isEqualTo(200);
         CookieManager anonymousCookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         HttpClient anonymousClient = HttpClient.newBuilder().cookieHandler(anonymousCookies).build();
-        HttpResponse<String> anonymousCsrf = anonymousClient.send(HttpRequest.newBuilder(
-                base.resolve("/api/v1/auth/token/csrf")).GET().build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(anonymousCsrf.statusCode()).isEqualTo(200);
-        String anonymousToken = mapper.readTree(anonymousCsrf.body()).path("data").path("csrf_token").asText();
-        assertError(post(anonymousClient, base, body, null, anonymousToken), 401, "unauthorized");
+        assertError(post(anonymousClient, base, body, null, null, "http://localhost:5174"), 401, "unauthorized");
 
+        HttpResponse<String> rejectedLogout = client.send(HttpRequest.newBuilder(base.resolve("/api/v1/auth/logout"))
+                .header("Origin", "http://localhost:5174")
+                .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(rejectedLogout.statusCode()).isEqualTo(403);
         HttpResponse<String> logout = client.send(HttpRequest.newBuilder(base.resolve("/api/v1/auth/logout"))
+                .header("Origin", "http://localhost:5174")
+                .header("X-CSRF-TOKEN", token)
                 .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
         assertThat(logout.statusCode()).isEqualTo(204);
         String refreshHeader = logout.headers().firstValue("Set-Cookie").orElseThrow();
-        assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Secure");
+        assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Secure", "Max-Age=0");
         assertThat(refreshHeader.toLowerCase()).contains("samesite=lax");
     }
 
-    private HttpResponse<String> post(HttpClient client, URI base, String body, String bearer, String csrf)
+    private HttpResponse<String> post(HttpClient client, URI base, String body, String bearer, String csrf,
+            String origin)
             throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve("/api/v1/music-records"))
                 .header("Content-Type", "application/json");
@@ -151,6 +149,9 @@ class SessionCookieScopeHttpIntegrationTest {
         }
         if (csrf != null) {
             request.header("X-CSRF-TOKEN", csrf);
+        }
+        if (origin != null) {
+            request.header("Origin", origin);
         }
         return client.send(request.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -161,13 +162,16 @@ class SessionCookieScopeHttpIntegrationTest {
         assertThat(mapper.readTree(response.body()).path("message").asText()).isEqualTo(message);
     }
 
-    private HttpResponse<String> patch(HttpClient client, URI record, String bearer, String csrf)
+    private HttpResponse<String> patch(HttpClient client, URI record, String bearer, String csrf, String origin)
             throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(record)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + bearer);
         if (csrf != null) {
             request.header("X-CSRF-TOKEN", csrf);
+        }
+        if (origin != null) {
+            request.header("Origin", origin);
         }
         return client.send(request.method("PATCH", HttpRequest.BodyPublishers.ofString("{\"emotion_memo\":\"수정\"}"))
                 .build(), HttpResponse.BodyHandlers.ofString());

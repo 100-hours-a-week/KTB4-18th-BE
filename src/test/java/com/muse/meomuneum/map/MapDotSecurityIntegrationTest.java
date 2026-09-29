@@ -55,7 +55,8 @@ class MapDotSecurityIntegrationTest {
 
     @Test
     void blocksAnonymousMapDotWriteThroughTheSharedSecurityChain() throws Exception {
-        mockMvc.perform(post("/api/v1/map-dots").with(csrf())).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/v1/map-dots").header("Origin", "http://localhost:5173").with(csrf()))
+                .andExpect(status().isUnauthorized());
     }
 
     @TestConfiguration
