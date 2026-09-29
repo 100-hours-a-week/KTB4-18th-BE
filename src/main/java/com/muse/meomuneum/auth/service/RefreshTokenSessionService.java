@@ -29,7 +29,7 @@ public class RefreshTokenSessionService {
             session.setAttribute(TOKEN_ID_ATTRIBUTE, claims.tokenId());
             session.setAttribute(EXPIRES_AT_ATTRIBUTE, claims.expiresAt());
             long remainingSeconds = java.time.Duration.between(Instant.now(), claims.expiresAt()).toSeconds();
-            if (remainingSeconds <= 0){
+            if (remainingSeconds <= 0) {
                 throw invalidRefreshToken();
             }
             session.setMaxInactiveInterval((int) Math.min(remainingSeconds, Integer.MAX_VALUE));

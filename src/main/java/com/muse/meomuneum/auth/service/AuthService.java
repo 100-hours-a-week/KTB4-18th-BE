@@ -152,7 +152,7 @@ public class AuthService {
 
     private Optional<TokenClaims> getAccessTokenLocator(HttpServletRequest request) {
         String authorization = request.getHeader("Authorization");
-        if (authorization == null || authorization.isBlank()){
+        if (authorization == null || authorization.isBlank()) {
             return Optional.empty();
         }
         if (!authorization.startsWith("Bearer ") || authorization.length() <= 7) {
