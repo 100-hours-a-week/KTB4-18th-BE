@@ -67,7 +67,10 @@ class RefreshTokenRotationMvcTest {
                 .andExpect(jsonPath("$.data.expires_in").value(3600)).andReturn();
         MvcResult second = mockMvc.perform(post("/api/v1/auth/token/refresh").session(session)
                 .cookie(new Cookie("refresh_token", refresh)))
-                .andExpect(status().isOk()).andReturn();
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("token refreshed"))
+                .andExpect(jsonPath("$.data.access_token").exists())
+                .andExpect(jsonPath("$.data.expires_in").value(3600)).andReturn();
 
         assertThat(first.getResponse().getHeader(HttpHeaders.SET_COOKIE)).isNull();
         assertThat(second.getResponse().getHeader(HttpHeaders.SET_COOKIE)).isNull();

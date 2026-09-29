@@ -29,7 +29,8 @@ import com.muse.meomuneum.user.domain.UserRole;
 
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "server.servlet.session.cookie.secure=false")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "server.servlet.session.cookie.secure=false", "auth.cookie.secure=true"})
 @ActiveProfiles({"test", "music-record-local"})
 @EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 class SessionCookieScopeHttpIntegrationTest {
@@ -134,7 +135,8 @@ class SessionCookieScopeHttpIntegrationTest {
                 .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
         assertThat(logout.statusCode()).isEqualTo(204);
         String refreshHeader = logout.headers().firstValue("Set-Cookie").orElseThrow();
-        assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Max-Age=0");
+        assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Secure", "Max-Age=0");
+        assertThat(refreshHeader.toLowerCase()).contains("samesite=lax");
     }
 
     private HttpResponse<String> post(HttpClient client, URI base, String body, String bearer, String csrf,

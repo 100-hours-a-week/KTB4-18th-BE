@@ -103,8 +103,9 @@ public class JwtTokenProvider {
                 .expiresAt(issuedAt.plusSeconds(expirationSeconds)).id(UUID.randomUUID().toString())
                 .claim(TOKEN_TYPE_CLAIM, type)
                 .claim("roles", List.of(user.getRole().name()));
-        if (sessionId != null)
+        if (sessionId != null) {
             claimsBuilder.claim("sid", sessionId);
+        }
         JwtClaimsSet claims = claimsBuilder.build();
 
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();

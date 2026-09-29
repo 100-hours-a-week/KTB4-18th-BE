@@ -1,15 +1,13 @@
 package com.muse.meomuneum.auth.service;
 
-import java.time.Instant;
-
-import jakarta.servlet.http.HttpSession;
-
-import org.springframework.stereotype.Service;
-
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.security.RefreshTokenClaims;
 import com.muse.meomuneum.global.security.TokenClaims;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
 
 /** Keeps the stable refresh token's signed identity bound to the servlet session. */
 @Service
@@ -31,8 +29,9 @@ public class RefreshTokenSessionService {
             session.setAttribute(TOKEN_ID_ATTRIBUTE, claims.tokenId());
             session.setAttribute(EXPIRES_AT_ATTRIBUTE, claims.expiresAt());
             long remainingSeconds = java.time.Duration.between(Instant.now(), claims.expiresAt()).toSeconds();
-            if (remainingSeconds <= 0)
+            if (remainingSeconds <= 0) {
                 throw invalidRefreshToken();
+            }
             session.setMaxInactiveInterval((int) Math.min(remainingSeconds, Integer.MAX_VALUE));
         }
     }
