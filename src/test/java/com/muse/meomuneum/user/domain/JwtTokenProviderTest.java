@@ -30,10 +30,13 @@ class JwtTokenProviderTest {
     void createsAndParsesRefreshToken() {
         JwtTokenProvider tokenProvider = createTokenProvider();
 
-        RefreshTokenClaims claims = tokenProvider.parseRefreshToken(tokenProvider.createRefreshToken(createUser()));
+        RefreshTokenClaims claims = tokenProvider.parseRefreshToken(
+                tokenProvider.createRefreshToken(createUser(), "session-1"));
 
         assertThat(claims.userId()).isEqualTo(1L);
         assertThat(claims.expiresAt()).isAfter(java.time.Instant.now());
+        assertThat(claims.sessionId()).isEqualTo("session-1");
+        assertThat(claims.tokenId()).isNotBlank();
     }
 
     @Test

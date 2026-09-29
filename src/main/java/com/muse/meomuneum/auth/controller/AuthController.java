@@ -61,9 +61,14 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(HttpServletRequest request) {
+    public ResponseEntity<?> logout(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
-        authService.logout(request, headers);
-        return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);
+        try {
+            authService.logout(request, headers);
+            return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);
+        } catch (AuthenticationFailedException exception) {
+            return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
+                    exception.getErrorCode().status());
+        }
     }
 }

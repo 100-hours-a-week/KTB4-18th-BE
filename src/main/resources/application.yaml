@@ -21,10 +21,12 @@ server:
       cookie:
         http-only: true
         same-site: lax
-        secure: true
-        path: /
+        secure: ${AUTH_COOKIE_SECURE:true}
+        path: /api/v1/auth
 
 auth:
+  cookie:
+    secure: ${AUTH_COOKIE_SECURE:true}
   cors:
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
   jwt:
