@@ -3,6 +3,7 @@ package com.muse.meomuneum.recommendation.service;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -10,17 +11,24 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
+import com.muse.meomuneum.recommendation.dto.response.RecommendationAcceptedResponse;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationHistoryResponse;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
 import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
+import com.muse.meomuneum.recommendation.provider.RecommendationStreamListener;
+import com.muse.meomuneum.recommendation.provider.StreamingRecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -34,15 +42,32 @@ public class RecommendationService {
     private final RecommendationProvider provider;
     private final RecommendationRepository repository;
     private final MeterRegistry meterRegistry;
+    private final RecommendationEventStream eventStream;
+    private final Executor recommendationTaskExecutor;
 
     public RecommendationService(RecommendationProvider provider, RecommendationRepository repository,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry, RecommendationEventStream eventStream,
+            @Qualifier("recommendationTaskExecutor") Executor recommendationTaskExecutor) {
         this.provider = provider;
         this.repository = repository;
         this.meterRegistry = meterRegistry;
+        this.eventStream = eventStream;
+        this.recommendationTaskExecutor = recommendationTaskExecutor;
     }
 
-    public RecommendationResponse create(RecommendationRequest request, String guestSessionId, Long userId) {
+    public RecommendationAcceptedResponse accept(RecommendationRequest request, String guestSessionId, Long userId) {
+        long recommendationId = repository.createSession(request, userId == null ? guestSessionId : null,
+                userId, Instant.now());
+        eventStream.register(recommendationId);
+        try {
+            recommendationTaskExecutor.execute(() -> process(recommendationId, request, guestSessionId, userId));
+        } catch (RejectedExecutionException exception) {
+            fail(recommendationId, "FAILED", "추천 요청이 많아 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        }
+        return new RecommendationAcceptedResponse(recommendationId, "PROCESSING", request.conversation_key());
+    }
+
+    private void process(long recommendationId, RecommendationRequest request, String guestSessionId, Long userId) {
         var requestTimer = Timer.start(meterRegistry);
         String outcome = "failure";
         try {
@@ -52,7 +77,24 @@ public class RecommendationService {
             try {
                 var command = new RecommendationCommand(UUID.fromString(request.conversation_key()),
                         UUID.randomUUID(), takeLast(request.prompt().trim(), MAX_AI_MESSAGE_LENGTH));
-                tracks = provider.recommend(command);
+                RecommendationStreamListener listener = new RecommendationStreamListener() {
+                    @Override
+                    public void onText(String delta) {
+                        eventStream.text(recommendationId, delta);
+                    }
+
+                    @Override
+                    public void onTracks(List<TrackData> values) {
+                        validateTracks(values);
+                        eventStream.tracks(recommendationId, streamPayload(values));
+                    }
+                };
+                if (provider instanceof StreamingRecommendationProvider streamingProvider) {
+                    tracks = streamingProvider.recommend(command, listener);
+                } else {
+                    tracks = provider.recommend(command);
+                    listener.onTracks(tracks);
+                }
                 providerOutcome = "success";
             } catch (RecommendationException exception) {
                 if (exception.getStatus() == 504) {
@@ -63,24 +105,58 @@ public class RecommendationService {
                 providerTimer.stop(Timer.builder("recommendation.provider.duration").tag("provider", providerName())
                         .tag("outcome", providerOutcome).register(meterRegistry));
             }
-            if (tracks.size() > 5
-                    || tracks.stream().map(t -> t.provider() + ":" + t.externalId()).distinct().count() != tracks.size()
-                    || tracks.stream().map(t -> (t.artistName() + ":" + t.title()).trim().toLowerCase(Locale.ROOT))
-                            .distinct().count() != tracks.size()) {
-                throw new RecommendationException(503, "조건에 맞는 추천곡을 찾지 못했습니다. 다른 조건으로 다시 요청해 주세요.");
-            }
-            var result = repository.saveCompleted(request, guestSessionId, userId, tracks);
+            validateTracks(tracks);
+            var result = repository.completeSession(recommendationId, request, tracks);
             outcome = "success";
-            return result;
+            eventStream.done(recommendationId, result);
         } catch (RecommendationException exception) {
             if (exception.getStatus() == 504) {
                 outcome = "timeout";
             }
-            throw exception;
+            fail(recommendationId, exception.getStatus() == 504 ? "TIMEOUT" : "FAILED",
+                    exception.getStatus() == 504
+                            ? "AI 추천 시간이 초과됐어요. 잠시 후 다시 시도해 주세요."
+                            : "AI 추천 결과를 처리하지 못했어요. 다시 시도해 주세요.");
+        } catch (RuntimeException exception) {
+            fail(recommendationId, "FAILED", "AI 추천 중 오류가 발생했어요. 다시 시도해 주세요.");
         } finally {
             requestTimer.stop(
                     Timer.builder("recommendation.request.duration").tag("outcome", outcome).register(meterRegistry));
         }
+    }
+
+    private void fail(long recommendationId, String status, String detail) {
+        try {
+            repository.fail(recommendationId, status, Instant.now());
+        } finally {
+            eventStream.error(recommendationId, detail);
+        }
+    }
+
+    private void validateTracks(List<TrackData> tracks) {
+        if (tracks == null || tracks.size() > 5
+                || tracks.stream().map(track -> track.provider() + ":" + track.externalId()).distinct()
+                        .count() != tracks.size()
+                || tracks.stream().map(track -> (track.artistName() + ":" + track.title()).trim()
+                        .toLowerCase(Locale.ROOT)).distinct().count() != tracks.size()) {
+            throw new RecommendationException(502, "AI 추천 서비스의 곡 목록을 처리하지 못했습니다.");
+        }
+    }
+
+    private Map<String, Object> streamPayload(List<TrackData> tracks) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (TrackData track : tracks) {
+            var item = new LinkedHashMap<String, Object>();
+            item.put("track_id", track.externalId());
+            item.put("title", track.title());
+            item.put("artist", track.artistName());
+            item.put("artwork_url", track.coverUrl());
+            item.put("preview_url", track.previewUrl());
+            item.put("store_url", track.storeUrl());
+            item.put("reason", track.reason());
+            items.add(item);
+        }
+        return Map.of("tracks", List.copyOf(items));
     }
 
     private String takeLast(String value, int maxLength) {
@@ -103,6 +179,21 @@ public class RecommendationService {
         }
         return new RecommendationResponse(id, saved.status(), saved.conversationKey(), repository.findItems(id),
                 saved.completedAt());
+    }
+
+    @Transactional(readOnly = true)
+    public SseEmitter stream(long id, String guestSessionId, Long userId) {
+        var saved = repository.findSession(id);
+        if (!owns(saved, guestSessionId, userId)) {
+            throw new RecommendationException(403, "이 추천 결과에 접근할 수 없습니다.");
+        }
+        return eventStream.connect(id);
+    }
+
+    private boolean owns(RecommendationRepository.SavedSession saved, String guestSessionId, Long userId) {
+        return saved.userId() != null
+                ? Objects.equals(saved.userId(), userId)
+                : guestSessionId != null && Objects.equals(saved.guestSessionId(), guestSessionId);
     }
 
     @Transactional(readOnly = true)

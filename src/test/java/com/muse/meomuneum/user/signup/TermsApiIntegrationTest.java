@@ -19,7 +19,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-@SpringBootTest
+@SpringBootTest(properties = "auth.cors.allowed-origins=http://localhost:5174")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional

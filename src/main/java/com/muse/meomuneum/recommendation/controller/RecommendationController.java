@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,8 +13,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
+import com.muse.meomuneum.recommendation.dto.response.RecommendationAcceptedResponse;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
 import com.muse.meomuneum.recommendation.service.RecommendationService;
@@ -30,10 +33,11 @@ public class RecommendationController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<RecommendationResponse>> create(@Valid @RequestBody RecommendationRequest body,
+    public ResponseEntity<ApiResponse<RecommendationAcceptedResponse>> create(
+            @Valid @RequestBody RecommendationRequest body,
             HttpServletRequest request, Authentication authentication) {
-        var result = service.create(body, request.getSession().getId(), users.resolve(authentication));
-        return ResponseEntity.status(HttpStatus.CREATED).body(new ApiResponse<>("recommendation completed", result));
+        var result = service.accept(body, request.getSession().getId(), users.resolve(authentication));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ApiResponse<>("recommendation processing", result));
     }
 
     @GetMapping("/{recommendation_id}")
@@ -42,6 +46,14 @@ public class RecommendationController {
         var session = request.getSession(false);
         return new ApiResponse<>("recommendation retrieved",
                 service.get(recommendationId, session == null ? null : session.getId(), users.resolve(authentication)));
+    }
+
+    @GetMapping(value = "/{recommendation_id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter events(@PathVariable("recommendation_id") long recommendationId, HttpServletRequest request,
+            Authentication authentication) {
+        var session = request.getSession(false);
+        return service.stream(recommendationId, session == null ? null : session.getId(),
+                users.resolve(authentication));
     }
 
     public record ApiResponse<T>(String message, T data) {
