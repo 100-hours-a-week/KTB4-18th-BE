@@ -12,11 +12,16 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.context.DelegatingSecurityContextRepository;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.global.security.BearerTokenSecurityContextRepository;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.RequestOriginValidationFilter;
@@ -35,6 +40,7 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
+            SecurityContextRepository securityContextRepository,
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             UserAuthenticationService userAuthenticationService,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests,
@@ -54,6 +60,8 @@ public class SecurityConfig {
         };
 
         http.cors(Customizer.withDefaults())
+                .securityContext(securityContext -> securityContext
+                        .securityContextRepository(securityContextRepository))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
@@ -100,6 +108,13 @@ public class SecurityConfig {
         HttpSessionCsrfTokenRepository repository = new HttpSessionCsrfTokenRepository();
         repository.setHeaderName("X-CSRF-TOKEN");
         return repository;
+    }
+
+    @Bean
+    public SecurityContextRepository securityContextRepository() {
+        SecurityContextRepository sessionRepository = new DelegatingSecurityContextRepository(
+                new RequestAttributeSecurityContextRepository(), new HttpSessionSecurityContextRepository());
+        return new BearerTokenSecurityContextRepository(sessionRepository);
     }
 
     @Bean

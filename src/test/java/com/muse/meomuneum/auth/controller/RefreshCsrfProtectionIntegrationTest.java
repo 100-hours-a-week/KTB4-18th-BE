@@ -24,7 +24,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "auth.jwt.secret=development-only-secret-with-at-least-32-bytes")
-@ActiveProfiles({"test", "music-record-local"})
+@ActiveProfiles("test")
 @EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 class RefreshCsrfProtectionIntegrationTest {
 
@@ -78,7 +78,8 @@ class RefreshCsrfProtectionIntegrationTest {
     void passesCsrfValidationThenRejectsMissingRefreshCookie() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
                 .session(session)
-                .header("X-CSRF-TOKEN", csrfToken))
+                .header("X-CSRF-TOKEN", csrfToken)
+                .header("Origin", "http://localhost:5174"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("invalid refresh token"))
                 .andExpect(jsonPath("$.data").doesNotExist());
