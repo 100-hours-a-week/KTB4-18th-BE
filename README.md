@@ -299,11 +299,13 @@ AI 서버 주소와 연결·읽기 제한 시간은 각각 `RECOMMENDATION_AI_BA
 `RECOMMENDATION_AI_CONNECT_TIMEOUT`, `RECOMMENDATION_AI_READ_TIMEOUT`으로 주입합니다.
 V1의 백엔드와 AI 간 내부 요청에는 별도의 `Authorization` 헤더를 보내지 않습니다.
 
-검색에서 중복을 제거한 1~5곡을 얻으면 모두 저장한 뒤 `201 Created`와
-`COMPLETED` 응답으로 반환합니다. 0곡이면 완료 세션을 저장하지 않고 다른 조건을 요청하는 안내와
-`503 Service Unavailable`을 반환합니다. AI 또는 iTunes 장애는 `502` 또는 `503`,
-요청 제한 시간 초과는 `504 Gateway Timeout`으로 반환합니다. DB 저장 실패는
-`500 Internal Server Error`이며 부분 저장은 트랜잭션으로 롤백합니다.
+`POST /api/v1/recommendations`는 세션을 `PROCESSING`으로 저장하고 `202 Accepted`와
+`recommendation_id`를 즉시 반환합니다. 프론트엔드는 소유권이 확인되는
+`GET /api/v1/recommendations/{recommendation_id}/events`에 연결해 `text`, `tracks`,
+`done`, `error` 이벤트를 받습니다. 백엔드는 AI 내부 SSE의 `text`와 `tracks`를 전달하고,
+AI의 `done` 이후 곡을 저장한 다음 공개 SSE에 `done`을 보냅니다. 곡이 0개여도 빈 목록으로
+`COMPLETED` 처리하며, 오류 또는 완료 전 연결 종료는 `FAILED`(제한 시간 초과는 `TIMEOUT`)로
+저장하고 `error` 이벤트를 보냅니다. 기존 GET 상세 조회는 완료 결과 재조회에 사용합니다.
 기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
 기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
 음악 기록 검색과 텍스트 음악 추천은 이 국가·요청 제한 시간 설정을 공유합니다.
