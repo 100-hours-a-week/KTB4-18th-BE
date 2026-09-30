@@ -3,7 +3,6 @@ package com.muse.meomuneum.recommendation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -38,7 +37,8 @@ import com.muse.meomuneum.recommendation.service.RecommendationService;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
-@SpringBootTest(properties = "recommendation.allow-guests=true")
+@SpringBootTest(properties = {"recommendation.allow-guests=true",
+        "auth.cors.allowed-origins=http://localhost:5174"})
 @ActiveProfiles("test")
 @Transactional // 각 테스트의 변경은 종료 시 자동 롤백됩니다.
 class RecommendationApiTests {
@@ -48,11 +48,17 @@ class RecommendationApiTests {
     JdbcTemplate jdbc;
     @MockitoBean
     RecommendationProvider provider;
+    @MockitoBean(name = "recommendationTaskExecutor")
+    java.util.concurrent.Executor recommendationTaskExecutor;
     MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(0)).run();
+            return null;
+        }).when(recommendationTaskExecutor).execute(any(Runnable.class));
         when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "1", "song 1", "artist", null, null),
                         new TrackData("ITUNES", "2", "song 2", "artist", null, null),
@@ -71,11 +77,13 @@ class RecommendationApiTests {
     @Test
     void savesFiveSongsAndPromptAndGuestCanRetrieve() throws Exception {
         var session = new MockHttpSession();
-        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
-                .contentType("application/json")
-                .content(body("비 오는 밤"))).andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.items.length()").value(5))
-                .andExpect(jsonPath("$.data.status").value("COMPLETED"));
+        mvc.perform(
+                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(session)
+                        .contentType("application/json")
+                        .content(body("비 오는 밤")))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.status").value("PROCESSING"));
         long id = findRecommendationId(session);
         mvc.perform(get("/api/v1/recommendations/" + id).session(session)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].rank_no").value(1))
@@ -91,14 +99,18 @@ class RecommendationApiTests {
         when(provider.recommend(any()))
                 .thenReturn(java.util.List.of(new TrackData("ITUNES", "partial-1", "song", "artist", null, null)));
         var session = new MockHttpSession();
-        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
-                .contentType("application/json")
-                .content(body("비 오는 밤"))).andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.items.length()").value(1));
-        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
-                .contentType("application/json")
-                .content(body("드라이브").replace("TEXT", "VOICE"))).andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.items.length()").value(1));
+        mvc.perform(
+                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(session)
+                        .contentType("application/json")
+                        .content(body("비 오는 밤")))
+                .andExpect(status().isAccepted());
+        mvc.perform(
+                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(session)
+                        .contentType("application/json")
+                        .content(body("드라이브").replace("TEXT", "VOICE")))
+                .andExpect(status().isAccepted());
         assertEquals("VOICE", jdbc.queryForObject("SELECT input_type FROM recommendation_sessions WHERE id = ?",
                 String.class, findRecommendationId(session)));
         var commands = org.mockito.ArgumentCaptor
@@ -120,9 +132,12 @@ class RecommendationApiTests {
         }
         clearInvocations(provider);
 
-        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
-                .contentType("application/json")
-                .content(body("current"))).andExpect(status().isCreated());
+        mvc.perform(
+                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(session)
+                        .contentType("application/json")
+                        .content(body("current")))
+                .andExpect(status().isAccepted());
 
         var command = org.mockito.ArgumentCaptor
                 .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
@@ -141,9 +156,12 @@ class RecommendationApiTests {
                 """, session.getId(), "550e8400-e29b-41d4-a716-446655440000");
         clearInvocations(provider);
 
-        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
-                .contentType("application/json")
-                .content(body("a".repeat(300)))).andExpect(status().isCreated());
+        mvc.perform(
+                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(session)
+                        .contentType("application/json")
+                        .content(body("a".repeat(300))))
+                .andExpect(status().isAccepted());
 
         var command = org.mockito.ArgumentCaptor
                 .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
@@ -157,8 +175,7 @@ class RecommendationApiTests {
         int before = count("recommendation_sessions");
         mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
                 .contentType("application/json").content(body("없는 음악")))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.data.items.length()").value(0));
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.data.status").value("PROCESSING"));
         assertEquals(before + 1, count("recommendation_sessions"));
     }
 
@@ -169,16 +186,16 @@ class RecommendationApiTests {
 
         mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
                 .contentType("application/json").content(body("한 곡만")))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.items.length()").value(1))
-                .andExpect(jsonPath("$.data.status").value("COMPLETED"));
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.data.status").value("PROCESSING"));
     }
 
     @Test
     void rejectsBlankLongAndUnsupportedInputBeforeSaving() throws Exception {
         int before = count("recommendation_sessions");
         for (String prompt : new String[]{"   ", "a".repeat(1001)}) {
-            mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
-                    .contentType("application/json").content(body(prompt)))
+            mvc.perform(
+                    post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                            .contentType("application/json").content(body(prompt)))
                     .andExpect(status().isBadRequest());
         }
         mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
@@ -190,9 +207,11 @@ class RecommendationApiTests {
     @Test
     void cannotReadAnotherGuestsResult() throws Exception {
         var owner = new MockHttpSession();
-        mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(owner)
-                .contentType("application/json").content(body("노래")))
-                .andExpect(status().isCreated());
+        mvc.perform(
+                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(owner)
+                        .contentType("application/json").content(body("노래")))
+                .andExpect(status().isAccepted());
         long id = findRecommendationId(owner);
         mvc.perform(get("/api/v1/recommendations/" + id).session(new MockHttpSession()))
                 .andExpect(status().isForbidden());
@@ -207,9 +226,12 @@ class RecommendationApiTests {
         int musicAfterFirst = 0;
         var session = new MockHttpSession();
         for (int i = 0; i < 2; i++) {
-            mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174").session(session)
-                    .contentType("application/json")
-                    .content(body("신나는 노래"))).andExpect(status().isCreated());
+            mvc.perform(
+                    post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                            .session(session)
+                            .contentType("application/json")
+                            .content(body("신나는 노래")))
+                    .andExpect(status().isAccepted());
             if (i == 0) {
                 musicAfterFirst = count("music");
             }
@@ -234,11 +256,12 @@ class RecommendationApiTests {
         var repository = context.getBean(RecommendationRepository.class);
         var template = new org.springframework.transaction.support.TransactionTemplate(
                 context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
-        assertThrows(RuntimeException.class, () -> template
-                .execute(status -> new RecommendationService(broken, repository, new SimpleMeterRegistry()).create(
-                        new RecommendationRequest("TEXT", "CHATBOT", "550e8400-e29b-41d4-a716-446655440000", "test"),
-                        "guest", null)));
-        assertEquals(beforeSessions, count("recommendation_sessions"));
+        template.executeWithoutResult(status -> new RecommendationService(broken, repository,
+                new SimpleMeterRegistry(), new com.muse.meomuneum.recommendation.service.RecommendationEventStream(),
+                Runnable::run)
+                .accept(new RecommendationRequest("TEXT", "CHATBOT", "550e8400-e29b-41d4-a716-446655440000", "test"),
+                        "guest", null));
+        assertEquals(beforeSessions + 1, count("recommendation_sessions"));
         assertEquals(beforeMusic, count("music"));
     }
 

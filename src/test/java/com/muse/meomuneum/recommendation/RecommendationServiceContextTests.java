@@ -24,6 +24,7 @@ import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
+import com.muse.meomuneum.recommendation.service.RecommendationEventStream;
 import com.muse.meomuneum.recommendation.service.RecommendationService;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -37,31 +38,35 @@ class RecommendationServiceContextTests {
     @Mock
     RecommendationRepository repository;
     RecommendationService service;
+    RecommendationEventStream eventStream;
 
     @BeforeEach
     void setUp() {
-        service = new RecommendationService(provider, repository, new SimpleMeterRegistry());
+        eventStream = new RecommendationEventStream();
+        service = new RecommendationService(provider, repository, new SimpleMeterRegistry(), eventStream,
+                Runnable::run);
+        when(repository.createSession(any(), any(), any(), any())).thenReturn(1L);
         when(provider.recommend(any())).thenReturn(tracks());
-        when(repository.saveCompleted(any(), any(), any(), anyList()))
+        when(repository.completeSession(any(Long.class), any(), anyList()))
                 .thenReturn(new RecommendationResponse(1, "COMPLETED", CONVERSATION_KEY, List.of(), Instant.now()));
     }
 
     @Test
     void sendsOnlyCurrentPromptToProvider() {
-        service.create(request("current"), "guest", null);
+        service.accept(request("current"), "guest", null);
 
         var command = ArgumentCaptor.forClass(RecommendationCommand.class);
         verify(provider).recommend(command.capture());
         assertEquals("current", command.getValue().message());
         assertTrue(command.getValue().message().length() <= 200);
         assertEquals(java.util.UUID.fromString(CONVERSATION_KEY), command.getValue().threadId());
-        verify(repository).saveCompleted(any(), any(), any(), anyList());
+        verify(repository).completeSession(any(Long.class), any(), anyList());
         verifyNoMoreInteractions(repository);
     }
 
     @Test
     void limitsCurrentPromptToAiMessageLength() {
-        service.create(request("a".repeat(300)), "guest", null);
+        service.accept(request("a".repeat(300)), "guest", null);
 
         var command = ArgumentCaptor.forClass(RecommendationCommand.class);
         verify(provider).recommend(command.capture());

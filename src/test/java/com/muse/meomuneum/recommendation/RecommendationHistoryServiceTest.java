@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import com.muse.meomuneum.recommendation.dto.response.RecommendationHistoryResponse;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
+import com.muse.meomuneum.recommendation.service.RecommendationEventStream;
 import com.muse.meomuneum.recommendation.service.RecommendationService;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -34,7 +35,8 @@ class RecommendationHistoryServiceTest {
                 new RecommendationRepository.HistoryItem(30L, 1, 101L, "First", "Artist A"),
                 new RecommendationRepository.HistoryItem(30L, 2, 102L, "Second", "Artist B"),
                 new RecommendationRepository.HistoryItem(29L, 1, 103L, "Third", "Artist C")));
-        RecommendationService service = new RecommendationService(mock(), repository, new SimpleMeterRegistry());
+        RecommendationService service = new RecommendationService(mock(), repository, new SimpleMeterRegistry(),
+                new RecommendationEventStream(), Runnable::run);
 
         RecommendationHistoryResponse response = service.listHistory(7L, null, 2);
 
