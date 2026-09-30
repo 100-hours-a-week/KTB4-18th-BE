@@ -41,16 +41,18 @@ class AiRecommendationProviderTests {
             assertTrue(requestBody.contains("\"request_id\":\"" + requestId + "\""));
             assertTrue(requestBody.contains("\"message\":\"비 오는 밤\""));
             assertNull(exchange.getRequestHeaders().getFirst("Authorization"));
-            respond(exchange, 200, """
-                    {"message":"추천 결과입니다.","tracks":[
-                      {"title":"첫 곡","artist":"가수","track_id":"101","preview_url":null,
-                       "artwork_url":"https://example.test/1.jpg","store_url":"https://example.test/1","reason":"분위기"},
-                      {"title":"첫 곡","artist":"가수","track_id":"102","preview_url":null,
-                       "artwork_url":"https://example.test/2.jpg","store_url":"https://example.test/2","reason":"중복"},
-                      {"title":"둘째 곡","artist":"다른 가수","track_id":"103","preview_url":"https://example.test/p",
-                       "artwork_url":null,"store_url":"https://example.test/3","reason":"분위기"}
-                    ]}
-                    """);
+            respond(exchange, 200, "event: text\ndata: {\"delta\":\"추천 결과입니다.\"}\n\n"
+                    + "event: tracks\ndata: {\"tracks\":["
+                    + "{\"title\":\"첫 곡\",\"artist\":\"가수\",\"track_id\":\"101\","
+                    + "\"preview_url\":null,\"artwork_url\":\"https://example.test/1.jpg\","
+                    + "\"store_url\":\"https://example.test/1\",\"reason\":\"분위기\"},"
+                    + "{\"title\":\"첫 곡\",\"artist\":\"가수\",\"track_id\":\"102\","
+                    + "\"preview_url\":null,\"artwork_url\":\"https://example.test/2.jpg\","
+                    + "\"store_url\":\"https://example.test/2\",\"reason\":\"중복\"},"
+                    + "{\"title\":\"둘째 곡\",\"artist\":\"다른 가수\",\"track_id\":\"103\","
+                    + "\"preview_url\":\"https://example.test/p\",\"artwork_url\":null,"
+                    + "\"store_url\":\"https://example.test/3\",\"reason\":\"분위기\"}] }\n\n"
+                    + "event: done\ndata: {}\n\n");
         });
 
         var provider = provider(Duration.ofSeconds(2));
@@ -64,7 +66,8 @@ class AiRecommendationProviderTests {
 
     @Test
     void returnsEmptyTracksForZeroResult() throws IOException {
-        server = server(exchange -> respond(exchange, 200, "{\"message\":\"다른 조건을 입력해 주세요.\",\"tracks\":[]}"));
+        server = server(exchange -> respond(exchange, 200,
+                "event: tracks\ndata: {\"tracks\":[]}\n\nevent: done\ndata: {}\n\n"));
 
         var tracks = provider(Duration.ofSeconds(2)).recommend(command());
 
@@ -97,7 +100,8 @@ class AiRecommendationProviderTests {
     @Test
     void rejectsMalformedTrackResponse() throws IOException {
         server = server(exchange -> respond(exchange, 200,
-                "{\"message\":\"추천\",\"tracks\":[{\"title\":\"곡\",\"artist\":\"가수\",\"track_id\":\"not-number\"}]}"));
+                "event: tracks\ndata: "
+                        + "{\"tracks\":[{\"title\":\"곡\",\"artist\":\"가수\",\"track_id\":\"not-number\"}]}\n\n"));
 
         RecommendationException exception = assertThrows(RecommendationException.class,
                 () -> provider(Duration.ofSeconds(2)).recommend(command()));
@@ -126,7 +130,7 @@ class AiRecommendationProviderTests {
 
     private void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();

@@ -29,6 +29,11 @@ public class RecommendationRepository {
     public RecommendationResponse saveCompleted(RecommendationRequest request, String guestSessionId, Long userId,
             List<TrackData> tracks) {
         long id = createSession(request, userId == null ? guestSessionId : null, userId, Instant.now());
+        return completeSession(id, request, tracks);
+    }
+
+    @Transactional
+    public RecommendationResponse completeSession(long id, RecommendationRequest request, List<TrackData> tracks) {
         for (int i = 0; i < tracks.size(); i++) {
             saveItem(id, saveMusic(tracks.get(i)), i + 1);
         }
@@ -84,8 +89,19 @@ public class RecommendationRepository {
     }
 
     public void complete(long sessionId, Instant completedAt) {
-        jdbc.update("UPDATE recommendation_sessions SET status = 'COMPLETED', completed_at = ? WHERE id = ?",
-                Timestamp.from(completedAt), sessionId);
+        finish(sessionId, "COMPLETED", completedAt);
+    }
+
+    public void fail(long sessionId, String status, Instant failedAt) {
+        if (!"FAILED".equals(status) && !"TIMEOUT".equals(status)) {
+            throw new IllegalArgumentException("지원하지 않는 추천 종료 상태입니다.");
+        }
+        finish(sessionId, status, failedAt);
+    }
+
+    private void finish(long sessionId, String status, Instant finishedAt) {
+        jdbc.update("UPDATE recommendation_sessions SET status = ?, completed_at = ? WHERE id = ?",
+                status, Timestamp.from(finishedAt), sessionId);
     }
 
     public SavedSession findSession(long id) {

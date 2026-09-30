@@ -29,7 +29,7 @@ import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.recommendation.controller.RecommendationController;
-import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
+import com.muse.meomuneum.recommendation.dto.response.RecommendationAcceptedResponse;
 import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
 import com.muse.meomuneum.recommendation.service.RecommendationService;
 import com.muse.meomuneum.user.domain.User;
@@ -93,23 +93,23 @@ class RecommendationSecurityIntegrationTest {
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("unauthorized"))
                 .andExpect(jsonPath("$.data").doesNotExist());
 
-        verify(recommendationService, never()).create(org.mockito.ArgumentMatchers.any(),
+        verify(recommendationService, never()).accept(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
     void allowsAccessBearerRecommendationPostWithoutSessionCsrf() throws Exception {
-        when(recommendationService.create(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
+        when(recommendationService.accept(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.eq(1L)))
-                .thenReturn(new RecommendationResponse(1L, "COMPLETED", "conversation-key", java.util.List.of(), null));
+                .thenReturn(new RecommendationAcceptedResponse(1L, "PROCESSING", "conversation-key"));
 
         mockMvc.perform(
                 post("/api/v1/recommendations").header(HttpHeaders.ORIGIN, "http://localhost:5173")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
                         .contentType(MediaType.APPLICATION_JSON).content(recommendationRequest()))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.message").value("recommendation completed"));
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.message").value("recommendation processing"));
 
-        verify(recommendationService).create(org.mockito.ArgumentMatchers.any(),
+        verify(recommendationService).accept(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(1L));
     }
 

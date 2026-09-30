@@ -1,13 +1,15 @@
 package com.muse.meomuneum.auth.service;
 
+import java.time.Instant;
+
+import jakarta.servlet.http.HttpSession;
+
+import org.springframework.stereotype.Service;
+
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.security.RefreshTokenClaims;
 import com.muse.meomuneum.global.security.TokenClaims;
-import jakarta.servlet.http.HttpSession;
-import org.springframework.stereotype.Service;
-
-import java.time.Instant;
 
 /** Keeps the stable refresh token's signed identity bound to the servlet session. */
 @Service
