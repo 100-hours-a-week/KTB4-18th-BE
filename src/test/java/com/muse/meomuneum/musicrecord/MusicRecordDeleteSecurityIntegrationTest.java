@@ -87,6 +87,20 @@ class MusicRecordDeleteSecurityIntegrationTest {
         verifyNoInteractions(service);
     }
 
+    @Test
+    void bulkDeleteRequiresAuthenticationAndUsesTokenOwner() throws Exception {
+        mvc.perform(delete("/api/v1/music-records")
+                .header("Origin", "http://localhost:5173")
+                .contentType("application/json").content("{\"record_ids\":[7,8]}"))
+                .andExpect(status().isUnauthorized());
+        verifyNoInteractions(service);
+        mvc.perform(delete("/api/v1/music-records")
+                .header("Origin", "http://localhost:5173").header("Authorization", bearer(11L))
+                .contentType("application/json").content("{\"record_ids\":[7,8]}"))
+                .andExpect(status().isNoContent());
+        verify(service).deleteAll(11L, java.util.List.of(7L, 8L));
+    }
+
     private String bearer(long userId) {
         User user = mock(User.class);
         when(user.getId()).thenReturn(userId);

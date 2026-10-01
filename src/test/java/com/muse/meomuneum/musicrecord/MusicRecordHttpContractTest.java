@@ -45,6 +45,27 @@ class MusicRecordHttpContractTest {
     }
 
     @Test
+    void bulkDeleteAcceptsIdsAndReturnsEmpty204() throws Exception {
+        when(repository.deleteRecord(eq(1L), eq(7L), any(Instant.class))).thenReturn(1);
+        mvc.perform(delete("/api/v1/music-records")
+                .contentType("application/json").content("{\"record_ids\":[7,7]}"))
+                .andExpect(status().isNoContent()).andExpect(content().string(""));
+    }
+
+    @Test
+    void bulkDeleteRejectsInvalidBodies() throws Exception {
+        for (String body : java.util.List.of("{}", "{\"record_ids\":[]}",
+                "{\"record_ids\":[null]}", "{\"record_ids\":[0]}", "{\"record_ids\":[-1]}")) {
+            mvc.perform(delete("/api/v1/music-records").contentType("application/json").content(body))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(delete("/api/v1/music-records").contentType("application/json")
+                .content("{\"record_ids\":" + java.util.Collections.nCopies(101, 7L) + "}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(repository);
+    }
+
+    @Test
     void malformedSearchSizeUsesSingleDocumentedSearchMessage() throws Exception {
         mvc.perform(get("/api/v1/music/search")
                 .param("query", "밤")

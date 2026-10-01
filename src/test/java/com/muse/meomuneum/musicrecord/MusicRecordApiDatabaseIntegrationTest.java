@@ -210,6 +210,102 @@ class MusicRecordApiDatabaseIntegrationTest {
     }
 
     @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void bulkDeleteIsAtomicAcrossRealRequestTransactions() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        long userId = positiveId();
+        long sidoId = positiveId();
+        long sigunguId = positiveId();
+        long dotSigunguId = positiveId();
+        long dotId = positiveId();
+        long musicId = positiveId();
+        String externalId = String.valueOf(musicId);
+        jdbc.update("INSERT INTO users (id,email,password_hash,nickname,role) VALUES (?,?,?,?,?)",
+                userId, suffix + "@test.local", "test-only", "테스트", "USER");
+        jdbc.update("INSERT INTO users (id,email,password_hash,nickname,role) VALUES (?,?,?,?,?)",
+                userId + 1, suffix + "-other@test.local", "test-only", "다른 사용자", "USER");
+        jdbc.update("INSERT INTO regions (id,code,name,level,is_active) VALUES (?,?,?,?,TRUE)",
+                sidoId, "s" + suffix, "서울특별시", "SIDO");
+        jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
+                sigunguId, sidoId, "g" + suffix, "성동구", "SIGUNGU");
+        jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
+                dotSigunguId, sidoId, "x" + suffix, "마포구", "SIGUNGU");
+        jdbc.update("INSERT INTO map_dots (id,code,region_id,latitude,longitude,is_active) "
+                + "VALUES (?,?,?,?,?,TRUE)", dotId, "d" + suffix, dotSigunguId, 37.5, 127.0);
+        jdbc.update("INSERT INTO music (id,provider,external_music_id,title,artist_name) VALUES (?,?,?,?,?)",
+                musicId, "ITUNES", externalId, "테스트 노래", "테스트 가수");
+        String bearer = bearer(userId);
+        try {
+            long bulkFirst = musicRepository.saveRecord(userId, musicId,
+                    musicRepository.findLocation(dotId, sigunguId, sidoId).orElseThrow(), null, null, Instant.now());
+            long bulkSecond = musicRepository.saveRecord(userId, musicId,
+                    musicRepository.findLocation(dotId, sigunguId, sidoId).orElseThrow(), null, null, Instant.now());
+            long otherRecord = musicRepository.saveRecord(userId + 1, musicId,
+                    musicRepository.findLocation(dotId, sigunguId, sidoId).orElseThrow(),
+                    null, null, Instant.now());
+            mvc.perform(delete("/api/v1/music-records")
+                    .header("Origin", "http://localhost:5174").header("Authorization", "Bearer " + bearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"record_ids\":[" + bulkFirst + "," + otherRecord + "]}"))
+                    .andExpect(status().isForbidden());
+            assertThat(musicRepository.findRecord(userId, bulkFirst)).isPresent();
+            assertThat(musicRepository.findRecord(userId + 1, otherRecord)).isPresent();
+            mvc.perform(delete("/api/v1/music-records")
+                    .header("Origin", "http://localhost:5174").header("Authorization", "Bearer " + bearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"record_ids\":[" + bulkFirst + "," + Long.MAX_VALUE + "]}"))
+                    .andExpect(status().isNotFound());
+            assertThat(musicRepository.findRecord(userId, bulkFirst)).isPresent();
+            mvc.perform(delete("/api/v1/music-records")
+                    .header("Origin", "http://localhost:5174").header("Authorization", "Bearer " + bearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"record_ids\":[" + bulkSecond + "," + bulkFirst + "," + bulkFirst + "]}"))
+                    .andExpect(status().isNoContent()).andExpect(content().string(""));
+            assertThat(musicRepository.findRecord(userId, bulkFirst)).isEmpty();
+            assertThat(musicRepository.findRecord(userId, bulkSecond)).isEmpty();
+            mvc.perform(delete("/api/v1/music-records")
+                    .header("Origin", "http://localhost:5174").header("Authorization", "Bearer " + bearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"record_ids\":[" + bulkFirst + "," + bulkSecond + "]}"))
+                    .andExpect(status().isNotFound());
+            assertThat(musicRepository.findRecord(userId + 1, otherRecord)).isPresent();
+            assertThat(musicRepository.findMusic("ITUNES", externalId)).isPresent();
+            long concurrentRecord = musicRepository.saveRecord(userId, musicId,
+                    musicRepository.findLocation(dotId, sigunguId, sidoId).orElseThrow(), null, null, Instant.now());
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+            try {
+                java.util.concurrent.Callable<Integer> request = () -> {
+                    start.await();
+                    return mvc.perform(delete("/api/v1/music-records")
+                            .header("Origin", "http://localhost:5174").header("Authorization", "Bearer " + bearer)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"record_ids\":[" + concurrentRecord + "]}"))
+                            .andReturn().getResponse().getStatus();
+                };
+                var first = pool.submit(request);
+                var second = pool.submit(request);
+                start.countDown();
+                assertThat(List.of(first.get(10, java.util.concurrent.TimeUnit.SECONDS),
+                        second.get(10, java.util.concurrent.TimeUnit.SECONDS)))
+                        .containsExactlyInAnyOrder(204, 404);
+                assertThat(musicRepository.findRecord(userId, concurrentRecord)).isEmpty();
+                assertThat(musicRepository.findRecord(userId + 1, otherRecord)).isPresent();
+            } finally {
+                pool.shutdownNow();
+            }
+
+        } finally {
+            jdbc.update("DELETE FROM music_records WHERE user_id IN (?,?)", userId, userId + 1);
+            jdbc.update("DELETE FROM music WHERE id=?", musicId);
+            jdbc.update("DELETE FROM map_dots WHERE id=?", dotId);
+            jdbc.update("DELETE FROM regions WHERE id IN (?,?)", sigunguId, dotSigunguId);
+            jdbc.update("DELETE FROM regions WHERE id=?", sidoId);
+            jdbc.update("DELETE FROM users WHERE id IN (?,?)", userId, userId + 1);
+        }
+    }
+
+    @Test
     void searchTreatsPercentUnderscoreAndEscapeCharacterAsLiteralText() {
         long firstId = positiveId();
         long secondId = firstId + 1;

@@ -3,6 +3,7 @@ package com.muse.meomuneum;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -56,6 +57,26 @@ class MusicRecordServiceTest {
                         new RegionPart(4L, "11440", "마포구")),
                 "홍대", "산책 중",
                 Instant.parse("2026-09-22T06:30:00Z"), null);
+    }
+
+    @Test
+    void bulkDeleteDeduplicatesAndSortsIds() {
+        when(repository.deleteRecord(eq(1L), anyLong(), any(Instant.class))).thenReturn(1);
+        service.deleteAll(1L, List.of(8L, 7L, 8L));
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(repository);
+        order.verify(repository).deleteRecord(eq(1L), eq(7L), any(Instant.class));
+        order.verify(repository).deleteRecord(eq(1L), eq(8L), any(Instant.class));
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    void bulkDeleteValidatesAllIdsBeforeMutation() {
+        for (List<Long> ids : List.of(List.<Long>of(), List.of(0L), List.of(-1L),
+                java.util.Collections.nCopies(101, 7L), java.util.Arrays.asList(7L, null))) {
+            assertThatThrownBy(() -> service.deleteAll(1L, ids)).isInstanceOf(MusicRecordException.class);
+        }
+        assertThatThrownBy(() -> service.deleteAll(1L, null)).isInstanceOf(MusicRecordException.class);
+        org.mockito.Mockito.verifyNoInteractions(repository);
     }
 
     @Test
