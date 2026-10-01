@@ -3,6 +3,70 @@ info:
   title: Music record deletion
   version: 1.0.0
 paths:
+  /api/v1/music-records:
+    delete:
+      operationId: deleteMusicRecords
+      summary: 본인 음악 기록 일괄 소프트 삭제
+      description: |
+        record_ids는 1~100개의 양수 ID를 받는다. 중복 ID는 한 번만 처리한다.
+        본인 활성 기록만 삭제하며 타인 활성 기록은 403, 없거나 삭제된 기록은 404다.
+        하나라도 실패하면 요청 전체를 롤백한다. 성공과 실패 모두 부분 성공은 없다.
+        이미 삭제된 ID가 포함된 반복 요청도 404다. 기존 단건 삭제 API는 유지한다.
+        JSON 요청 본문을 전달하므로 프록시와 클라이언트가 DELETE 본문을 전달해야 한다.
+        기존 요청 출처 검증과 인증 정책을 적용한다.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [record_ids]
+              properties:
+                record_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: integer
+                    format: int64
+                    minimum: 1
+            example: { record_ids: [7, 8] }
+      responses:
+        '204':
+          description: 요청 대상 모두 삭제 완료. 본문 없음.
+        '400':
+          description: 빈 목록, 누락, 유효하지 않은 ID 또는 요청 개수 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: invalid request, data: null }
+        '401':
+          description: 미인증 또는 만료. 삭제 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 타인 활성 기록 포함 또는 허용되지 않은 요청 출처. 삭제 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 없거나 삭제된 기록 포함. 요청 전체 롤백.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 오류. 요청 전체 롤백.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/music-records/{record_id}:
     delete:
       operationId: deleteMusicRecord
