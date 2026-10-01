@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.muse.meomuneum.global.response.ApiResponse;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.BulkDeleteRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
@@ -71,6 +72,13 @@ public class MusicRecordController {
     @DeleteMapping("/music-records/{recordId}")
     public ResponseEntity<Void> delete(@PathVariable long recordId, Authentication authentication) {
         service.delete(users.resolve(authentication), recordId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/music-records")
+    public ResponseEntity<Void> bulkDelete(@Valid @RequestBody BulkDeleteRequest body,
+            Authentication authentication) {
+        service.deleteAll(users.resolve(authentication), body.record_ids());
         return ResponseEntity.noContent().build();
     }
 }
