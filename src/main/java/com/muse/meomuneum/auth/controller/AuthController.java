@@ -1,6 +1,7 @@
 package com.muse.meomuneum.auth.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpHeaders;
@@ -41,9 +42,12 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody LoginRequest request,
-            HttpServletRequest servletRequest) {
+            HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
         HttpHeaders headers = new HttpHeaders();
         TokenResponse tokenResponse = authService.login(request, servletRequest, headers);
+        headers.getOrEmpty(HttpHeaders.SET_COOKIE)
+                .forEach(cookie -> servletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie));
+        headers.remove(HttpHeaders.SET_COOKIE);
         return new ResponseEntity<>(ApiResponse.success(AuthSuccessCode.LOGIN_SUCCESS, tokenResponse), headers,
                 AuthSuccessCode.LOGIN_SUCCESS.status());
     }
