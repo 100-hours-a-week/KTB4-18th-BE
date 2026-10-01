@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.muse.meomuneum.global.response.ApiResponse;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.BulkDeleteRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
@@ -65,5 +67,18 @@ public class MusicRecordController {
     public ApiResponse<UpdateResponse> update(@PathVariable long recordId, @RequestBody JsonNode body,
             Authentication authentication) {
         return ApiResponse.of("music record updated", service.update(users.resolve(authentication), recordId, body));
+    }
+
+    @DeleteMapping("/music-records/{recordId}")
+    public ResponseEntity<Void> delete(@PathVariable long recordId, Authentication authentication) {
+        service.delete(users.resolve(authentication), recordId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/music-records")
+    public ResponseEntity<Void> bulkDelete(@Valid @RequestBody BulkDeleteRequest body,
+            Authentication authentication) {
+        service.deleteAll(users.resolve(authentication), body.record_ids());
+        return ResponseEntity.noContent().build();
     }
 }
