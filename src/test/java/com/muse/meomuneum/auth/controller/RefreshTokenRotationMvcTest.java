@@ -85,6 +85,26 @@ class RefreshTokenRotationMvcTest {
     }
 
     @Test
+    void logoutAfterRefreshUsesTheSameSessionId() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        String originalSessionId = session.getId();
+        String refresh = registerRefreshToken(session);
+
+        mockMvc.perform(post("/api/v1/auth/token/refresh").session(session)
+                .cookie(new Cookie("refresh_token", refresh)))
+                .andExpect(status().isOk());
+
+        assertThat(originalSessionId.equals(session.getId())).isTrue();
+        String access = jwt.createAccessToken(user, session.getId());
+        mockMvc.perform(post("/api/v1/auth/logout").session(session)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + access)
+                .cookie(new Cookie("refresh_token", refresh)))
+                .andExpect(status().isNoContent());
+
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
     void logoutRevokesMatchingRefreshSessionAndDeletesCookie() throws Exception {
         MockHttpSession session = new MockHttpSession();
         String refresh = registerRefreshToken(session);

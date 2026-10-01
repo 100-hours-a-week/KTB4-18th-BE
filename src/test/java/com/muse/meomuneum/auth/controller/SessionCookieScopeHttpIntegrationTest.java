@@ -1,8 +1,6 @@
 package com.muse.meomuneum.auth.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -10,6 +8,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -18,20 +18,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
 import com.muse.meomuneum.chat.region.domain.RegionLevel;
 import com.muse.meomuneum.chat.region.repository.RegionRepository;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
-import com.muse.meomuneum.user.domain.User;
-import com.muse.meomuneum.user.domain.UserRole;
 
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "server.servlet.session.cookie.secure=false", "auth.cookie.secure=true"})
-@ActiveProfiles({"test", "music-record-local"})
+        "server.servlet.session.cookie.secure=false", "auth.cookie.secure=false"})
+@ActiveProfiles("test")
 @EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 class SessionCookieScopeHttpIntegrationTest {
     @Value("${local.server.port}")
@@ -39,13 +38,16 @@ class SessionCookieScopeHttpIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
     @Autowired
-    private JwtTokenProvider jwt;
-    @Autowired
     private LocationResolutionTokenProvider locations;
     @Autowired
     private RegionRepository regions;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
 
     private final ObjectMapper mapper = new ObjectMapper();
+    private static final String TEST_PASSWORD = "LogoutHttpTest123!";
 
     @Test
     void csrfSessionCookieIsScopedToAuthAndBearerWritesNeedNoSessionCsrf() throws Exception {
@@ -56,7 +58,7 @@ class SessionCookieScopeHttpIntegrationTest {
         long dotId = positiveId();
         long musicId = positiveId();
         jdbc.update("INSERT INTO users (id,email,password_hash,nickname,role) VALUES (?,?,?,?,?)",
-                userId, suffix + "@test.local", "test-only", "테스트", "USER");
+                userId, suffix + "@test.local", passwordEncoder.encode(TEST_PASSWORD), "테스트", "USER");
         jdbc.update("INSERT INTO regions (id,code,name,level,is_active) VALUES (?,?,?,?,TRUE)",
                 sidoId, "s" + suffix, "서울특별시", "SIDO");
         jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
@@ -82,22 +84,48 @@ class SessionCookieScopeHttpIntegrationTest {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         HttpClient client = HttpClient.newBuilder().cookieHandler(cookies).build();
         URI base = URI.create("http://127.0.0.1:" + port);
-        HttpResponse<String> csrf = client.send(HttpRequest.newBuilder(
+        HttpResponse<String> preLoginCsrf = client.send(HttpRequest.newBuilder(
                 base.resolve("/api/v1/auth/token/csrf")).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
-        assertThat(csrf.statusCode()).isEqualTo(200);
-        String sessionHeader = csrf.headers().firstValue("Set-Cookie").orElseThrow();
+        assertThat(preLoginCsrf.statusCode()).isEqualTo(200);
+        Map<String, List<String>> loginCookieHeaders = cookies.get(base.resolve("/api/v1/auth/login"), Map.of());
+        String loginCookie = loginCookieHeaders.entrySet().stream()
+                .filter(entry -> "Cookie".equalsIgnoreCase(entry.getKey()))
+                .flatMap(entry -> entry.getValue().stream()).findFirst().orElse("");
+        assertThat(loginCookie.contains("JSESSIONID=")).isTrue();
+        String loginBody = "{\"email\":\"" + suffix + "@test.local\",\"password\":\""
+                + TEST_PASSWORD + "\"}";
+        HttpResponse<String> login = client.send(HttpRequest.newBuilder(base.resolve("/api/v1/auth/login"))
+                .header("Origin", "http://localhost:5174")
+                .header("Content-Type", "application/json")
+                .header("Cookie", loginCookie)
+                .POST(HttpRequest.BodyPublishers.ofString(loginBody)).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(login.statusCode()).as("login response: %s", login.body()).isEqualTo(200);
+        List<String> loginSetCookies = login.headers().allValues("Set-Cookie");
+        assertThat(loginSetCookies).anyMatch(cookie -> cookie.startsWith("refresh_token="));
+        assertThat(loginSetCookies).anyMatch(cookie -> cookie.startsWith("JSESSIONID="));
+        String loginSessionId = currentSessionId(cookies);
+        String bearer = mapper.readTree(login.body()).path("data").path("access_token").asText();
+        assertThat(jwtTokenProvider.parseAccessToken(bearer).sessionId()).isEqualTo(loginSessionId);
+
+        String sessionHeader = preLoginCsrf.headers().firstValue("Set-Cookie").orElseThrow();
         assertThat(sessionHeader).contains("JSESSIONID=", "Path=/api/v1/auth", "HttpOnly");
         assertThat(sessionHeader.toLowerCase()).contains("samesite=lax").doesNotContain("secure");
         String path = cookies.getCookieStore().getCookies().stream()
                 .filter(cookie -> "JSESSIONID".equals(cookie.getName()))
                 .map(java.net.HttpCookie::getPath).findFirst().orElseThrow();
         assertThat(path).isEqualTo("/api/v1/auth");
+
+        HttpResponse<String> csrf = client.send(HttpRequest.newBuilder(
+                base.resolve("/api/v1/auth/token/csrf")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(csrf.statusCode()).isEqualTo(200);
+        String csrfSessionId = currentSessionId(cookies);
+        assertThat(csrfSessionId).isEqualTo(loginSessionId);
         String token = mapper.readTree(csrf.body()).path("data").path("csrf_token").asText();
-        User user = mock(User.class);
-        when(user.getId()).thenReturn(userId);
-        when(user.getRole()).thenReturn(UserRole.USER);
-        String bearer = jwt.createAccessToken(user);
+        assertThat(bearer).isNotBlank();
+        assertThat(cookies.getCookieStore().getCookies().stream()
+                .anyMatch(cookie -> "refresh_token".equals(cookie.getName()))).isTrue();
         var sido = regions.findByCodeAndLevelAndActiveTrue("s" + suffix, RegionLevel.SIDO).orElseThrow();
         var sigungu = regions.findByCodeAndLevelAndActiveTrue("g" + suffix, RegionLevel.SIGUNGU).orElseThrow();
         String locationToken = locations.issue(userId, sido, sigungu, dotId).value();
@@ -105,7 +133,9 @@ class SessionCookieScopeHttpIntegrationTest {
                 + musicId + "\"},\"location_resolution_token\":\"" + locationToken + "\"}";
 
         assertError(post(client, base, body, bearer, null, null), 403, "request rejected");
-        assertError(post(client, base, body, bearer, null, "https://attacker.example"), 403, "request rejected");
+        HttpResponse<String> rejectedOrigin = post(client, base, body, bearer, null, "https://attacker.example");
+        assertThat(rejectedOrigin.statusCode()).isEqualTo(403);
+        assertThat(rejectedOrigin.body()).isEqualTo("Invalid CORS request");
 
         HttpResponse<String> write = client.send(HttpRequest.newBuilder(
                 base.resolve("/api/v1/music-records"))
@@ -115,6 +145,12 @@ class SessionCookieScopeHttpIntegrationTest {
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build(), HttpResponse.BodyHandlers.ofString());
         assertThat(write.statusCode()).isEqualTo(201);
+        String sessionIdAfterBearerWrite = cookies.getCookieStore().getCookies().stream()
+                .filter(cookie -> "JSESSIONID".equals(cookie.getName()))
+                .map(java.net.HttpCookie::getValue).findFirst().orElseThrow();
+        assertThat(sessionIdAfterBearerWrite.equals(csrfSessionId))
+                .as("bearer-authenticated API request must keep the CSRF session")
+                .isTrue();
         long recordId = mapper.readTree(write.body()).path("data").path("record_id").asLong();
         assertThat(recordId).isPositive();
 
@@ -129,14 +165,26 @@ class SessionCookieScopeHttpIntegrationTest {
                 .header("Origin", "http://localhost:5174")
                 .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
         assertThat(rejectedLogout.statusCode()).isEqualTo(403);
+        Map<String, List<String>> logoutCookieHeaders = cookies.get(base.resolve("/api/v1/auth/logout"), Map.of());
+        String outgoingCookie = logoutCookieHeaders.entrySet().stream()
+                .filter(entry -> "Cookie".equalsIgnoreCase(entry.getKey()))
+                .flatMap(entry -> entry.getValue().stream()).findFirst().orElse("");
+        assertThat(outgoingCookie).contains("JSESSIONID=");
         HttpResponse<String> logout = client.send(HttpRequest.newBuilder(base.resolve("/api/v1/auth/logout"))
                 .header("Origin", "http://localhost:5174")
+                .header("Authorization", "Bearer " + bearer)
                 .header("X-CSRF-TOKEN", token)
                 .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(logout.statusCode()).isEqualTo(204);
+        assertThat(logout.statusCode()).as("logout response: %s", logout.body()).isEqualTo(204);
         String refreshHeader = logout.headers().firstValue("Set-Cookie").orElseThrow();
-        assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Secure", "Max-Age=0");
+        assertThat(refreshHeader).contains("refresh_token=", "Path=/api/v1/auth", "HttpOnly", "Max-Age=0")
+                .doesNotContain("Secure");
         assertThat(refreshHeader.toLowerCase()).contains("samesite=lax");
+        HttpResponse<String> postLogoutCsrf = client.send(HttpRequest.newBuilder(
+                base.resolve("/api/v1/auth/token/csrf")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(postLogoutCsrf.statusCode()).isEqualTo(200);
+        assertThat(currentSessionId(cookies)).isNotEqualTo(csrfSessionId);
     }
 
     private HttpResponse<String> post(HttpClient client, URI base, String body, String bearer, String csrf,
@@ -175,6 +223,12 @@ class SessionCookieScopeHttpIntegrationTest {
         }
         return client.send(request.method("PATCH", HttpRequest.BodyPublishers.ofString("{\"emotion_memo\":\"수정\"}"))
                 .build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private String currentSessionId(CookieManager cookies) {
+        return cookies.getCookieStore().getCookies().stream()
+                .filter(cookie -> "JSESSIONID".equals(cookie.getName()))
+                .map(java.net.HttpCookie::getValue).findFirst().orElseThrow();
     }
 
     private long positiveId() {
