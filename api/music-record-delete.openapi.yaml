@@ -1,0 +1,71 @@
+openapi: 3.0.3
+info:
+  title: Music record deletion
+  version: 1.0.0
+paths:
+  /api/v1/music-records/{record_id}:
+    delete:
+      operationId: deleteMusicRecord
+      summary: 본인 음악 기록 소프트 삭제
+      description: |
+        인증된 사용자 소유의 활성 기록에만 deleted_at을 기록한다.
+        공용 music 데이터와 다른 사용자의 기록은 유지한다.
+        삭제된 기록은 목록과 상세 조회에서 제외한다.
+        이미 삭제된 기록의 반복 요청은 404를 반환한다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: record_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: 삭제 완료. 응답 본문 없음.
+        '401':
+          description: 인증 없음 또는 만료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: unauthorized, data: null }
+        '403':
+          description: 다른 사용자의 활성 기록 또는 허용되지 않은 요청 출처
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: forbidden, data: null }
+        '404':
+          description: 존재하지 않거나 이미 삭제된 기록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: music record not found, data: null }
+        '500':
+          description: 서버 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: internal server error, data: null }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+          example: null

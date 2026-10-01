@@ -370,3 +370,29 @@ Migration은 지역 코드를 기준으로 갱신하고 초기 채팅방 데이�
 `ChatRoomProvisioningService`는 활성 시·군·구 중 기존 방이 없는 지역만 보충한 뒤 누락된 방이
 없는지 다시 검증합니다. 다른 데이터·제약 오류나 검증 후 누락이 있으면 시작을 실패시켜 불완전한
 준비 상태를 숨기지 않습니다. 사용자 입장 서비스는 채팅방을 생성하지 않습니다.
+
+## 음악 기록 삭제
+
+`DELETE /api/v1/music-records/{record_id}`는 인증된 사용자의 기록만 소프트 삭제합니다.
+성공은 본문 없는 `204`, 미인증은 `401`, 타인의 활성 기록은 `403`, 없는 기록과
+이미 삭제된 기록은 `404`입니다. 오류는 기존 `{message, data}` 형식을 유지합니다.
+[OpenAPI 계약](api/music-record-delete.openapi.yaml)에 요청·응답을 기록했습니다.
+
+기존 `deleted_at`을 사용하므로 새 Migration은 없습니다. 음악 데이터와 다른 사용자의
+기록은 유지하고, 기존 목록·상세 조회는 삭제 기록을 제외합니다. 지도 대표 음악 조회는
+별도 `feature/map-latest-album-cover` 작업의 통합 후 최신 기록·마지막 기록 삭제 시
+이전 커버 선택·커버 제거·ETag 변경을 확인해야 합니다. 현재 dev 지도는 정적 카탈로그입니다.
+
+BE API를 먼저 배포한 뒤 FE 삭제 UI를 배포합니다. 삭제 오류나 권한 위반이 발견되면
+FE UI와 BE 코드를 되돌립니다. 이미 삭제된 데이터는 코드 롤백만으로 복원되지 않으며
+필요한 기록만 승인된 운영 절차로 복구합니다. Feature Flag는 없습니다.
+
+삭제 단위·HTTP·보안 필터 테스트와 전용 테스트 DB의
+`MUSIC_RECORD_LOCAL_TESTS=true ./gradlew test --tests '*MusicRecordApiDatabaseIntegrationTest' --no-daemon`으로
+소유권·삭제 후 조회·반복 요청·공용 음악과 타인 기록 보존을 검증합니다. 실제 테스트 DB
+환경변수는 기존 실행 기준을 따르고 운영 DB를 사용하지 않습니다.
+전체 Migration이 이미 적용된 전용 테스트 DB에서는
+`SPRING_FLYWAY_LOCATIONS=classpath:db/migration`도 설정해 같은 Migration 목록으로 검증합니다.
+이번 검증은 실제 DB 통합 테스트 3개와 Docker 의존 테스트를 제외한 회귀 테스트
+252개가 통과했습니다. 조건부 테스트 17개는 회귀 실행에서 건너뛰었으며, Docker
+의존 테스트 3개 클래스는 실행하지 않았습니다.
