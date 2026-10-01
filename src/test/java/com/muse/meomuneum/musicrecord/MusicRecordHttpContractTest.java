@@ -1,11 +1,17 @@
 package com.muse.meomuneum.musicrecord;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.Instant;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,10 +30,12 @@ import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 
 class MusicRecordHttpContractTest {
     private MockMvc mvc;
+    private MusicRecordRepository repository;
 
     @BeforeEach
     void setUp() {
-        MusicRecordService service = new MusicRecordService(mock(MusicRecordRepository.class),
+        repository = mock(MusicRecordRepository.class);
+        MusicRecordService service = new MusicRecordService(repository,
                 mock(ItunesMusicSearchClient.class), mock(LocationResolutionTokenProvider.class),
                 new MusicSearchCursorCodec("test-only-secret"));
         CurrentUserResolver users = mock(CurrentUserResolver.class);
@@ -44,6 +52,29 @@ class MusicRecordHttpContractTest {
                 .param("size", "abc"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("search query required"));
+    }
+
+    @Test
+    void deleteReturnsNoContentWithoutAJsonBody() throws Exception {
+        when(repository.deleteRecord(eq(1L), eq(7L), any(Instant.class))).thenReturn(1);
+        mvc.perform(delete("/api/v1/music-records/7"))
+                .andExpect(status().isNoContent()).andExpect(content().string(""));
+    }
+
+    @Test
+    void deleteUsesDocumentedForbiddenResponse() throws Exception {
+        when(repository.existsActiveRecord(7L)).thenReturn(true);
+        mvc.perform(delete("/api/v1/music-records/7"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("forbidden"))
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void missingDeleteUsesDocumentedNotFoundResponse() throws Exception {
+        mvc.perform(delete("/api/v1/music-records/7"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("music record not found"));
     }
 
 }

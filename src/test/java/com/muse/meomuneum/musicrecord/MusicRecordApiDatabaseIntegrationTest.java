@@ -6,9 +6,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -75,7 +77,7 @@ class MusicRecordApiDatabaseIntegrationTest {
     }
 
     @Test
-    void createListDetailAndPatchUseOriginalContractAndOwnerRules() throws Exception {
+    void createListDetailPatchAndDeleteUseOriginalContractAndOwnerRules() throws Exception {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         long userId = positiveId();
         long sidoId = positiveId();
@@ -86,6 +88,8 @@ class MusicRecordApiDatabaseIntegrationTest {
         String externalId = String.valueOf(musicId);
         jdbc.update("INSERT INTO users (id,email,password_hash,nickname,role) VALUES (?,?,?,?,?)",
                 userId, suffix + "@test.local", "test-only", "테스트", "USER");
+        jdbc.update("INSERT INTO users (id,email,password_hash,nickname,role) VALUES (?,?,?,?,?)",
+                userId + 1, suffix + "-other@test.local", "test-only", "다른 사용자", "USER");
         jdbc.update("INSERT INTO regions (id,code,name,level,is_active) VALUES (?,?,?,?,TRUE)",
                 sidoId, "s" + suffix, "서울특별시", "SIDO");
         jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
@@ -113,6 +117,7 @@ class MusicRecordApiDatabaseIntegrationTest {
                 .path("data").path("csrf_token").asText();
 
         MvcResult created = mvc.perform(post("/api/v1/music-records")
+                .header("Origin", "http://localhost:5174")
                 .session(session).header("X-CSRF-TOKEN", csrf)
                 .header("Authorization", "Bearer " + bearer)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -148,6 +153,7 @@ class MusicRecordApiDatabaseIntegrationTest {
         csrf = mapper.readTree(nextCsrf.getResponse().getContentAsString())
                 .path("data").path("csrf_token").asText();
         MvcResult patched = mvc.perform(patch("/api/v1/music-records/{recordId}", recordId)
+                .header("Origin", "http://localhost:5174")
                 .session(session).header("X-CSRF-TOKEN", csrf)
                 .header("Authorization", "Bearer " + bearer)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -172,6 +178,35 @@ class MusicRecordApiDatabaseIntegrationTest {
                 .header("Authorization", "Bearer " + bearer))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value("music record not found"));
+
+        mvc.perform(delete("/api/v1/music-records/{recordId}", recordId)
+                .header("Origin", "http://localhost:5174"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(delete("/api/v1/music-records/{recordId}", recordId)
+                .header("Origin", "http://localhost:5174")
+                .header("Authorization", "Bearer " + bearer(userId + 1)))
+                .andExpect(status().isForbidden());
+        assertThat(musicRepository.findRecord(userId, recordId)).isPresent();
+
+        long otherRecord = musicRepository.saveRecord(userId + 1, musicId,
+                musicRepository.findLocation(dotId, sigunguId, sidoId).orElseThrow(),
+                null, null, Instant.now());
+        mvc.perform(delete("/api/v1/music-records/{recordId}", recordId)
+                .header("Origin", "http://localhost:5174")
+                .header("Authorization", "Bearer " + bearer))
+                .andExpect(status().isNoContent()).andExpect(content().string(""));
+        LocalDateTime deletedAt = jdbc.queryForObject("SELECT deleted_at FROM music_records WHERE id=?",
+                (row, index) -> row.getObject("deleted_at", LocalDateTime.class), recordId);
+        assertThat(deletedAt).isNotNull();
+        assertThat(musicRepository.findMusic("ITUNES", externalId)).isPresent();
+        assertThat(musicRepository.findRecord(userId + 1, otherRecord)).isPresent();
+        mvc.perform(get("/api/v1/users/me/music-records").header("Authorization", "Bearer " + bearer))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+        mvc.perform(get("/api/v1/music-records/{recordId}", recordId)
+                .header("Authorization", "Bearer " + bearer)).andExpect(status().isNotFound());
+        mvc.perform(delete("/api/v1/music-records/{recordId}", recordId)
+                .header("Origin", "http://localhost:5174")
+                .header("Authorization", "Bearer " + bearer)).andExpect(status().isNotFound());
     }
 
     @Test

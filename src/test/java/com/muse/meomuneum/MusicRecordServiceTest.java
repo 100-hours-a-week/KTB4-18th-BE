@@ -15,6 +15,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
@@ -63,6 +64,31 @@ class MusicRecordServiceTest {
         assertThat(service.detail(1L, 7L)).isEqualTo(detail);
         assertThatThrownBy(() -> service.detail(2L, 7L))
                 .isInstanceOf(MusicRecordException.class);
+    }
+
+    @Test
+    void deleteUpdatesOnlyTheOwnedActiveRecord() {
+        when(repository.deleteRecord(eq(1L), eq(7L), any(Instant.class))).thenReturn(1);
+        service.delete(1L, 7L);
+        verify(repository).deleteRecord(eq(1L), eq(7L), any(Instant.class));
+        verify(repository, never()).existsActiveRecord(7L);
+        verify(repository, never()).findRecord(1L, 7L);
+    }
+
+    @Test
+    void deletingAnotherUsersActiveRecordIsForbidden() {
+        when(repository.existsActiveRecord(7L)).thenReturn(true);
+        assertThatThrownBy(() -> service.delete(2L, 7L))
+                .isInstanceOfSatisfying(MusicRecordException.class,
+                        error -> assertThat(error.status()).isEqualTo(HttpStatus.FORBIDDEN));
+        verify(repository).deleteRecord(eq(2L), eq(7L), any(Instant.class));
+    }
+
+    @Test
+    void deletingAMissingOrAlreadyDeletedRecordReturnsNotFound() {
+        assertThatThrownBy(() -> service.delete(1L, 7L))
+                .isInstanceOfSatisfying(MusicRecordException.class,
+                        error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     @Test
