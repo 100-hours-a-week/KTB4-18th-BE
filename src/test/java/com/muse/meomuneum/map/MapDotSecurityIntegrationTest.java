@@ -26,6 +26,7 @@ import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.map.catalog.MapZoneCatalog;
 import com.muse.meomuneum.map.controller.MapDotController;
+import com.muse.meomuneum.map.repository.MapDotRepository;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
 
@@ -76,6 +77,13 @@ class MapDotSecurityIntegrationTest {
         @Bean
         MapZoneCatalog mapZoneCatalog() {
             return mock(MapZoneCatalog.class);
+        }
+
+        @Bean
+        MapDotRepository mapDotRepository() {
+            MapDotRepository repository = mock(MapDotRepository.class);
+            when(repository.findLatestPublicRecords()).thenReturn(List.of());
+            return repository;
         }
 
         @Bean
