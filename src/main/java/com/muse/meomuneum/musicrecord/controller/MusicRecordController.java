@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -65,5 +66,11 @@ public class MusicRecordController {
     public ApiResponse<UpdateResponse> update(@PathVariable long recordId, @RequestBody JsonNode body,
             Authentication authentication) {
         return ApiResponse.of("music record updated", service.update(users.resolve(authentication), recordId, body));
+    }
+
+    @DeleteMapping("/music-records/{recordId}")
+    public ResponseEntity<Void> delete(@PathVariable long recordId, Authentication authentication) {
+        service.delete(users.resolve(authentication), recordId);
+        return ResponseEntity.noContent().build();
     }
 }

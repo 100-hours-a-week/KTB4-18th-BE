@@ -193,6 +193,12 @@ public class MusicRecordRepository {
                 + "WHERE id=? AND user_id=? AND deleted_at IS NULL",
                 placeName, memo, LocalDateTime.ofInstant(updatedAt, ZoneOffset.UTC), recordId, userId);
     }
+
+    public int deleteRecord(long userId, long recordId, Instant deletedAt) {
+        return jdbc.update("UPDATE music_records SET deleted_at=? "
+                + "WHERE id=? AND user_id=? AND deleted_at IS NULL",
+                LocalDateTime.ofInstant(deletedAt, ZoneOffset.UTC), recordId, userId);
+    }
     private MusicItem item(long id, String provider, String externalId, String title, String artist,
             String cover, String preview, String youtubeVideoId) {
         return new MusicItem(id, provider, externalId, title, artist, cover, preview,

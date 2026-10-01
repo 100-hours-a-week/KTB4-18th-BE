@@ -200,6 +200,18 @@ public class MusicRecordService {
     }
 
     @Transactional
+    public void delete(long userId, long recordId) {
+        if (repository.deleteRecord(userId, recordId, clock.instant()) == 1) {
+            return;
+        }
+        if (repository.existsActiveRecord(recordId)) {
+            throw new MusicRecordException("music_record_not_owned", HttpStatus.FORBIDDEN, "forbidden");
+        }
+        throw new MusicRecordException("music_record_not_found", HttpStatus.NOT_FOUND,
+                "music record not found");
+    }
+
+    @Transactional
     public UpdateResponse update(long userId, long recordId, JsonNode body) {
         if (body == null || !body.isObject()) {
             throw new MusicRecordException("music_record_update_invalid_body");
