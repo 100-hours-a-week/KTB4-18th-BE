@@ -293,8 +293,8 @@ membership 종료를 되돌리지 않습니다.
 `message` 길이에 맞춰 현재 입력을 우선한 최근 200자를 `POST /v1/chat/messages`에 전달하며,
 `conversation_key`를 `thread_id`로 사용하고 요청마다 `request_id`를 생성합니다.
 
-추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택합니다. 기본값 `itunes`는 개발용 직접 검색이고,
-운영 프로필 기본값 `ai`는 AI 서버가 반환한 iTunes 곡 정보를 서비스 음악 모델로 변환합니다.
+추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택하며 기본값은 모든 프로필에서 `ai`입니다.
+AI 서버가 반환한 곡 정보를 서비스 음악 모델로 변환합니다. `itunes` 제공자는 로컬 확인용으로만 선택할 수 있습니다.
 AI 서버 주소와 연결·읽기 제한 시간은 각각 `RECOMMENDATION_AI_BASE_URL`,
 `RECOMMENDATION_AI_CONNECT_TIMEOUT`, `RECOMMENDATION_AI_READ_TIMEOUT`으로 주입합니다.
 V1의 백엔드와 AI 간 내부 요청에는 별도의 `Authorization` 헤더를 보내지 않습니다.
