@@ -17,8 +17,8 @@ import com.muse.meomuneum.location.provider.RegionCoordinateResolver;
 import com.muse.meomuneum.location.provider.ResolvedRegionCode;
 import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
+import com.muse.meomuneum.map.catalog.MapZoneCatalog;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
-import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 
 @Service
 public class LocationResolutionService {
@@ -26,17 +26,17 @@ public class LocationResolutionService {
     private final RegionCoordinateResolver coordinateResolver;
     private final RegionRepository regionRepository;
     private final LocationResolutionTokenProvider tokenProvider;
-    private final MusicRecordRepository musicRecordRepository;
+    private final MapZoneCatalog mapZoneCatalog;
 
     public LocationResolutionService(
             RegionCoordinateResolver coordinateResolver,
             RegionRepository regionRepository,
             LocationResolutionTokenProvider tokenProvider,
-            MusicRecordRepository musicRecordRepository) {
+            MapZoneCatalog mapZoneCatalog) {
         this.coordinateResolver = coordinateResolver;
         this.regionRepository = regionRepository;
         this.tokenProvider = tokenProvider;
-        this.musicRecordRepository = musicRecordRepository;
+        this.mapZoneCatalog = mapZoneCatalog;
     }
 
     @Transactional(readOnly = true)
@@ -46,13 +46,13 @@ public class LocationResolutionService {
         Region sido = findRegion(regionCode.sidoCode(), RegionLevel.SIDO);
         Region sigungu = findRegion(regionCode.sigunguCode(), RegionLevel.SIGUNGU);
         validateHierarchy(sido, sigungu);
-        var mapDot = musicRecordRepository.findNearestLocation(request.latitude(), request.longitude())
+        var mapDot = mapZoneCatalog.findContainingMapDot(request.latitude(), request.longitude())
                 .orElseThrow(() -> new MusicRecordException("map_dot_not_found", HttpStatus.NOT_FOUND,
                         "map dot not found"));
 
-        IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu, mapDot.dotId());
+        IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu, mapDot.mapDotId());
         return new LocationResolveResponse(
-                new LocationResolveResponse.MapDotSummary(mapDot.dotId(), mapDot.dotCode()),
+                new LocationResolveResponse.MapDotSummary(mapDot.mapDotId(), mapDot.code()),
                 new RegionSummaryPair(RegionSummary.from(sido), RegionSummary.from(sigungu)),
                 token.value(),
                 token.expiresIn());
