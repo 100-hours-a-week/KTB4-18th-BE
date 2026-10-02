@@ -26,6 +26,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
+import com.muse.meomuneum.music.exception.MusicMetadataException;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
@@ -89,6 +90,17 @@ class ItunesMusicSearchClientHttpTest {
         assertThat(searched.getFirst().external_music_id()).isEqualTo("123");
         assertThat(lookedUp).isPresent();
         assertThat(lookedUp.orElseThrow().title()).isEqualTo("테스트 노래");
+    }
+
+    @Test
+    void lookupRejectsMalformedMetadataAsProviderFailureWithoutTruncation() {
+        server.createContext("/metadata/lookup", exchange -> respond(exchange, 200,
+                TRACK_BODY.replace("테스트 가수", "가".repeat(1001))));
+        var metadataClient = new ItunesMusicSearchClient(new ObjectMapper(),
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/metadata/search",
+                "US", Duration.ofSeconds(2));
+        assertThatThrownBy(() -> metadataClient.lookup("123"))
+                .isInstanceOf(MusicMetadataException.class).hasMessage("artist_name_too_long");
     }
 
     @Test
