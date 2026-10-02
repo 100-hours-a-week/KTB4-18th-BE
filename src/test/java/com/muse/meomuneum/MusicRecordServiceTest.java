@@ -221,11 +221,11 @@ class MusicRecordServiceTest {
     }
 
     @Test
-    void createIgnoresClientMetadataAndUsesProviderLookup() {
+    void createStoresProviderMetadataAndRecordTimestamp() {
         var location = new MusicRecordRepository.Location(3L, "dot-3", 4L, "11440", "마포구",
                 5L, "11", "서울특별시");
         var selected = new MusicItem(null, "ITUNES", "200", "서버 제목", "서버 가수",
-                null, null, null, false);
+                "https://cdn.example.com/cover.jpg", "https://cdn.example.com/preview.m4a", null, false);
         when(tokens.validate("location-token", 1L)).thenReturn(
                 new LocationResolutionClaims(1L, 5L, "11", 4L, "11440", 3L,
                         Instant.now().plusSeconds(300)));
@@ -247,16 +247,22 @@ class MusicRecordServiceTest {
     }
 
     @Test
-    void createWithExistingMusicDoesNotCallItunesLookup() {
+    void createRefreshesExistingMusicMetadataFromProvider() {
         var location = new MusicRecordRepository.Location(3L, "dot-3", 4L, "11440", "마포구",
                 5L, "11", "서울특별시");
         var storedMusic = new MusicItem(9L, "ITUNES", "200", "DB 제목", "DB 가수",
                 null, null, null, false);
+        var refreshedMusic = new MusicItem(null, "ITUNES", "200", "최신 제목", "최신 가수",
+                "https://cdn.example.com/cover.jpg", "https://cdn.example.com/preview.m4a", null, false);
         when(tokens.validate("location-token", 1L)).thenReturn(
                 new LocationResolutionClaims(1L, 5L, "11", 4L, "11440", 3L,
                         Instant.now().plusSeconds(300)));
         when(repository.findLocation(3L, 4L, 5L)).thenReturn(Optional.of(location));
         when(repository.findMusic("ITUNES", "200")).thenReturn(Optional.of(storedMusic));
+        when(itunes.lookup("200")).thenReturn(Optional.of(refreshedMusic));
+        when(repository.upsertMusic(new MusicItem(9L, "ITUNES", "200", "최신 제목", "최신 가수",
+                "https://cdn.example.com/cover.jpg", "https://cdn.example.com/preview.m4a", null, false)))
+                .thenReturn(9L);
         when(repository.saveRecord(eq(1L), eq(9L), eq(location), any(), any(),
                 any(Instant.class))).thenReturn(7L);
         when(repository.findCreatedAt(7L)).thenReturn(Instant.parse("2026-09-22T06:30:00Z"));
@@ -265,8 +271,9 @@ class MusicRecordServiceTest {
                 "location-token", null, null));
 
         assertThat(created.record_id()).isEqualTo(7L);
-        verify(itunes, never()).lookup("200");
-        verify(repository, never()).upsertMusic(any(MusicItem.class));
+        verify(itunes).lookup("200");
+        verify(repository).upsertMusic(new MusicItem(9L, "ITUNES", "200", "최신 제목", "최신 가수",
+                "https://cdn.example.com/cover.jpg", "https://cdn.example.com/preview.m4a", null, false));
     }
 
     @Test

@@ -67,4 +67,11 @@ class MapZoneCatalogTests {
         assertFalse(catalog.findContaining(firstZone.se().latitude(), firstZone.se().longitude()).orElseThrow().code()
                 .equals(firstZone.code()));
     }
+
+    @Test
+    void findsTheMapDotForTheContainingZone() {
+        assertEquals(new MapZoneCatalog.MapDot(1L, "KR-COAST-0001"),
+                catalog.findContainingMapDot(38.4684909, 128.3049316).orElseThrow());
+        assertFalse(catalog.findContainingMapDot(0, 0).isPresent());
+    }
 }
