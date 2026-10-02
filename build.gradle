@@ -73,6 +73,7 @@ tasks.named('test') {
 tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 	from('src/main/resources/db/migration') {
 		include 'V1__recommendation_sample.sql'
+		include 'V20261002133615__expand_music_artist_name_length.sql'
 		include 'V20260921192804__add_index_to_recommendation_session_context.sql'
 		include 'V20260921200528__create_users_table.sql'
 		include 'V20260923142421__create_chat_room_foundation.sql'
@@ -87,6 +88,7 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 	from('src/main/resources/db/migration') {
 		include 'V1__recommendation_sample.sql'
+		include 'V20261002133615__expand_music_artist_name_length.sql'
 		include 'V20260921192804__add_index_to_recommendation_session_context.sql'
 		include 'V20260921200528__create_users_table.sql'
 		include 'V20260922145107__add_auto_increment_to_users_id.sql'

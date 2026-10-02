@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
+import com.muse.meomuneum.music.exception.MusicMetadataException;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationAcceptedResponse;
@@ -117,6 +119,8 @@ public class RecommendationService {
                     exception.getStatus() == 504
                             ? "AI 추천 시간이 초과됐어요. 잠시 후 다시 시도해 주세요."
                             : "AI 추천 결과를 처리하지 못했어요. 다시 시도해 주세요.");
+        } catch (MusicMetadataException exception) {
+            fail(recommendationId, "FAILED", "추천된 곡의 음악 정보를 저장할 수 없어요. 다른 곡을 추천받아 주세요.");
         } catch (RuntimeException exception) {
             fail(recommendationId, "FAILED", "AI 추천 중 오류가 발생했어요. 다시 시도해 주세요.");
         } finally {
@@ -141,6 +145,7 @@ public class RecommendationService {
                         .toLowerCase(Locale.ROOT)).distinct().count() != tracks.size()) {
             throw new RecommendationException(502, "AI 추천 서비스의 곡 목록을 처리하지 못했습니다.");
         }
+        tracks.forEach(track -> MusicMetadataPolicy.validate(track.title(), track.artistName()));
     }
 
     private Map<String, Object> streamPayload(List<TrackData> tracks) {

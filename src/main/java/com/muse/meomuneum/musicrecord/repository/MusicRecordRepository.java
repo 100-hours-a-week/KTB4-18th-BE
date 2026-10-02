@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 
+import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordDetailResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordResponse;
@@ -95,6 +96,7 @@ public class MusicRecordRepository {
                 .stream().findFirst();
     }
     public long upsertMusic(MusicItem music) {
+        MusicMetadataPolicy.validate(music.title(), music.artist_name());
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
                 + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
