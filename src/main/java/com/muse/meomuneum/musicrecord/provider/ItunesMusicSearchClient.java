@@ -15,6 +15,7 @@ import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 
@@ -67,6 +68,9 @@ public class ItunesMusicSearchClient {
             }
             var items = new ArrayList<MusicItem>();
             for (JsonNode result : results) {
+                if ("lookup".equals(operation) && result.path("trackId").canConvertToLong()) {
+                    MusicMetadataPolicy.validate(result.path("trackName").asText(), result.path("artistName").asText());
+                }
                 if (result.path("trackId").canConvertToLong() && !result.path("trackName").asText().isBlank()
                         && !result.path("artistName").asText().isBlank()) {
                     items.add(new MusicItem(null, "ITUNES", result.path("trackId").asText(),

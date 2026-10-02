@@ -11,6 +11,7 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
@@ -67,6 +68,7 @@ public class RecommendationRepository {
     }
 
     public long saveMusic(TrackData track) {
+        MusicMetadataPolicy.validate(track.title(), track.artistName());
         // 같은 곡은 중복 저장하지 않습니다. UNIQUE(provider, external_music_id)와 함께 사용합니다.
         jdbc.update("""
                 INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, preview_url)

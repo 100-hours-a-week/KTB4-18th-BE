@@ -15,12 +15,18 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.muse.meomuneum.global.response.ApiResponse;
+import com.muse.meomuneum.music.exception.MusicMetadataException;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(MusicMetadataException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMusicMetadataException(MusicMetadataException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ApiResponse.failure("music metadata invalid"));
+    }
 
     @ExceptionHandler(MusicRecordException.class)
     public ResponseEntity<ApiResponse<Void>> handleMusicRecordException(MusicRecordException exception,
