@@ -50,6 +50,11 @@ public class MapZoneCatalog {
         return catalog.zones().stream().filter(zone -> contains(zone, latitude, longitude)).findFirst();
     }
 
+    public Optional<MapDot> findContainingMapDot(double latitude, double longitude) {
+        return findContaining(latitude, longitude)
+                .map(zone -> new MapDot(mapDotIdFromCode(zone.code()), zone.code()));
+    }
+
     private static MapZoneCatalogDocument load(ObjectMapper objectMapper) {
         try (InputStream inputStream = new ClassPathResource(CATALOG_RESOURCE_PATH).getInputStream()) {
             return objectMapper.readValue(inputStream, MapZoneCatalogDocument.class);

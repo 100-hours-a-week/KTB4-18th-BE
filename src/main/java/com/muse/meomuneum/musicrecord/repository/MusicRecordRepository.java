@@ -78,14 +78,6 @@ public class MusicRecordRepository {
 
     public record StoredMusic(MusicItem music, boolean matchesSearch) {
     }
-    public Optional<MapDotLocation> findNearestLocation(double latitude, double longitude) {
-        String sql = "SELECT d.id dot_id, d.code dot_code FROM map_dots d "
-                + "WHERE d.is_active=TRUE "
-                + "ORDER BY POW(d.latitude-?,2)+POW(d.longitude-?,2) LIMIT 1";
-        return jdbc.query(sql, (row, index) -> new MapDotLocation(row.getLong("dot_id"),
-                row.getString("dot_code")), latitude, longitude).stream().findFirst();
-    }
-
     public Optional<Location> findLocation(long dotId, long sigunguId, long sidoId) {
         String sql = "SELECT d.id dot_id, d.code dot_code, g.id sigungu_id, g.code sigungu_code, "
                 + "g.name sigungu_name, s.id sido_id, s.code sido_code, s.name sido_name FROM map_dots d "
@@ -98,7 +90,10 @@ public class MusicRecordRepository {
     public long upsertMusic(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
+                + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE "
+                + "title=VALUES(title), artist_name=VALUES(artist_name), "
+                + "album_cover_url=COALESCE(VALUES(album_cover_url), album_cover_url), "
+                + "preview_url=COALESCE(VALUES(preview_url), preview_url), updated_at=CURRENT_TIMESTAMP(6)",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
                 music.album_cover_url(), music.preview_url());
         Long id = jdbc.queryForObject("SELECT id FROM music WHERE provider=? AND external_music_id=?",
@@ -237,6 +232,4 @@ public class MusicRecordRepository {
         }
     }
 
-    public record MapDotLocation(long dotId, String dotCode) {
-    }
 }

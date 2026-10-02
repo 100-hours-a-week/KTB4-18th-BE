@@ -156,9 +156,8 @@ public class MusicRecordService {
         }
         Location location = repository.findLocation(claims.mapDotId(), claims.sigunguRegionId(),
                 claims.sidoRegionId()).orElseThrow(() -> new MusicRecordException("location_token_target_missing"));
-        MusicItem music = repository.findMusic(request.music().provider(),
-                request.music().external_music_id()).orElseGet(() -> lookupMusic(request.music().external_music_id()));
-        long musicId = music.music_id() == null ? repository.upsertMusic(music) : music.music_id();
+        MusicItem music = resolveMusicForRecord(request.music().external_music_id());
+        long musicId = repository.upsertMusic(music);
         Instant now = clock.instant();
         long id = repository.saveRecord(userId, musicId, location,
                 blankToNull(request.custom_place_name()), blankToNull(request.emotion_memo()), now);
@@ -176,6 +175,27 @@ public class MusicRecordService {
             }
             throw exception;
         }
+    }
+
+    private MusicItem resolveMusicForRecord(String trackId) {
+        MusicItem stored = repository.findMusic("ITUNES", trackId).orElse(null);
+        MusicItem external;
+        try {
+            external = lookupMusic(trackId);
+        } catch (MusicRecordException exception) {
+            if (stored == null) {
+                throw exception;
+            }
+            return stored;
+        }
+        if (stored == null) {
+            return external;
+        }
+        return new MusicItem(stored.music_id(), external.provider(), external.external_music_id(),
+                external.title(), external.artist_name(),
+                external.album_cover_url() == null ? stored.album_cover_url() : external.album_cover_url(),
+                external.preview_url() == null ? stored.preview_url() : external.preview_url(),
+                stored.youtube_video_id(), stored.is_queueable());
     }
 
     public MusicRecordListResponse list(long userId, String cursor, Integer size) {
