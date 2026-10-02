@@ -9,9 +9,11 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,6 +23,7 @@ import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.map.catalog.MapZoneCatalog;
 import com.muse.meomuneum.map.repository.MapDotRepository;
 import com.muse.meomuneum.map.repository.MapDotRepository.LatestMapDotRecord;
+import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -31,17 +34,23 @@ public class MapDotController {
     private final MapZoneCatalog catalog;
     private final MapDotRepository repository;
     private final ObjectMapper objectMapper;
+    private final CurrentUserResolver currentUserResolver;
 
-    public MapDotController(MapZoneCatalog catalog, MapDotRepository repository, ObjectMapper objectMapper) {
+    public MapDotController(MapZoneCatalog catalog, MapDotRepository repository, ObjectMapper objectMapper,
+            CurrentUserResolver currentUserResolver) {
         this.catalog = catalog;
         this.repository = repository;
         this.objectMapper = objectMapper;
+        this.currentUserResolver = currentUserResolver;
     }
 
     @GetMapping
     public ResponseEntity<ApiResponse<MapDotsResponse>> getMapDots(
-            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-        Map<Long, LatestMapDotRecord> latestRecords = repository.findLatestPublicRecords().stream()
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch,
+            Authentication authentication) {
+        Long userId = currentUserResolver.resolve(authentication);
+        List<LatestMapDotRecord> records = userId == null ? List.of() : repository.findLatestRecordsByUser(userId);
+        Map<Long, LatestMapDotRecord> latestRecords = records.stream()
                 .collect(Collectors.toMap(LatestMapDotRecord::mapDotId, Function.identity()));
         List<MapDotResponse> items = catalog.mapDots().stream()
                 .map(dot -> MapDotResponse.from(dot, latestRecords.get(dot.mapDotId())))
@@ -49,9 +58,11 @@ public class MapDotController {
         ApiResponse<MapDotsResponse> response = new ApiResponse<>("map dots retrieved", new MapDotsResponse(items));
         String etag = etag(response);
         if (matches(ifNoneMatch, etag)) {
-            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag).build();
+            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).cacheControl(CacheControl.noCache().cachePrivate())
+                    .varyBy(HttpHeaders.AUTHORIZATION).eTag(etag).build();
         }
-        return ResponseEntity.ok().eTag(etag).body(response);
+        return ResponseEntity.ok().cacheControl(CacheControl.noCache().cachePrivate())
+                .varyBy(HttpHeaders.AUTHORIZATION).eTag(etag).body(response);
     }
 
     private boolean matches(String ifNoneMatch, String etag) {

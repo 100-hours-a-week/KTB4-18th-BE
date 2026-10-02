@@ -28,7 +28,7 @@ class MapDotRepositoryDatabaseIntegrationTest {
     private MapDotRepository repository;
 
     @Test
-    void choosesLatestEligibleRecordPerDotAndExcludesPrivateDeletedAndWithdrawnRows() {
+    void choosesOwnersLatestRecordRegardlessOfSharingAndExcludesDeletedAndWithdrawnRows() {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         long sidoId = insertRegion("s" + suffix, "테스트 시도", "SIDO", null);
         long sigunguId = insertRegion("g" + suffix, "테스트 시군구", "SIGUNGU", sidoId);
@@ -69,7 +69,7 @@ class MapDotRepositoryDatabaseIntegrationTest {
                 insertMusic(suffix + "-tie-high", "https://cdn.example.com/high.jpg"), tiedDot, sigunguId,
                 tiedAt, null);
 
-        Map<Long, LatestMapDotRecord> latestByDot = repository.findLatestPublicRecords().stream()
+        Map<Long, LatestMapDotRecord> latestByDot = repository.findLatestRecordsByUser(publicUser).stream()
                 .collect(Collectors.toMap(LatestMapDotRecord::mapDotId, Function.identity()));
 
         assertThat(latestByDot.get(firstDot).albumCoverUrl()).isEqualTo("https://cdn.example.com/public.jpg");
@@ -80,6 +80,11 @@ class MapDotRepositoryDatabaseIntegrationTest {
                 .isEqualTo(nullCoverLatest.toInstant(java.time.ZoneOffset.UTC));
         assertThat(latestByDot.get(tiedDot).albumCoverUrl()).isEqualTo("https://cdn.example.com/high.jpg");
         assertThat(highId).isGreaterThan(lowId);
+        assertThat(repository.findLatestRecordsByUser(privateUser)).singleElement()
+                .extracting(LatestMapDotRecord::albumCoverUrl).isEqualTo("https://cdn.example.com/private.jpg");
+        assertThat(repository.findLatestRecordsByUser(noSettingsUser)).singleElement()
+                .extracting(LatestMapDotRecord::albumCoverUrl).isEqualTo("https://cdn.example.com/no-settings.jpg");
+        assertThat(repository.findLatestRecordsByUser(withdrawnUser)).isEmpty();
     }
 
     private long insertUser(String emailPrefix, LocalDateTime deletedAt) {

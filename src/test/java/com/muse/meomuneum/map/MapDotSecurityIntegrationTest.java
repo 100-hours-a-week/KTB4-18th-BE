@@ -27,11 +27,13 @@ import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.map.catalog.MapZoneCatalog;
 import com.muse.meomuneum.map.controller.MapDotController;
 import com.muse.meomuneum.map.repository.MapDotRepository;
+import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = MapDotController.class, properties = {
-        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes"})
+        "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
+        "auth.cors.allowed-origins=http://localhost:5173"})
 @Import({SecurityConfig.class, MapDotSecurityIntegrationTest.SecurityTestConfiguration.class})
 class MapDotSecurityIntegrationTest {
 
@@ -60,6 +62,12 @@ class MapDotSecurityIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void invalidBearerTokenIsNotTreatedAsAnonymous() throws Exception {
+        mockMvc.perform(get("/api/v1/map-dots").header("Authorization", "Bearer invalid-token"))
+                .andExpect(status().isUnauthorized());
+    }
+
     @TestConfiguration
     static class SecurityTestConfiguration {
 
@@ -75,6 +83,11 @@ class MapDotSecurityIntegrationTest {
         }
 
         @Bean
+        CurrentUserResolver currentUserResolver() {
+            return new CurrentUserResolver();
+        }
+
+        @Bean
         MapZoneCatalog mapZoneCatalog() {
             return mock(MapZoneCatalog.class);
         }
@@ -82,7 +95,7 @@ class MapDotSecurityIntegrationTest {
         @Bean
         MapDotRepository mapDotRepository() {
             MapDotRepository repository = mock(MapDotRepository.class);
-            when(repository.findLatestPublicRecords()).thenReturn(List.of());
+            when(repository.findLatestRecordsByUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(List.of());
             return repository;
         }
 
