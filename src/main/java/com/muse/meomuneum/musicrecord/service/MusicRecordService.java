@@ -200,6 +200,28 @@ public class MusicRecordService {
     }
 
     @Transactional
+    public void deleteAll(long userId, List<Long> recordIds) {
+        if (recordIds == null || recordIds.isEmpty() || recordIds.size() > 100
+                || recordIds.stream().anyMatch(id -> id == null || id <= 0)) {
+            throw new MusicRecordException("music_record_delete_invalid_ids");
+        }
+        // Keep lock acquisition order consistent across overlapping requests.
+        recordIds.stream().distinct().sorted().forEach(id -> delete(userId, id));
+    }
+
+    @Transactional
+    public void delete(long userId, long recordId) {
+        if (repository.deleteRecord(userId, recordId, clock.instant()) == 1) {
+            return;
+        }
+        if (repository.existsActiveRecord(recordId)) {
+            throw new MusicRecordException("music_record_not_owned", HttpStatus.FORBIDDEN, "forbidden");
+        }
+        throw new MusicRecordException("music_record_not_found", HttpStatus.NOT_FOUND,
+                "music record not found");
+    }
+
+    @Transactional
     public UpdateResponse update(long userId, long recordId, JsonNode body) {
         if (body == null || !body.isObject()) {
             throw new MusicRecordException("music_record_update_invalid_body");
