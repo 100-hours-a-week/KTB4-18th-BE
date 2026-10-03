@@ -23,7 +23,7 @@ public class RecommendationExceptionHandler {
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
     public ResponseEntity<RecommendationController.ApiResponse<Void>> invalid(Exception exception) {
         return ResponseEntity.badRequest()
-                .body(new RecommendationController.ApiResponse<>("입력 내용과 요청 형식을 확인해 주세요. (최대 1000자)", null));
+                .body(new RecommendationController.ApiResponse<>("입력 내용과 요청 형식을 확인해 주세요. (최대 200자)", null));
     }
 
 }
