@@ -65,12 +65,13 @@ class RecommendationServiceContextTests {
     }
 
     @Test
-    void limitsCurrentPromptToAiMessageLength() {
-        service.accept(request("a".repeat(300)), "guest", null);
+    void passesEntireBoundaryPromptToAi() {
+        String prompt = "앞부분" + "가".repeat(192) + "🎵" + "끝부분";
+        service.accept(request(prompt), "guest", null);
 
         var command = ArgumentCaptor.forClass(RecommendationCommand.class);
         verify(provider).recommend(command.capture());
-        assertEquals("a".repeat(200), command.getValue().message());
+        assertEquals(prompt, command.getValue().message());
     }
 
     private RecommendationRequest request(String prompt) {
