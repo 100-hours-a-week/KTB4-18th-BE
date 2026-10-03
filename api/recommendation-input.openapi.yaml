@@ -1,0 +1,55 @@
+openapi: 3.1.0
+info:
+  title: 챗봇 추천 접수 입력 계약
+  version: 1.0.0
+  description: 기존 201~1000자 입력은 이제 400으로 거절됩니다. 성공 접수와 GET SSE 계약은 유지합니다.
+paths:
+  /api/v1/recommendations:
+    post:
+      summary: 텍스트 또는 확정된 음성 전사문으로 추천 접수
+      description: >-
+        prompt는 UTF-16 코드 단위로 최대 200자이며 공백과 줄바꿈도 포함합니다.
+        공백만 있는 입력은 거절합니다. AI에는 앞뒤 공백만 제거한 현재 입력 전체를 전달합니다.
+        인증 및 게스트 소유권 정책은 기존 서비스 계약을 따릅니다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [input_type, trigger_type, conversation_key, prompt]
+              properties:
+                input_type:
+                  type: string
+                  enum: [TEXT, VOICE]
+                trigger_type:
+                  type: string
+                  const: CHATBOT
+                conversation_key:
+                  type: string
+                  format: uuid
+                prompt:
+                  type: string
+                  minLength: 1
+                  description: >-
+                    최대 200 UTF-16 코드 단위입니다. 일반 한글은 1, 보조 평면 이모지는 2로 계산합니다.
+                    OpenAPI maxLength의 Unicode 문자 계산과 다르므로 서버의 UTF-16 기준을 적용합니다.
+                    공백만 있는 값은 허용하지 않습니다.
+      responses:
+        '202':
+          description: PROCESSING 상태로 접수 완료. 이후 기존 GET SSE에서 결과를 수신합니다.
+        '400':
+          description: 입력값 또는 요청 형식 오류. 추천 세션 생성과 AI 호출은 발생하지 않습니다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: 'null'
+              example:
+                message: 입력 내용과 요청 형식을 확인해 주세요. (최대 200자)
+                data: null
