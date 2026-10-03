@@ -1,0 +1,93 @@
+openapi: 3.0.3
+info:
+  title: User availability
+  version: 1.0.0
+paths:
+  /api/v1/users/availability/{field}:
+    get:
+      operationId: checkUserAvailability
+      summary: 회원가입 닉네임·이메일 중복 확인
+      description: |
+        가입 전 입력 필드에서 포커스가 벗어날 때 사용 가능 여부를 확인한다.
+        field는 nickname 또는 email이다. 닉네임은 양끝 공백을 제거하고,
+        이메일은 양끝 공백 제거 후 소문자로 정규화한다. 사용자 정보는 반환하지 않는다.
+        응답은 캐시하지 않는다. 서버가 인식한 원격 주소별 슬라이딩 60초 동안 최대 30건을 허용한다.
+        제한은 단일 애플리케이션 인스턴스 메모리에 보관하며 주소 상태는 최대 10,000개까지 LRU 방식으로 보관한다.
+        상한 도달 후 eviction된 주소는 60초 전에 새 허용량을 받을 수 있다. 공유 프록시 배포에서는
+        신뢰된 프록시가 실제 클라이언트 주소를 전달하도록 설정해야 하며, 다중 인스턴스에서는 제한이 공유되지 않는다.
+      parameters:
+        - name: field
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [nickname, email]
+        - name: value
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 중복 확인 완료
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+              example: { message: availability checked, data: { available: true } }
+        '400':
+          description: field 또는 입력값이 유효하지 않음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: invalid query parameter, data: null }
+        '429':
+          description: 클라이언트 IP별 요청 제한 초과
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: too many requests, data: null }
+        '500':
+          description: 서버 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: internal server error, data: null }
+components:
+  schemas:
+    AvailabilityResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+          example: availability checked
+        data:
+          type: object
+          required: [available]
+          properties:
+            available:
+              type: boolean
+    ErrorResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+          example: null
