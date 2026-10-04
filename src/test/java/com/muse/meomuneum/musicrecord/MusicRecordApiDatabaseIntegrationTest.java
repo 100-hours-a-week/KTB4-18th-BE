@@ -1,6 +1,11 @@
 package com.muse.meomuneum.musicrecord;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -18,6 +23,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -29,9 +35,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -39,6 +48,7 @@ import com.muse.meomuneum.chat.region.domain.RegionLevel;
 import com.muse.meomuneum.chat.region.repository.RegionRepository;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
@@ -49,7 +59,7 @@ import com.muse.meomuneum.user.domain.UserRole;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "auth.jwt.secret=development-only-secret-with-at-least-32-bytes")
-@ActiveProfiles({"test", "music-record-local"})
+@ActiveProfiles("test")
 @EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 @Transactional
 class MusicRecordApiDatabaseIntegrationTest {
@@ -63,8 +73,12 @@ class MusicRecordApiDatabaseIntegrationTest {
     private LocationResolutionTokenProvider locations;
     @Autowired
     private RegionRepository regions;
-    @Autowired
+    @MockitoSpyBean
     private MusicRecordRepository musicRepository;
+    @MockitoBean
+    private ItunesMusicSearchClient itunes;
+    @Autowired
+    private MusicRecordService musicRecordService;
     @Autowired
     private MusicSearchCursorCodec searchCursors;
 
@@ -74,6 +88,79 @@ class MusicRecordApiDatabaseIntegrationTest {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        when(itunes.lookup(anyString())).thenAnswer(invocation -> Optional.of(
+                new MusicItem(null, "ITUNES", invocation.getArgument(0), "테스트 노래", "테스트 가수",
+                        null, null, null, false)));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void musicReplacementPreservesOtherColumnsAndRollsBackCatalogOnRecordFailure() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        long userId = positiveId();
+        long sidoId = positiveId();
+        long sigunguId = positiveId();
+        long dotId = positiveId();
+        String oldExternalId = String.valueOf(positiveId());
+        String replacementId = String.valueOf(positiveId());
+        String failedReplacementId = String.valueOf(positiveId());
+        long recordId = 0;
+        jdbc.update("INSERT INTO users (id,email,password_hash,nickname,role) VALUES (?,?,?,?,?)",
+                userId, suffix + "@test.local", "test-only", "테스트", "USER");
+        jdbc.update("INSERT INTO regions (id,code,name,level,is_active) VALUES (?,?,?,?,TRUE)",
+                sidoId, "s" + suffix, "서울특별시", "SIDO");
+        jdbc.update("INSERT INTO regions (id,parent_id,code,name,level,is_active) VALUES (?,?,?,?,?,TRUE)",
+                sigunguId, sidoId, "g" + suffix, "성동구", "SIGUNGU");
+        jdbc.update("INSERT INTO map_dots (id,code,region_id,latitude,longitude,is_active) "
+                + "VALUES (?,?,?,?,?,TRUE)", dotId, "d" + suffix, sigunguId, 37.5, 127.0);
+        long oldMusicId = musicRepository.upsertMusic(new MusicItem(null, "ITUNES", oldExternalId,
+                "기존 곡", "기존 가수", null, null, null, false));
+        var location = musicRepository.findLocation(dotId, sigunguId, sidoId).orElseThrow();
+        Instant createdAt = Instant.parse("2026-09-22T06:30:00Z");
+        recordId = musicRepository.saveRecord(userId, oldMusicId, location, "보존 장소", "보존 메모", createdAt);
+        long targetRecordId = recordId;
+        try {
+            musicRecordService.update(userId, targetRecordId, mapper.readTree(
+                    "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""
+                            + replacementId + "\"}}"));
+            long replacementMusicId = musicRepository.findMusic("ITUNES", replacementId).orElseThrow().music_id();
+            var replaced = musicRepository.findRecord(userId, targetRecordId).orElseThrow();
+            assertThat(replaced.music().music_id()).isEqualTo(replacementMusicId).isNotEqualTo(oldMusicId);
+            assertThat(replaced.custom_place_name()).isEqualTo("보존 장소");
+            assertThat(replaced.emotion_memo()).isEqualTo("보존 메모");
+            assertThat(replaced.map_dot_id()).isEqualTo(dotId);
+            assertThat(replaced.region().sigungu().region_id()).isEqualTo(sigunguId);
+            assertThat(replaced.created_at()).isEqualTo(createdAt);
+
+            doThrow(new IllegalStateException("forced record update failure"))
+                    .when(musicRepository).updateRecordMusic(eq(userId), eq(targetRecordId), anyLong(),
+                            any(Instant.class));
+            var failureBody = mapper.readTree("{\"music\":{\"provider\":\"ITUNES\","
+                    + "\"external_music_id\":\"" + failedReplacementId + "\"}}");
+            assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> musicRecordService.update(userId,
+                    targetRecordId, failureBody)))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasRootCauseInstanceOf(IllegalStateException.class)
+                    .hasRootCauseMessage("forced record update failure");
+
+            assertThat(musicRepository.findMusic("ITUNES", failedReplacementId)).isEmpty();
+            var afterFailure = musicRepository.findRecord(userId, targetRecordId).orElseThrow();
+            assertThat(afterFailure.music().music_id()).isEqualTo(replacementMusicId);
+            assertThat(afterFailure.custom_place_name()).isEqualTo("보존 장소");
+            assertThat(afterFailure.emotion_memo()).isEqualTo("보존 메모");
+            assertThat(afterFailure.map_dot_id()).isEqualTo(dotId);
+            assertThat(afterFailure.created_at()).isEqualTo(createdAt);
+        } finally {
+            if (recordId > 0) {
+                jdbc.update("DELETE FROM music_records WHERE id=?", recordId);
+            }
+            jdbc.update("DELETE FROM music WHERE provider='ITUNES' AND external_music_id IN (?,?,?)",
+                    oldExternalId, replacementId, failedReplacementId);
+            jdbc.update("DELETE FROM map_dots WHERE id=?", dotId);
+            jdbc.update("DELETE FROM regions WHERE id=?", sigunguId);
+            jdbc.update("DELETE FROM regions WHERE id=?", sidoId);
+            jdbc.update("DELETE FROM users WHERE id=?", userId);
+        }
     }
 
     @Test
