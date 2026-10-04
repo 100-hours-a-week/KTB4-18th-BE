@@ -51,8 +51,14 @@ public class UserAccountService {
     }
 
     @Transactional
-    public User updateProfile(Long userId, String nickname, Short birthYear, boolean birthYearProvided, UserGender gender,
-            boolean genderProvided, String profileImageUrl) {
+    public User updateProfile(
+            Long userId,
+            String nickname,
+            Short birthYear,
+            boolean birthYearProvided,
+            UserGender gender,
+            boolean genderProvided,
+            String profileImageUrl) {
         User user = findActiveUserForUpdate(userId);
         validateBirthYear(birthYear);
         if (nickname != null && userRepository.existsByNicknameAndIdNot(nickname, userId)) {

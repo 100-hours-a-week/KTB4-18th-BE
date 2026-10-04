@@ -54,10 +54,11 @@ public class UserAccountController {
     }
 
     @PatchMapping
-    public ApiResponse<UpdateUserProfileResponse> updateProfile(@Valid @RequestBody UpdateUserProfileRequest request,
-            Authentication authentication) {
-        User user = userAccountService.updateProfile(userId(authentication), request.nickname(), request.birth_year(),
-                request.isBirthYearProvided(), request.gender(), request.isGenderProvided(), request.profile_image_url());
+    public ApiResponse<UpdateUserProfileResponse> updateProfile(
+            @Valid @RequestBody UpdateUserProfileRequest request, Authentication authentication) {
+        User user = userAccountService.updateProfile(
+                userId(authentication), request.nickname(), request.birth_year(), request.isBirthYearProvided(),
+                request.gender(), request.isGenderProvided(), request.profile_image_url());
         return ApiResponse.of("user updated", new UpdateUserProfileResponse(user.getId(), user.getUpdatedAt()));
     }
 
