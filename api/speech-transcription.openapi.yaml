@@ -1,0 +1,98 @@
+openapi: 3.0.3
+info:
+  title: Speech transcription boundary contract
+  version: 1.0.0
+paths:
+  /api/v1/speech-transcriptions:
+    post:
+      summary: 음성의 앞부분을 최대 60초 이내로 전사
+      description: |
+        인증 사용자 전용. WebM·MP4 파일을 최대 10MB까지 받는다.
+        정상 음성이 60초를 넘으면 앞부분을 자르고 MP4/AAC로 준비한다.
+        인코딩 패딩을 고려해 최대 59.9초를 인코딩하고 실제 디코딩 길이가
+        60초 이하인지 재검증한 뒤 AI 내부 API에 전달한다.
+        음성·전사문은 영구 저장하지 않는다. 성공은 전사 초안만 반환하며
+        음악 추천을 자동 요청하지 않는다. 공개 오류 message는 안전한 한국어 안내다.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: WebM 또는 MP4. 최대 10485760 bytes.
+      responses:
+        '200':
+          description: 전사 완료
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: speech transcription completed
+                  data:
+                    type: object
+                    required: [transcript]
+                    properties:
+                      transcript:
+                        type: string
+        '400':
+          description: 파일 누락·형식 오류·MIME 불일치·손상된 음성 또는 AI 형식 오류. 60초 초과 자체는 오류가 아니다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeechError'
+        '401':
+          description: 인증 필요
+        '403':
+          description: 접근 권한 또는 보안 검증 실패
+        '413':
+          description: 업로드 파일 또는 AI 전송 파일의 10MB 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeechError'
+        '502':
+          description: 전처리 도구 실행 불가·결과 검증 실패 또는 AI 장애. 다시 시도 가능.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeechError'
+        '503':
+          description: 음성 준비 동시 처리 한도 초과. 잠시 후 재시도.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeechError'
+        '504':
+          description: 음성 파일 준비 또는 AI 전사 제한 시간 초과. 공개 message로 구분.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeechError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    SpeechError:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+          example: 음성 파일 형식과 MIME 타입이 일치하지 않습니다. 다시 녹음해 주세요.
+        data:
+          nullable: true
+          example: null
