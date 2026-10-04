@@ -51,14 +51,14 @@ public class UserAccountService {
     }
 
     @Transactional
-    public User updateProfile(Long userId, String nickname, Short birthYear, UserGender gender,
-            String profileImageUrl) {
+    public User updateProfile(Long userId, String nickname, Short birthYear, boolean birthYearProvided, UserGender gender,
+            boolean genderProvided, String profileImageUrl) {
         User user = findActiveUserForUpdate(userId);
         validateBirthYear(birthYear);
         if (nickname != null && userRepository.existsByNicknameAndIdNot(nickname, userId)) {
             throw duplicateNickname();
         }
-        user.updateProfile(nickname, birthYear, gender, profileImageUrl, now());
+        user.updateProfile(nickname, birthYear, birthYearProvided, gender, genderProvided, profileImageUrl, now());
         try {
             userRepository.flush();
         } catch (DataIntegrityViolationException exception) {

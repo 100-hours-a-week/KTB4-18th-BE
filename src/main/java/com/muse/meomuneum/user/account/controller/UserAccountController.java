@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.fasterxml.jackson.annotation.JsonSetter;
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
 import com.muse.meomuneum.user.account.service.UserAccountService;
@@ -56,7 +57,7 @@ public class UserAccountController {
     public ApiResponse<UpdateUserProfileResponse> updateProfile(@Valid @RequestBody UpdateUserProfileRequest request,
             Authentication authentication) {
         User user = userAccountService.updateProfile(userId(authentication), request.nickname(), request.birth_year(),
-                request.gender(), request.profile_image_url());
+                request.isBirthYearProvided(), request.gender(), request.isGenderProvided(), request.profile_image_url());
         return ApiResponse.of("user updated", new UpdateUserProfileResponse(user.getId(), user.getUpdatedAt()));
     }
 
@@ -109,10 +110,69 @@ public class UserAccountController {
         return userId;
     }
 
-    public record UpdateUserProfileRequest(
-            @Size(min = 2, max = 12) @Pattern(regexp = "[가-힣A-Za-z0-9]+") String nickname,
-            @Min(1900) Short birth_year,
-            UserGender gender, @Size(max = 1000) String profile_image_url) {
+    public static class UpdateUserProfileRequest {
+
+        @Size(min = 2, max = 12)
+        @Pattern(regexp = "[가-힣A-Za-z0-9]+")
+        private String nickname;
+
+        @Min(1900)
+        private Short birthYear;
+        private boolean birthYearProvided;
+
+        private UserGender gender;
+        private boolean genderProvided;
+
+        @Size(max = 1000)
+        private String profileImageUrl;
+
+        public UpdateUserProfileRequest() {
+        }
+
+        public String nickname() {
+            return nickname;
+        }
+
+        public Short birth_year() {
+            return birthYear;
+        }
+
+        public boolean isBirthYearProvided() {
+            return birthYearProvided;
+        }
+
+        public UserGender gender() {
+            return gender;
+        }
+
+        public boolean isGenderProvided() {
+            return genderProvided;
+        }
+
+        public String profile_image_url() {
+            return profileImageUrl;
+        }
+
+        public void setNickname(String nickname) {
+            this.nickname = nickname;
+        }
+
+        @JsonSetter("birth_year")
+        public void setBirthYear(Short birthYear) {
+            this.birthYear = birthYear;
+            this.birthYearProvided = true;
+        }
+
+        @JsonSetter("gender")
+        public void setGender(UserGender gender) {
+            this.gender = gender;
+            this.genderProvided = true;
+        }
+
+        @JsonSetter("profile_image_url")
+        public void setProfileImageUrl(String profileImageUrl) {
+            this.profileImageUrl = profileImageUrl;
+        }
     }
 
     public record UserProfileResponse(Long user_id, String email, String nickname, Short birth_year,

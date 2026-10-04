@@ -98,15 +98,16 @@ public class User {
         return deletedAt != null;
     }
 
-    public void updateProfile(String nickname, Short birthYear, UserGender gender, String profileImageUrl,
-            LocalDateTime updatedAt) {
+    public void updateProfile(String nickname, Short birthYear, boolean birthYearProvided, UserGender gender,
+            boolean genderProvided,
+            String profileImageUrl, LocalDateTime updatedAt) {
         if (nickname != null) {
             this.nickname = nickname;
         }
-        if (birthYear != null) {
+        if (birthYearProvided) {
             this.birthYear = birthYear;
         }
-        if (gender != null) {
+        if (genderProvided) {
             this.gender = gender;
         }
         if (profileImageUrl != null) {
