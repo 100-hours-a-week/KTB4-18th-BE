@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -81,6 +84,43 @@ class SpeechAudioProcessorIntegrationTest {
         var failure = assertThrows(SpeechTranscriptionException.class,
                 () -> processor.process(AudioMetadataInspectorTests.mp4(70_000), "audio/mp4"));
         assertEquals(400, failure.getStatus());
+        assertClean(temporaryRoot);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"encoding-failure", "invalid-output"})
+    void returnsBadGatewayForServerFailureAfterValidInputAndDoesNotCallAi(String failureMode) throws Exception {
+        byte[] original = generate("webm", 1);
+        Path temporaryRoot = Files.createDirectory(workspace.resolve("processing"));
+        Path wrapper = workspace.resolve("ffmpeg-wrapper");
+        String encodingFailure = "encoding-failure".equals(failureMode)
+                ? "exit 73"
+                : "printf 'broken server output' > \"$argument\"; exit 0";
+        Files.writeString(wrapper, "#!/bin/sh\n"
+                + "for argument in \"$@\"; do\n"
+                + "  case \"$argument\" in\n"
+                + "    */audio.mp4) " + encodingFailure + ";;\n"
+                + "  esac\n"
+                + "done\n"
+                + "exec '" + ffmpeg.replace("'", "'\\''") + "' \"$@\"\n");
+        Files.setPosixFilePermissions(wrapper, Set.of(PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
+        var processor = new SpeechAudioProcessor(wrapper.toString(), Duration.ofSeconds(15), inspector,
+                temporaryRoot.toString());
+        AtomicInteger calls = new AtomicInteger();
+        var service = new SpeechTranscriptionService(inspector, prepared -> {
+            calls.incrementAndGet();
+            return "사용되지 않는 전사";
+        }, processor);
+        var mvc = MockMvcBuilders.standaloneSetup(new SpeechTranscriptionController(service))
+                .setControllerAdvice(new SpeechTranscriptionExceptionHandler()).build();
+        var upload = new MockMultipartFile("audio", "voice.webm", "audio/webm", original);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .multipart("/api/v1/speech-transcriptions").file(upload))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadGateway())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                        .value("음성 파일을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요."));
+        assertEquals(0, calls.get());
         assertClean(temporaryRoot);
     }
 
