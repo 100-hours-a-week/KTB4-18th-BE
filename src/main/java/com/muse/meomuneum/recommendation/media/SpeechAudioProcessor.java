@@ -51,19 +51,24 @@ public class SpeechAudioProcessor {
             Path output = directory.resolve("audio.mp4");
             Path decoded = directory.resolve("decoded.pcm");
             Files.write(input, content);
-            // Decode the entire input to detect corruption, retaining only its beginning.
+            // Validate the entire input without AAC encoding or an output file.
+            run(List.of(executable, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror",
+                    "-threads", "1", "-protocol_whitelist", "file,pipe", "-err_detect", "explode", "-f",
+                    "audio/webm".equals(mediaType) ? "matroska" : "mov", "-i", input.toString(), "-map", "0:a:0",
+                    "-vn", "-f", "null", "-"), true);
+            // After validation, any encoding or output failure is a server preparation error.
             // AAC padding needs a small margin so decoded audio also remains below 60 seconds.
             run(List.of(executable, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y",
                     "-threads", "1", "-protocol_whitelist", "file,pipe", "-err_detect", "explode", "-f",
                     "audio/webm".equals(mediaType) ? "matroska" : "mov", "-i", input.toString(), "-map", "0:a:0",
                     "-vn", "-af", "aresample=16000,atrim=end_sample=958400,asetpts=N/SR/TB", "-ac", "1",
                     "-c:a", "aac", "-b:a", "64k", "-threads", "1", "-map_metadata", "-1", "-movflags",
-                    "+faststart", output.toString()), true);
+                    "+faststart", output.toString()), false);
             if (!Files.exists(output) || Files.size(output) == 0 || Files.size(output) > MAX_OUTPUT_BYTES) {
                 throw preparationFailed();
             }
             byte[] prepared = Files.readAllBytes(output);
-            var metadata = metadataInspector.inspect(prepared);
+            var metadata = inspectPreparedAudio(prepared);
             if (!"audio/mp4".equals(metadata.mediaType()) || metadata.durationSeconds() > 60d) {
                 throw preparationFailed();
             }
@@ -83,6 +88,14 @@ public class SpeechAudioProcessor {
                 clean(directory);
             }
             processingSlots.release();
+        }
+    }
+
+    private AudioMetadataInspector.AudioMetadata inspectPreparedAudio(byte[] prepared) {
+        try {
+            return metadataInspector.inspect(prepared);
+        } catch (SpeechTranscriptionException exception) {
+            throw preparationFailed();
         }
     }
 
