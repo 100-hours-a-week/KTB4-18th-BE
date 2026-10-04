@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import jakarta.validation.Validator;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -80,6 +82,15 @@ class UserAvailabilityControllerTest {
     }
 
     @Test
+    void rejectsEmailRejectedBySignupValidationWithoutQueryingUsers() throws Exception {
+        mockMvc.perform(get("/api/v1/users/availability/email").queryParam("value", "foo@bar..com"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("invalid query parameter"));
+
+        verify(signupRepository, never()).existsUserByEmail(anyString());
+    }
+
+    @Test
     void limitsAnonymousRequestsPerClientAddress() throws Exception {
         for (int request = 0; request < 30; request++) {
             mockMvc.perform(get("/api/v1/users/availability/nickname")
@@ -116,8 +127,8 @@ class UserAvailabilityControllerTest {
         }
 
         @Bean
-        UserAvailabilityService userAvailabilityService(SignupRepository repository) {
-            return new UserAvailabilityService(repository);
+        UserAvailabilityService userAvailabilityService(SignupRepository repository, Validator validator) {
+            return new UserAvailabilityService(repository, validator);
         }
 
         @Bean
