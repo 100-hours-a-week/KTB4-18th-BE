@@ -17,10 +17,12 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 import com.muse.meomuneum.recommendation.controller.SpeechTranscriptionController;
+import com.muse.meomuneum.recommendation.dto.SpeechAudio;
 import com.muse.meomuneum.recommendation.dto.response.SpeechTranscriptionResponse;
 import com.muse.meomuneum.recommendation.exception.SpeechTranscriptionException;
 import com.muse.meomuneum.recommendation.exception.SpeechTranscriptionExceptionHandler;
 import com.muse.meomuneum.recommendation.media.AudioMetadataInspector;
+import com.muse.meomuneum.recommendation.media.SpeechAudioProcessor;
 import com.muse.meomuneum.recommendation.provider.StubSpeechToTextProvider;
 import com.muse.meomuneum.recommendation.service.SpeechTranscriptionService;
 
@@ -94,7 +96,7 @@ class SpeechTranscriptionControllerTests {
     @Test
     void validatesAudioAndReturnsStubTranscriptThroughHttpContract() throws Exception {
         var integratedService = new SpeechTranscriptionService(new AudioMetadataInspector(),
-                new StubSpeechToTextProvider("비 오는 날 드라이브 음악"));
+                new StubSpeechToTextProvider("비 오는 날 드라이브 음악"), preparedProcessor());
         var integratedMvc = MockMvcBuilders.standaloneSetup(new SpeechTranscriptionController(integratedService))
                 .setControllerAdvice(new SpeechTranscriptionExceptionHandler(), new GlobalExceptionHandler()).build();
         var audio = new MockMultipartFile("audio", "voice.webm", "audio/webm", AudioMetadataInspectorTests.webm(30f));
@@ -104,14 +106,21 @@ class SpeechTranscriptionControllerTests {
     }
 
     @Test
-    void rejectsLongAudioThroughHttpContract() throws Exception {
+    void acceptsPreparedLongAudioThroughHttpContract() throws Exception {
         var integratedService = new SpeechTranscriptionService(new AudioMetadataInspector(),
-                new StubSpeechToTextProvider("사용되지 않는 문장"));
+                new StubSpeechToTextProvider("정상 전사"), preparedProcessor());
         var integratedMvc = MockMvcBuilders.standaloneSetup(new SpeechTranscriptionController(integratedService))
                 .setControllerAdvice(new SpeechTranscriptionExceptionHandler(), new GlobalExceptionHandler()).build();
         var audio = new MockMultipartFile("audio", "voice.mp4", "audio/mp4", AudioMetadataInspectorTests.mp4(60_001));
 
-        integratedMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio)).andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.data").doesNotExist());
+        integratedMvc.perform(multipart("/api/v1/speech-transcriptions").file(audio)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.transcript").value("정상 전사"));
     }
+    private SpeechAudioProcessor preparedProcessor() {
+        var processor = org.mockito.Mockito.mock(SpeechAudioProcessor.class);
+        when(processor.process(any(), any()))
+                .thenReturn(new SpeechAudio(new byte[]{1}, "audio/mp4", "audio.mp4", 59.9d));
+        return processor;
+    }
+
 }

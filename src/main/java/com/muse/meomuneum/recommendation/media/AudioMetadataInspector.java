@@ -209,7 +209,7 @@ public class AudioMetadataInspector {
     }
 
     private SpeechTranscriptionException invalidAudio() {
-        return new SpeechTranscriptionException(400, "WebM 또는 MP4 형식의 재생 가능한 음성 파일을 전송해 주세요. (최대 60초)");
+        return new SpeechTranscriptionException(400, "WebM 또는 MP4 형식의 재생 가능한 음성 파일로 다시 녹음해 주세요.");
     }
 
     public record AudioMetadata(String mediaType, double durationSeconds) {
