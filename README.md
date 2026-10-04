@@ -288,9 +288,10 @@ membership 종료를 되돌리지 않습니다.
 ## 텍스트 음악 추천 기능
 
 `POST /api/v1/recommendations`는 `TEXT`와 STT 전사문인 `VOICE`를 같은 경로로 처리합니다.
-같은 소유자의 `conversation_key`에 속한 완료된 이전 요청의 `prompt`를 읽고,
-각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다. AI 내부 계약의
-`message` 길이에 맞춰 현재 입력을 우선한 최근 200자를 `POST /v1/chat/messages`에 전달하며,
+각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다.
+공개 요청의 `prompt`는 비어 있지 않은 최대 200자로 검증하며,
+앞뒤 공백을 제거한 현재 입력 전체를 절단 없이 `POST /v1/chat/messages`에 전달합니다.
+이전에 저장한 prompt는 AI 메시지에 합치지 않으며,
 `conversation_key`를 `thread_id`로 사용하고 요청마다 `request_id`를 생성합니다.
 
 추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택하며 기본값은 모든 프로필에서 `ai`입니다.
@@ -465,3 +466,31 @@ AI 추천 INSERT/UPDATE, Unicode 1000자 경계 및 비정상 데이터의 502 �
 실제 배포 DB와 운영 로그는 이번 로컬 재현으로 확인한 대상이 아니므로,
 운영 장애 원인 확정과 이슈 종료에는 스테이징 또는 운영 검증이 추가로 필요합니다.
 관련 프론트엔드 이슈: https://github.com/100-hours-a-week/KTB4-18th-FE/issues/80
+
+
+## 챗봇 추천 입력 한도 (#109)
+
+공개 `POST /api/v1/recommendations`는 TEXT와 사용자가 확정한 VOICE 전사문에
+같은 200자 한도를 적용합니다. 빈 값, 공백만 있는 값, 201자 이상 요청은 세션 생성이나 AI 호출 전에
+HTTP 400과 `{ "message": "입력 내용과 요청 형식을 확인해 주세요. (최대 200자)", "data": null }`을 반환합니다.
+정상 요청은 기존 POST 202 및 GET SSE 흐름을 유지합니다.
+공개 요청 계약은 `api/recommendation-input.openapi.yaml`에 기록했습니다.
+
+길이는 Java `String.length()` / Jakarta `@Size`의 UTF-16 코드 단위 기준입니다.
+프론트엔드의 `String.length` 및 textarea `maxLength`와 동일하며, 공백과 줄바꿈도 포함합니다.
+일반적인 한글은 1자, 보조 평면 이모지는 2자로 계산합니다. 요청 길이는 원본을 기준으로 검증하고
+AI에는 앞뒤 공백만 제거해 전달합니다. 자동 절단·요약은 하지 않습니다.
+STT 결과 자체는 길이로 제한하거나 전사 실패 처리하지 않습니다.
+`recommendation_sessions.prompt`의 TEXT 타입과 기존 저장 이력은 유지하며 DB 마이그레이션은 없습니다.
+
+호환성 변경: 기존 201~1000자 요청은 이제 HTTP 400으로 거절됩니다.
+프론트엔드 #104의 200자 제한·초과 전사문 수정 안내를 먼저 배포하고 백엔드를 적용합니다.
+이전 클라이언트에서 거절된 요청도 조용히 절단하지 않고 수정 안내를 제공합니다.
+배포 후 199·200자 정상 완료, 201자 거절, 텍스트·음성 원문 전달과 SSE 흐름을 스테이징에서 확인합니다.
+오류 증가 시 배포를 중단하고 양쪽 앱 버전을 함께 검토합니다. 이전 백엔드로 롤백하면
+자동 절단 문제가 다시 발생하므로 200자 프론트 제한을 유지합니다. DB 복구는 필요하지 않습니다.
+
+`RecommendationApiTests`는 한글·줄바꿈·이모지를 포함한 TEXT/VOICE 경계값,
+DB prompt 보존, AI 전달 내용 일치, 초과 요청의 세션 생성 및 AI 호출 차단을 검증합니다.
+AI 제공자는 테스트 대역이며 실제 AI 서버와 운영 배포 환경은 별도 검증 대상입니다.
+관련 프론트엔드 이슈: https://github.com/100-hours-a-week/KTB4-18th-FE/issues/104

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -68,10 +69,8 @@ class RecommendationApiTests {
     }
 
     private String body(String prompt) {
-        return """
-                {"input_type":"TEXT","trigger_type":"CHATBOT",
-                 "conversation_key":"550e8400-e29b-41d4-a716-446655440000","prompt":"%s"}
-                """.formatted(prompt);
+        return new tools.jackson.databind.ObjectMapper().writeValueAsString(
+                new RecommendationRequest("TEXT", "CHATBOT", "550e8400-e29b-41d4-a716-446655440000", prompt));
     }
 
     @Test
@@ -147,26 +146,23 @@ class RecommendationApiTests {
     }
 
     @Test
-    void limitsCurrentPromptToAiMessageLength() throws Exception {
+    void acceptsBoundaryPromptsAndPassesAllContentForTextAndVoice() throws Exception {
         var session = new MockHttpSession();
-        jdbc.update("""
-                INSERT INTO recommendation_sessions
-                (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status)
-                VALUES (NULL, ?, 'CHATBOT', 'TEXT', ?, 'previous', 'COMPLETED')
-                """, session.getId(), "550e8400-e29b-41d4-a716-446655440000");
-        clearInvocations(provider);
-
-        mvc.perform(
-                post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
-                        .session(session)
-                        .contentType("application/json")
-                        .content(body("a".repeat(300))))
-                .andExpect(status().isAccepted());
-
-        var command = org.mockito.ArgumentCaptor
-                .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
-        verify(provider).recommend(command.capture());
-        assertEquals("a".repeat(200), command.getValue().message());
+        for (String inputType : new String[]{"TEXT", "VOICE"}) {
+            for (String prompt : new String[]{"가", "가".repeat(199), "앞" + "가".repeat(196) + "\n🎵"}) {
+                clearInvocations(provider);
+                mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                        .session(session).contentType("application/json")
+                        .content(body(prompt).replace("TEXT", inputType)))
+                        .andExpect(status().isAccepted());
+                var command = org.mockito.ArgumentCaptor
+                        .forClass(com.muse.meomuneum.recommendation.provider.RecommendationCommand.class);
+                verify(provider).recommend(command.capture());
+                assertEquals(prompt, command.getValue().message());
+                assertEquals(prompt, jdbc.queryForObject("SELECT prompt FROM recommendation_sessions WHERE id = ?",
+                        String.class, findRecommendationId(session)));
+            }
+        }
     }
 
     @Test
@@ -192,16 +188,22 @@ class RecommendationApiTests {
     @Test
     void rejectsBlankLongAndUnsupportedInputBeforeSaving() throws Exception {
         int before = count("recommendation_sessions");
-        for (String prompt : new String[]{"   ", "a".repeat(1001)}) {
-            mvc.perform(
-                    post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
-                            .contentType("application/json").content(body(prompt)))
-                    .andExpect(status().isBadRequest());
+        clearInvocations(provider);
+        for (String inputType : new String[]{"TEXT", "VOICE"}) {
+            for (String prompt : new String[]{"", "   ", "가".repeat(201), "가".repeat(199) + "🎵", "a".repeat(1000)}) {
+                mvc.perform(
+                        post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
+                                .contentType("application/json").content(body(prompt).replace("TEXT", inputType)))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("입력 내용과 요청 형식을 확인해 주세요. (최대 200자)"))
+                        .andExpect(jsonPath("$.data").doesNotExist());
+            }
         }
         mvc.perform(post("/api/v1/recommendations").header("Origin", "http://localhost:5174")
                 .contentType("application/json")
                 .content(body("노래").replace("TEXT", "IMAGE"))).andExpect(status().isBadRequest());
         assertEquals(before, count("recommendation_sessions"));
+        verify(provider, never()).recommend(any());
     }
 
     @Test
