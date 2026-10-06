@@ -78,6 +78,9 @@ public class MusicRecordRepository {
 
     public record StoredMusic(MusicItem music, boolean matchesSearch) {
     }
+
+    public record MusicIdentity(String provider, String externalId) {
+    }
     public Optional<Location> findLocation(long dotId, long sigunguId, long sidoId) {
         String sql = "SELECT d.id dot_id, d.code dot_code, g.id sigungu_id, g.code sigungu_code, "
                 + "g.name sigungu_name, s.id sido_id, s.code sido_code, s.name sido_name FROM map_dots d "
@@ -111,6 +114,21 @@ public class MusicRecordRepository {
                 row.getString("external_music_id"), row.getString("title"), row.getString("artist_name"),
                 row.getString("album_cover_url"), row.getString("preview_url"),
                 row.getString("youtube_video_id")), provider, externalId).stream().findFirst();
+    }
+
+    public Optional<MusicIdentity> findRecordMusicIdentity(long userId, long recordId) {
+        return jdbc.query("SELECT m.provider, m.external_music_id FROM music_records mr "
+                + "JOIN music m ON m.id=mr.music_id "
+                + "WHERE mr.id=? AND mr.user_id=? AND mr.deleted_at IS NULL",
+                (row, index) -> new MusicIdentity(row.getString("provider"),
+                        row.getString("external_music_id")),
+                recordId, userId).stream().findFirst();
+    }
+
+    public int updateRecordMusic(long userId, long recordId, long musicId, Instant updatedAt) {
+        return jdbc.update("UPDATE music_records SET music_id=?, updated_at=? "
+                + "WHERE id=? AND user_id=? AND deleted_at IS NULL",
+                musicId, LocalDateTime.ofInstant(updatedAt, ZoneOffset.UTC), recordId, userId);
     }
     public long saveRecord(long userId, long musicId, Location location, String placeName,
             String memo, Instant createdAt) {

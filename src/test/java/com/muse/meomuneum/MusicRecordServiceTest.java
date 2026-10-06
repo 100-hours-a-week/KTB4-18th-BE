@@ -30,6 +30,7 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.RegionPart;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
+import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.MusicIdentity;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
 
@@ -133,12 +134,83 @@ class MusicRecordServiceTest {
     }
 
     @Test
-    void changingMusicIsRejectedByOriginalContract() {
+    void changingMusicUsesStrictLookupAndOnlyUpdatesMusicReference() {
         when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
-        assertThatThrownBy(() -> service.update(1L, 7L, mapper.readTree(
-                "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"456\"}}")))
-                .isInstanceOf(MusicRecordException.class);
+        when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
+        var selected = new MusicItem(null, "ITUNES", "456", "다른 노래", "다른 가수",
+                "cover", "preview", null, false);
+        when(itunes.lookup("456")).thenReturn(Optional.of(selected));
+        when(repository.upsertMusic(selected)).thenReturn(12L);
+        when(repository.updateRecordMusic(eq(1L), eq(7L), eq(12L), any(Instant.class))).thenReturn(1);
+
+        var updated = service.update(1L, 7L, mapper.readTree(
+                "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"456\"}}"));
+
+        assertThat(updated.record_id()).isEqualTo(7L);
+        verify(repository).updateRecordMusic(eq(1L), eq(7L), eq(12L), any(Instant.class));
         verify(repository, never()).updateRecord(any(Long.class), any(Long.class), any(), any(), any());
+    }
+
+    @Test
+    void sameMusicIsANoOpAndDoesNotCallProviderOrWriteCatalog() {
+        when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
+        when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
+
+        var updated = service.update(1L, 7L, mapper.readTree(
+                "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"123\"}}"));
+
+        assertThat(updated.updated_at()).isNull();
+        verify(itunes, never()).lookup(any());
+        verify(repository, never()).upsertMusic(any());
+        verify(repository, never()).updateRecordMusic(any(Long.class), any(Long.class), any(Long.class), any());
+    }
+
+    @Test
+    void sameMusicWithChangedMemoUpdatesMetadataWithoutCallingProvider() throws Exception {
+        when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
+        when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
+        when(repository.updateRecord(eq(1L), eq(7L), eq("홍대"), eq("새로운 메모"), any(Instant.class)))
+                .thenReturn(1);
+
+        var updated = service.update(1L, 7L, mapper.readTree(
+                "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"123\"},"
+                        + "\"emotion_memo\":\"새로운 메모\"}"));
+
+        assertThat(updated.record_id()).isEqualTo(7L);
+        verify(repository).updateRecord(eq(1L), eq(7L), eq("홍대"), eq("새로운 메모"), any(Instant.class));
+        verify(itunes, never()).lookup(any());
+        verify(repository, never()).upsertMusic(any());
+        verify(repository, never()).updateRecordMusic(any(Long.class), any(Long.class), any(Long.class), any());
+    }
+
+    @Test
+    void changingMusicAndMemoUpdatesBothWithPreservedOmittedPlace() {
+        when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
+        when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
+        var selected = new MusicItem(null, "ITUNES", "456", "다른 노래", "다른 가수",
+                "cover", "preview", null, false);
+        when(itunes.lookup("456")).thenReturn(Optional.of(selected));
+        when(repository.upsertMusic(selected)).thenReturn(12L);
+        when(repository.updateRecordMusic(eq(1L), eq(7L), eq(12L), any(Instant.class))).thenReturn(1);
+        when(repository.updateRecord(eq(1L), eq(7L), eq("홍대"), eq("수정 메모"), any(Instant.class)))
+                .thenReturn(1);
+
+        service.update(1L, 7L, mapper.readTree(
+                "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"456\"},"
+                        + "\"emotion_memo\":\"수정 메모\"}"));
+
+        verify(repository).updateRecord(eq(1L), eq(7L), eq("홍대"), eq("수정 메모"), any(Instant.class));
+    }
+
+    @Test
+    void nonOwnerGetsForbiddenBeforeInvalidBodyIsValidated() {
+        when(repository.existsActiveRecord(7L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.update(2L, 7L, mapper.readTree("{\"unexpected\":true}")))
+                .isInstanceOfSatisfying(MusicRecordException.class,
+                        error -> assertThat(error.status()).isEqualTo(HttpStatus.FORBIDDEN));
+        verify(itunes, never()).lookup(any());
+        verify(repository, never()).upsertMusic(any());
     }
 
     @Test

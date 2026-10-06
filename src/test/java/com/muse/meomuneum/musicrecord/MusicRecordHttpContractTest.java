@@ -4,9 +4,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -96,6 +99,27 @@ class MusicRecordHttpContractTest {
         mvc.perform(delete("/api/v1/music-records/7"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value("music record not found"));
+    }
+
+    @Test
+    void malformedJsonBodyUsesBadRequestEnvelope() throws Exception {
+        mvc.perform(patch("/api/v1/music-records/7").contentType("application/json")
+                .content("{\"music\":"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("invalid request"))
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void nonOwnerGetsForbiddenBeforeStructurallyInvalidPatchIsValidated() throws Exception {
+        when(repository.existsActiveRecord(7L)).thenReturn(true);
+
+        mvc.perform(patch("/api/v1/music-records/7").contentType("application/json")
+                .content("{\"unexpected\":true}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("forbidden"))
+                .andExpect(jsonPath("$.data").isEmpty());
+        verify(repository, never()).findRecordMusicIdentity(1L, 7L);
     }
 
 }
