@@ -54,6 +54,10 @@ kakao:
 speech:
   transcription:
     provider: ${SPEECH_TRANSCRIPTION_PROVIDER:ai}
+    audio:
+      ffmpeg-path: ${SPEECH_AUDIO_FFMPEG_PATH:ffmpeg}
+      processing-timeout: ${SPEECH_AUDIO_PROCESSING_TIMEOUT:15s}
+      temporary-directory: ${SPEECH_AUDIO_TEMPORARY_DIRECTORY:${java.io.tmpdir}}
     ai:
       base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL}
       connect-timeout: ${SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT:3s}

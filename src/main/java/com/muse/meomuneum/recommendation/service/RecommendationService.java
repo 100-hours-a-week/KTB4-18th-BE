@@ -38,7 +38,6 @@ import io.micrometer.core.instrument.Timer;
 
 @Service
 public class RecommendationService {
-    private static final int MAX_AI_MESSAGE_LENGTH = 200;
     private static final int HISTORY_PAGE_SIZE = 20;
 
     private final RecommendationProvider provider;
@@ -78,7 +77,7 @@ public class RecommendationService {
             List<TrackData> tracks;
             try {
                 var command = new RecommendationCommand(UUID.fromString(request.conversation_key()),
-                        UUID.randomUUID(), takeLast(request.prompt().trim(), MAX_AI_MESSAGE_LENGTH));
+                        UUID.randomUUID(), request.prompt().trim());
                 RecommendationStreamListener listener = new RecommendationStreamListener() {
                     @Override
                     public void onText(String delta) {
@@ -162,10 +161,6 @@ public class RecommendationService {
             items.add(item);
         }
         return Map.of("tracks", List.copyOf(items));
-    }
-
-    private String takeLast(String value, int maxLength) {
-        return value.length() <= maxLength ? value : value.substring(value.length() - maxLength);
     }
 
     private String providerName() {

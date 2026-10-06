@@ -293,9 +293,10 @@ membership 종료를 되돌리지 않습니다.
 ## 텍스트 음악 추천 기능
 
 `POST /api/v1/recommendations`는 `TEXT`와 STT 전사문인 `VOICE`를 같은 경로로 처리합니다.
-같은 소유자의 `conversation_key`에 속한 완료된 이전 요청의 `prompt`를 읽고,
-각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다. AI 내부 계약의
-`message` 길이에 맞춰 현재 입력을 우선한 최근 200자를 `POST /v1/chat/messages`에 전달하며,
+각 요청의 입력 문장은 해당 `recommendation_sessions.prompt`에 따로 저장합니다.
+공개 요청의 `prompt`는 비어 있지 않은 최대 200자로 검증하며,
+앞뒤 공백을 제거한 현재 입력 전체를 절단 없이 `POST /v1/chat/messages`에 전달합니다.
+이전에 저장한 prompt는 AI 메시지에 합치지 않으며,
 `conversation_key`를 `thread_id`로 사용하고 요청마다 `request_id`를 생성합니다.
 
 추천 제공자는 `RECOMMENDATION_PROVIDER`로 선택하며 기본값은 모든 프로필에서 `ai`입니다.
@@ -323,8 +324,11 @@ AI 내부 오류 본문과 사용자의 전체 입력 문장은 로그에 기록
 ## 음성 전사 기능
 
 `POST /api/v1/speech-transcriptions`는 `multipart/form-data`의 `audio` 파일을 받습니다.
-WebM 또는 MP4만 허용하며 최대 10MB, 최대 60초로 제한합니다. 파일 시그니처와 컨테이너의
-재생 시간을 서버에서 검증하며 원본 음성과 transcript를 저장하지 않습니다. 전사 성공 응답의
+WebM 또는 MP4만 허용하며 업로드는 최대 10MB로 제한합니다. 파일 시그니처·MIME과 전체 음성의
+디코딩 가능 여부를 검증한 뒤, 앞부분을 최대 60초 이내로 준비합니다. 60초를 초과한 정상 음성도
+길이만으로 거절하지 않습니다. 인코딩 패딩을 고려해 최대 59.9초 분량을 MP4/AAC 16kHz 모노로
+변환하고, 결과를 다시 디코딩하여 실제 재생 길이·용량·형식을 검증합니다. 원본 음성과 transcript는
+영구 저장하지 않으며 임시 파일은 처리 성공·실패·시간 초과 후 삭제합니다. 전사 성공 응답의
 `data.transcript`는 프론트엔드 입력창에 표시되고 사용자가 확인·수정한 뒤 별도 추천 요청의
 `prompt`와 `input_type=VOICE`로 전달됩니다.
 
@@ -341,18 +345,44 @@ AI의 형식 오류는 서비스 `400`, 크기 초과는 `413`, 서비스 장애
 V1의 백엔드와 AI 간 내부 요청에는 별도의 `Authorization` 헤더를 보내지 않으며 자동 재시도도
 수행하지 않습니다. 운영 타임아웃, `request_id` 및 재시도 정책은 운영 환경 배포 전에
 AI·클라우드 팀과 확정합니다.
-서비스와 AI 내부 전사 제한은 최대 60초로 동일하게 적용합니다.
+AI로 전달하는 실제 음성은 최대 60초입니다. 서비스 업로드의 길이 초과는 앞부분을 자르는
+전처리로 처리하며, AI 내부 API의 제한과 원본 계약 문서는 변경하지 않습니다.
 
 전사 실패 응답은 공통 `{ message, data }` 형식을 유지하며 `data`는 `null`입니다. 별도의
 Custom Code를 추가하지 않고 다음 HTTP 상태를 프론트엔드의 복구 동작 판별 코드로 사용합니다.
 
 | 상태 | 조건 | 클라이언트 처리 |
 | --- | --- | --- |
-| `400 Bad Request` | 파일 누락, 지원하지 않는 형식, 손상된 파일, 60초 초과 | 다시 녹음 |
+| `400 Bad Request` | 파일 누락, 지원하지 않는 형식, MIME 불일치, 손상된 파일 또는 AI 형식 오류 | 공개 `message`에 따라 다시 녹음 |
 | `413 Payload Too Large` | 10MB 초과 | 더 짧게 다시 녹음 |
-| `502 Bad Gateway` | 전사 서비스 장애, 전사 결과 없음 | 동일 녹음 재시도 또는 텍스트 입력 |
-| `504 Gateway Timeout` | 전사 서비스 제한 시간 초과 | 동일 녹음 재시도 또는 텍스트 입력 |
+| `502 Bad Gateway` | FFmpeg 실행 불가·결과 검증 실패, 전사 서비스 장애·결과 없음 | 동일 녹음 재시도 또는 텍스트 입력 |
+| `503 Service Unavailable` | 동시에 처리 가능한 음성 준비 요청 초과 | 잠시 후 재시도 |
+| `504 Gateway Timeout` | 음성 준비 또는 전사 서비스 제한 시간 초과 | 동일 녹음 재시도 또는 텍스트 입력 |
 | `500 Internal Server Error` | 분류되지 않은 서버 오류 | 재시도 또는 텍스트 입력 |
+
+### FFmpeg 실행 환경과 배포 순서
+
+로컬·CI·운영 서버 모두 `ffmpeg` 실행 파일과 AAC 디코더/인코더를 설치해야 합니다.
+macOS는 `brew install ffmpeg`, Debian/Ubuntu는 `apt-get install ffmpeg`로 준비할 수 있습니다.
+`SPEECH_AUDIO_FFMPEG_PATH`는 실행 파일 경로(기본 `ffmpeg`), `SPEECH_AUDIO_PROCESSING_TIMEOUT`은
+각 입력 검증·인코딩·결과 검증 단계의 제한 시간(기본 `15s`)입니다. 최대 두 요청을 동시에 처리하며 각 프로세스의
+코덱 스레드를 하나로 제한합니다. 입력을 먼저 출력 파일 없이 전체 디코딩하여 검증하고, 인코딩과 결과 검증을 별도로 수행합니다.
+입력 손상은 `400`, 인코딩·저장·결과 검증 실패는 `502`입니다. 세 단계에 각각 제한 시간이 적용됩니다.
+`SPEECH_AUDIO_TEMPORARY_DIRECTORY`는 기존의 쓰기 가능한 임시 디렉터리이며 기본값은 JVM의
+`java.io.tmpdir`입니다. 사용자 파일명은 프로세스 인자나 임시 경로에 사용하지 않습니다.
+FFmpeg 출력·원본 음성·전사문은 로그에 남기지 않습니다.
+
+배포 시 FFmpeg와 임시 디렉터리 권한을 먼저 준비하고 백엔드 #119, 프론트엔드 #122를 적용합니다.
+짧은 음성과 60초 경계 WebM·MP4의 실제 AI 전사를 스테이징에서 확인합니다. 자동화 테스트는
+실제 FFmpeg 전처리와 stub 전사 제공자를 사용하며 실제 AI 서버·브라우저 마이크 검증을 대체하지 않습니다.
+이 변경을 되돌리면 60초 초과 파일을 다시 거절합니다. DB 변경은 없습니다.
+
+`SpeechAudioProcessorIntegrationTest`는 실제 FFmpeg를 사용하며 설치하지 않으면 실패합니다.
+다음 명령으로 59초·60초·60초 초과 파일과 손상·도구 누락·시간 초과 시 정리를 검증합니다.
+
+```bash
+./gradlew test --tests '*SpeechAudioProcessorIntegrationTest' --no-daemon
+```
 
 전사 API는 음성과 transcript를 저장하지 않으며 추천 서비스나 추천 저장소를 호출하지 않습니다.
 전사 성공 후 사용자가 transcript를 확인·수정하고 별도의 추천 요청을 보내야만 추천 세션과
@@ -470,3 +500,31 @@ AI 추천 INSERT/UPDATE, Unicode 1000자 경계 및 비정상 데이터의 502 �
 실제 배포 DB와 운영 로그는 이번 로컬 재현으로 확인한 대상이 아니므로,
 운영 장애 원인 확정과 이슈 종료에는 스테이징 또는 운영 검증이 추가로 필요합니다.
 관련 프론트엔드 이슈: https://github.com/100-hours-a-week/KTB4-18th-FE/issues/80
+
+
+## 챗봇 추천 입력 한도 (#109)
+
+공개 `POST /api/v1/recommendations`는 TEXT와 사용자가 확정한 VOICE 전사문에
+같은 200자 한도를 적용합니다. 빈 값, 공백만 있는 값, 201자 이상 요청은 세션 생성이나 AI 호출 전에
+HTTP 400과 `{ "message": "입력 내용과 요청 형식을 확인해 주세요. (최대 200자)", "data": null }`을 반환합니다.
+정상 요청은 기존 POST 202 및 GET SSE 흐름을 유지합니다.
+공개 요청 계약은 `api/recommendation-input.openapi.yaml`에 기록했습니다.
+
+길이는 Java `String.length()` / Jakarta `@Size`의 UTF-16 코드 단위 기준입니다.
+프론트엔드의 `String.length` 및 textarea `maxLength`와 동일하며, 공백과 줄바꿈도 포함합니다.
+일반적인 한글은 1자, 보조 평면 이모지는 2자로 계산합니다. 요청 길이는 원본을 기준으로 검증하고
+AI에는 앞뒤 공백만 제거해 전달합니다. 자동 절단·요약은 하지 않습니다.
+STT 결과 자체는 길이로 제한하거나 전사 실패 처리하지 않습니다.
+`recommendation_sessions.prompt`의 TEXT 타입과 기존 저장 이력은 유지하며 DB 마이그레이션은 없습니다.
+
+호환성 변경: 기존 201~1000자 요청은 이제 HTTP 400으로 거절됩니다.
+프론트엔드 #104의 200자 제한·초과 전사문 수정 안내를 먼저 배포하고 백엔드를 적용합니다.
+이전 클라이언트에서 거절된 요청도 조용히 절단하지 않고 수정 안내를 제공합니다.
+배포 후 199·200자 정상 완료, 201자 거절, 텍스트·음성 원문 전달과 SSE 흐름을 스테이징에서 확인합니다.
+오류 증가 시 배포를 중단하고 양쪽 앱 버전을 함께 검토합니다. 이전 백엔드로 롤백하면
+자동 절단 문제가 다시 발생하므로 200자 프론트 제한을 유지합니다. DB 복구는 필요하지 않습니다.
+
+`RecommendationApiTests`는 한글·줄바꿈·이모지를 포함한 TEXT/VOICE 경계값,
+DB prompt 보존, AI 전달 내용 일치, 초과 요청의 세션 생성 및 AI 호출 차단을 검증합니다.
+AI 제공자는 테스트 대역이며 실제 AI 서버와 운영 배포 환경은 별도 검증 대상입니다.
+관련 프론트엔드 이슈: https://github.com/100-hours-a-week/KTB4-18th-FE/issues/104
