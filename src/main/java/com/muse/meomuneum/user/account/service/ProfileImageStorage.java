@@ -27,7 +27,9 @@ import com.muse.meomuneum.user.account.exception.UserAccountException;
 @Component
 public class ProfileImageStorage {
 
-    static final long MAX_BYTES = 5L * 1024 * 1024;
+    static final long MAX_BYTES = 10_000_000L;
+    public static final String INVALID_IMAGE_MESSAGE = "JPG, PNG, WEBP 형식의 이미지만 등록할 수 있어요.";
+    public static final String IMAGE_SIZE_MESSAGE = "10MB 이하의 이미지만 등록할 수 있어요.";
     static final String URL_PREFIX = "/api/v1/users/me/profile-image/";
     private final Path root;
 
@@ -41,7 +43,7 @@ public class ProfileImageStorage {
             throw invalid();
         }
         if (image.getSize() > MAX_BYTES) {
-            throw new UserAccountException("USER_IMAGE_SIZE", HttpStatus.CONTENT_TOO_LARGE, "image is too large");
+            throw new UserAccountException("USER_IMAGE_SIZE", HttpStatus.CONTENT_TOO_LARGE, IMAGE_SIZE_MESSAGE);
         }
         byte[] bytes;
         try (var input = image.getInputStream()) {
@@ -50,7 +52,7 @@ public class ProfileImageStorage {
             throw storageFailure();
         }
         if (bytes.length > MAX_BYTES) {
-            throw new UserAccountException("USER_IMAGE_SIZE", HttpStatus.CONTENT_TOO_LARGE, "image is too large");
+            throw new UserAccountException("USER_IMAGE_SIZE", HttpStatus.CONTENT_TOO_LARGE, IMAGE_SIZE_MESSAGE);
         }
         BufferedImage normalized = normalize(bytes);
         String filename = UUID.randomUUID() + ".png";
@@ -139,7 +141,8 @@ public class ProfileImageStorage {
             ImageReader reader = readers.next();
             try {
                 String format = reader.getFormatName();
-                if (!"JPEG".equalsIgnoreCase(format) && !"PNG".equalsIgnoreCase(format)) {
+                if (!"JPEG".equalsIgnoreCase(format) && !"PNG".equalsIgnoreCase(format) &&
+                        !"WEBP".equalsIgnoreCase(format)) {
                     throw invalid();
                 }
                 reader.setInput(input, true, true);
@@ -173,7 +176,7 @@ public class ProfileImageStorage {
     }
 
     private UserAccountException invalid() {
-        return new UserAccountException("USER_IMAGE_INVALID", HttpStatus.BAD_REQUEST, "invalid image");
+        return new UserAccountException("USER_IMAGE_INVALID", HttpStatus.BAD_REQUEST, INVALID_IMAGE_MESSAGE);
     }
 
     private UserAccountException storageFailure() {

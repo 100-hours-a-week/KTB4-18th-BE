@@ -110,7 +110,7 @@ class ProfileImageSecurityIntegrationTest {
                 new MaxUploadSizeExceededException(10 * 1024 * 1024))).isNotNull();
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(new ObjectMapper().readTree(response.getContentAsByteArray()).get("message").asText())
-                .isEqualTo("image is too large");
+                .isEqualTo("10MB 이하의 이미지만 등록할 수 있어요.");
         assertThat(resolvers.getFirst().resolveException(new MockHttpServletRequest("PUT", "/other-upload"),
                 new MockHttpServletResponse(), null, new MaxUploadSizeExceededException(10))).isNull();
     }
@@ -165,6 +165,18 @@ class ProfileImageSecurityIntegrationTest {
         try (var files = Files.list(root.resolve("1"))) {
             assertThat(files.sorted().toList()).isEqualTo(before);
         }
+    }
+
+    @Test
+    void authenticatedWebpUploadReturnsNormalizedPng() throws Exception {
+        try (var input = getClass().getResourceAsStream("/profile-images/lossless.webp")) {
+            image = new MockMultipartFile("image", "fake.png", "image/png", input.readAllBytes());
+        }
+        upload();
+        mvc.perform(get(user.getProfileImageUrl()).with(owner())).andExpect(status().isOk())
+                .andExpect(content().contentType("image/png"));
+        byte[] normalized = storage.read(1L, user.getProfileImageUrl());
+        assertThat(normalized).startsWith((byte) 137, (byte) 80, (byte) 78, (byte) 71);
     }
 
     private void upload() throws Exception {

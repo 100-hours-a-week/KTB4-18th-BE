@@ -27,6 +27,7 @@ import org.springframework.web.servlet.handler.AbstractHandlerExceptionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.user.account.controller.UserAccountController;
+import com.muse.meomuneum.user.account.service.ProfileImageStorage;
 
 @Order(Ordered.HIGHEST_PRECEDENCE)
 @RestControllerAdvice(assignableTypes = UserAccountController.class)
@@ -59,7 +60,8 @@ public class UserAccountExceptionHandler {
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
             try {
-                objectMapper.writeValue(response.getOutputStream(), ApiResponse.failure("image is too large"));
+                objectMapper.writeValue(response.getOutputStream(),
+                        ApiResponse.failure(ProfileImageStorage.IMAGE_SIZE_MESSAGE));
             } catch (IOException writeFailure) {
                 log.warn("event=user_profile_image_size_response_failed");
             }
@@ -77,7 +79,7 @@ public class UserAccountExceptionHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiResponse<Void>> imageTooLarge() {
-        return ResponseEntity.status(413).body(ApiResponse.failure("image is too large"));
+        return ResponseEntity.status(413).body(ApiResponse.failure(ProfileImageStorage.IMAGE_SIZE_MESSAGE));
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class,
