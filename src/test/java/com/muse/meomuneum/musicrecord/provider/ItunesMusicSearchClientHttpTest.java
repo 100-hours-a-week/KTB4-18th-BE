@@ -28,12 +28,14 @@ import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.music.exception.MusicMetadataException;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
 import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.sun.net.httpserver.HttpExchange;
@@ -79,6 +81,22 @@ class ItunesMusicSearchClientHttpTest {
     @AfterEach
     void tearDown() {
         server.stop(0);
+    }
+
+    @Test
+    void searchSubmitsRawImmutableProviderSnapshot() {
+        var repository = mock(MusicRecordRepository.class);
+        var storage = mock(MusicSearchStorageService.class);
+        var service = new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
+                new MusicSearchCursorCodec("test-secret"), storage);
+        var response = service.search("테스트", "ITUNES", null, 20);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<MusicItem>> captured = org.mockito.ArgumentCaptor
+                .forClass(List.class);
+        org.mockito.Mockito.verify(storage).store(captured.capture());
+        assertThat(captured.getValue()).isEqualTo(response.items());
+        assertThat(captured.getValue().getFirst().music_id()).isNull();
+        assertThatThrownBy(() -> captured.getValue().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -174,7 +192,7 @@ class ItunesMusicSearchClientHttpTest {
         MusicRecordRepository repository = mock(MusicRecordRepository.class);
         LocationResolutionTokenProvider tokens = mock(LocationResolutionTokenProvider.class);
         MusicRecordService service = new MusicRecordService(repository, client, tokens,
-                new MusicSearchCursorCodec("test-only-secret"));
+                new MusicSearchCursorCodec("test-only-secret"), mock(MusicSearchStorageService.class));
         when(repository.highestMusicId()).thenReturn(0L);
         when(repository.searchMusic("테스트", Long.MAX_VALUE, 0L, 21)).thenReturn(List.of());
         when(tokens.validate("location-token", 1L)).thenReturn(

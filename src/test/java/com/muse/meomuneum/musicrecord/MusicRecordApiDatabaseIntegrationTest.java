@@ -53,6 +53,7 @@ import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
@@ -77,6 +78,8 @@ class MusicRecordApiDatabaseIntegrationTest {
     private MusicRecordRepository musicRepository;
     @MockitoBean
     private ItunesMusicSearchClient itunes;
+    @MockitoBean
+    private MusicSearchStorageService searchStorage;
     @Autowired
     private MusicRecordService musicRecordService;
     @Autowired
@@ -444,7 +447,8 @@ class MusicRecordApiDatabaseIntegrationTest {
         }
         ItunesMusicSearchClient itunes = mock(ItunesMusicSearchClient.class);
         when(itunes.search(query)).thenReturn(List.of());
-        MusicRecordService service = new MusicRecordService(musicRepository, itunes, locations, searchCursors);
+        MusicRecordService service = new MusicRecordService(musicRepository, itunes, locations, searchCursors,
+                mock(MusicSearchStorageService.class));
 
         var first = service.search(query, "ITUNES", null, 20);
         assertThat(first.items()).hasSize(20);

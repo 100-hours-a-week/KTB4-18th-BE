@@ -33,6 +33,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.MusicIdentity;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -41,6 +42,7 @@ class MusicRecordServiceTest {
     private LocationResolutionTokenProvider tokens;
     private ItunesMusicSearchClient itunes;
     private MusicRecordService service;
+    private MusicSearchStorageService storage;
     private ObjectMapper mapper;
     private MusicRecordDetailResponse detail;
 
@@ -49,8 +51,9 @@ class MusicRecordServiceTest {
         repository = mock(MusicRecordRepository.class);
         tokens = mock(LocationResolutionTokenProvider.class);
         itunes = mock(ItunesMusicSearchClient.class);
+        storage = mock(MusicSearchStorageService.class);
         service = new MusicRecordService(repository, itunes,
-                tokens, new MusicSearchCursorCodec("test-secret"));
+                tokens, new MusicSearchCursorCodec("test-secret"), storage);
         mapper = new ObjectMapper();
         detail = new MusicRecordDetailResponse(7L,
                 new MusicSummary(11L, "밤편지", "아이유", null),
@@ -58,6 +61,17 @@ class MusicRecordServiceTest {
                         new RegionPart(4L, "11440", "마포구")),
                 "홍대", "산책 중",
                 Instant.parse("2026-09-22T06:30:00Z"), null);
+    }
+
+    @Test
+    void storedLookupFailureDoesNotSubmitCollection() {
+        when(itunes.search("song")).thenReturn(List.of(new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem(
+                null, "ITUNES", "123", "song", "artist", null, null, null, false)));
+        when(repository.findStoredMusicByIds(any(), anyLong(), eq("song")))
+                .thenThrow(new IllegalStateException("lookup failed"));
+        assertThatThrownBy(() -> service.search("song", "ITUNES", null, 20))
+                .isInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.verifyNoInteractions(storage);
     }
 
     @Test
