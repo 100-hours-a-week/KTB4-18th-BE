@@ -46,6 +46,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
@@ -117,7 +118,8 @@ class MusicMetadataMySqlIntegrationTest {
         var tokens = mock(LocationResolutionTokenProvider.class);
         when(tokens.validate("location-token", 1L)).thenReturn(new LocationResolutionClaims(
                 1L, 1L, "11", 2L, "11440", 1L, Instant.now().plusSeconds(300)));
-        var service = new MusicRecordService(records, itunes, tokens, new MusicSearchCursorCodec("test-secret"));
+        var service = new MusicRecordService(records, itunes, tokens, new MusicSearchCursorCodec("test-secret"),
+                mock(MusicSearchStorageService.class));
         var users = mock(CurrentUserResolver.class);
         when(users.resolve(any())).thenReturn(1L);
         mvc = MockMvcBuilders.standaloneSetup(new MusicRecordController(service, users))
@@ -203,7 +205,8 @@ class MusicMetadataMySqlIntegrationTest {
             }
         };
         var failingService = new MusicRecordService(failingRepository, itunes,
-                mock(LocationResolutionTokenProvider.class), new MusicSearchCursorCodec("rollback-test-secret"));
+                mock(LocationResolutionTokenProvider.class), new MusicSearchCursorCodec("rollback-test-secret"),
+                mock(MusicSearchStorageService.class));
         var transaction = new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
         var body = new ObjectMapper().readTree(
                 "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""

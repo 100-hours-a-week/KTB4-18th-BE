@@ -11,6 +11,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +40,8 @@ import tools.jackson.databind.JsonNode;
 @Service
 public class MusicRecordService {
     private static final int PAGE_SIZE = 20;
+    private static final Logger log = LoggerFactory.getLogger(MusicRecordService.class);
+    private final MusicSearchStorageService searchStorage;
     private final MusicRecordRepository repository;
     private final ItunesMusicSearchClient itunes;
     private final LocationResolutionTokenProvider tokens;
@@ -45,7 +50,8 @@ public class MusicRecordService {
 
     public MusicRecordService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
             LocationResolutionTokenProvider tokens,
-            MusicSearchCursorCodec searchCursors) {
+            MusicSearchCursorCodec searchCursors, MusicSearchStorageService searchStorage) {
+        this.searchStorage = searchStorage;
         this.repository = repository;
         this.itunes = itunes;
         this.tokens = tokens;
@@ -101,13 +107,25 @@ public class MusicRecordService {
         List<String> ids = results.stream().map(MusicItem::external_music_id).distinct().toList();
         Map<String, StoredMusic> stored = repository.findStoredMusicByIds(ids, highWatermark, query);
         Set<String> seen = new HashSet<>();
-        return results.stream().filter(item -> seen.add(item.external_music_id()))
+        List<MusicItem> candidates = results.stream().filter(item -> seen.add(item.external_music_id()))
                 .filter(item -> !stored.containsKey(item.external_music_id())
                         || !stored.get(item.external_music_id()).matchesSearch())
                 .map(item -> stored.containsKey(item.external_music_id())
                         ? mergeSearchMetadata(item, stored.get(item.external_music_id()).music())
                         : item)
                 .toList();
+        Set<String> storageSeen = new HashSet<>();
+        List<MusicItem> storageSnapshot = List.copyOf(results.stream()
+                .filter(item -> storageSeen.add(item.external_music_id())).toList());
+        if (!storageSnapshot.isEmpty()) {
+            try {
+                searchStorage.store(storageSnapshot);
+            } catch (TaskRejectedException exception) {
+                log.warn("event=music_search_storage_rejected count={} exception={}",
+                        storageSnapshot.size(), exception.getClass().getSimpleName());
+            }
+        }
+        return candidates;
     }
 
     private MusicItem mergeSearchMetadata(MusicItem external, MusicItem stored) {
