@@ -71,3 +71,7 @@ location:
     rest-api-key: ${LOCATION_KAKAO_REST_API_KEY:}
     connect-timeout: ${LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT:2s}
     read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
+
+chat:
+  message-cleanup:
+    enabled: ${CHAT_MESSAGE_CLEANUP_ENABLED:true}
