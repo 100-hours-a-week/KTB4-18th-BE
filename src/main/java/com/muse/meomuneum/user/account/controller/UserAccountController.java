@@ -12,7 +12,9 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,12 +22,16 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
+import com.muse.meomuneum.user.account.service.ProfileImageService;
 import com.muse.meomuneum.user.account.service.UserAccountService;
 import com.muse.meomuneum.user.account.service.UserTermsAgreementService;
 import com.muse.meomuneum.user.domain.User;
@@ -39,11 +45,37 @@ public class UserAccountController {
     private final UserAccountService userAccountService;
     private final UserTermsAgreementService userTermsAgreementService;
 
+    private final ProfileImageService profileImageService;
+
+    @Autowired
     public UserAccountController(UserAccountService userAccountService, CurrentUserResolver currentUserResolver,
-            UserTermsAgreementService userTermsAgreementService) {
+            UserTermsAgreementService userTermsAgreementService, ProfileImageService profileImageService) {
         this.userAccountService = userAccountService;
         this.currentUserResolver = currentUserResolver;
         this.userTermsAgreementService = userTermsAgreementService;
+        this.profileImageService = profileImageService;
+    }
+
+    public UserAccountController(UserAccountService userAccountService, CurrentUserResolver currentUserResolver,
+            UserTermsAgreementService userTermsAgreementService) {
+        this(userAccountService, currentUserResolver, userTermsAgreementService, null);
+    }
+
+    @PutMapping(value = "/profile-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ProfileImageResponse> uploadProfileImage(@RequestPart("image") MultipartFile image,
+            Authentication authentication) {
+        return ApiResponse.of("profile image updated",
+                new ProfileImageResponse(profileImageService.upload(userId(authentication), image)));
+    }
+
+    @GetMapping("/profile-image/{uuid}.png")
+    public ResponseEntity<byte[]> getProfileImage(@PathVariable String uuid, Authentication authentication) {
+        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG)
+                .header("Cache-Control", "private, no-store").header("X-Content-Type-Options", "nosniff")
+                .body(profileImageService.read(userId(authentication), uuid));
+    }
+
+    public record ProfileImageResponse(String profile_image_url) {
     }
 
     @GetMapping
