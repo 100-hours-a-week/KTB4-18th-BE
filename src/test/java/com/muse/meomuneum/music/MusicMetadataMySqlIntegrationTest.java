@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -25,10 +26,12 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
@@ -159,6 +162,63 @@ class MusicMetadataMySqlIntegrationTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
         assertThat(records.findMusic("ITUNES", "789")).isEmpty();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_records", Integer.class)).isEqualTo(count);
+    }
+
+    @Test
+    void replacingMusicKeepsRecordMetadataAndLocation() throws Exception {
+        long oldMusicId = records.findMusic("ITUNES", "1").orElseThrow().music_id();
+        long recordId = records.saveRecord(1L, oldMusicId,
+                records.findLocation(1L, 2L, 1L).orElseThrow(), "보존할 장소", "보존할 메모",
+                Instant.parse("2026-09-22T06:30:00Z"));
+        when(itunes.lookup("456")).thenReturn(Optional.of(item("456", "새 가수")));
+
+        mvc.perform(patch("/api/v1/music-records/" + recordId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"456\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.record_id").value(recordId));
+
+        var updated = records.findRecord(1L, recordId).orElseThrow();
+        assertThat(updated.music().music_id()).isNotEqualTo(oldMusicId);
+        assertThat(updated.music().music_id()).isEqualTo(records.findMusic("ITUNES", "456").orElseThrow().music_id());
+        assertThat(updated.music().title()).isEqualTo(TITLE);
+        assertThat(updated.custom_place_name()).isEqualTo("보존할 장소");
+        assertThat(updated.emotion_memo()).isEqualTo("보존할 메모");
+        assertThat(updated.map_dot_id()).isEqualTo(1L);
+        assertThat(updated.created_at()).isEqualTo(Instant.parse("2026-09-22T06:30:00Z"));
+        assertThat(records.findMusic("ITUNES", "456")).isPresent();
+    }
+
+    @Test
+    void replacementRollsBackCatalogInsertWhenRecordMusicUpdateFails() throws Exception {
+        String replacementId = String.valueOf(10_000_000_000L + java.util.concurrent.ThreadLocalRandom.current()
+                .nextLong(1_000_000_000L));
+        long oldMusicId = records.findMusic("ITUNES", "1").orElseThrow().music_id();
+        long recordId = records.saveRecord(1L, oldMusicId,
+                records.findLocation(1L, 2L, 1L).orElseThrow(), "기존 장소", "기존 메모", Instant.now());
+        when(itunes.lookup(replacementId)).thenReturn(Optional.of(item(replacementId, "새 가수")));
+        MusicRecordRepository failingRepository = new MusicRecordRepository(jdbc) {
+            @Override
+            public int updateRecordMusic(long userId, long targetRecordId, long musicId, Instant updatedAt) {
+                throw new IllegalStateException("forced record update failure");
+            }
+        };
+        var failingService = new MusicRecordService(failingRepository, itunes,
+                mock(LocationResolutionTokenProvider.class), new MusicSearchCursorCodec("rollback-test-secret"));
+        var transaction = new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
+        var body = new ObjectMapper().readTree(
+                "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""
+                        + replacementId + "\"}}");
+
+        org.assertj.core.api.Assertions
+                .assertThatThrownBy(() -> transaction.execute(status -> failingService.update(1L, recordId, body)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("forced record update failure");
+
+        assertThat(records.findMusic("ITUNES", replacementId)).isEmpty();
+        var unchanged = records.findRecord(1L, recordId).orElseThrow();
+        assertThat(unchanged.music().music_id()).isEqualTo(oldMusicId);
+        assertThat(unchanged.custom_place_name()).isEqualTo("기존 장소");
+        assertThat(unchanged.emotion_memo()).isEqualTo("기존 메모");
     }
 
     private MusicItem item(String id, String artist) {

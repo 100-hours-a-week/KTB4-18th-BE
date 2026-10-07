@@ -162,15 +162,20 @@ Kakao 조회가 성공한 시점부터 위치 토큰의 유효시간은 300초�
 
 ```json
 {
-  "custom_place_name": "범서네 집",
-  "emotion_memo": "비 오는 날의 차분함"
+  "music": {
+    "provider": "ITUNES",
+    "external_music_id": "456"
+  }
 }
 ```
 
-PATCH는 `custom_place_name`과 `emotion_memo`만 받으며 음악·위치·지역·저장 날짜는
-수정하지 않습니다. 값이 모두 기존과 같으면 공통 400을 반환하고 DB를 수정하지
-않습니다. 변경 시 `updated_at`은 서버 시각으로 설정합니다. 다른 사용자의 기록은
-403, 존재하지 않거나 삭제된 기록은 404를 반환합니다.
+PATCH는 `music`, `custom_place_name`, `emotion_memo`를 각각 선택적으로 받습니다.
+음악 교체 시 위치·지역·장소명·메모·생성 시각은 그대로 보존됩니다. 다른 곡이면
+iTunes에서 메타데이터를 확인한 뒤 음악과 기록을 트랜잭션으로 갱신합니다. 현재 곡과
+같은 곡만 보내면 DB 쓰기 없이 성공하고 `updated_at`도 유지합니다. 변경 시각은 서버가
+설정합니다. 다른 사용자의 기록은 403, 존재하지 않거나 삭제된 기록과 iTunes에서 찾지
+못한 곡은 404를 반환합니다. [OpenAPI 계약](api/music-record-update.openapi.yaml)에
+요청·응답을 기록했습니다.
 
 ## 테스트 및 빌드
 

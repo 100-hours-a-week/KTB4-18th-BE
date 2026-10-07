@@ -1,0 +1,116 @@
+openapi: 3.0.3
+info:
+  title: User profile update
+  version: 1.0.0
+paths:
+  /api/v1/users/me:
+    patch:
+      operationId: updateUserProfile
+      summary: 본인 프로필 부분 수정
+      description: |
+        인증된 사용자의 프로필을 부분 수정한다. gender를 생략하면 기존 성별을 유지하고,
+        gender를 null로 전달하면 성별 선택을 해제하고, MALE 또는 FEMALE을 전달하면 해당 값으로 변경한다.
+        birth_year를 null로 전달하면 출생연도를 삭제하며, 정수를 전달하면 해당 연도로 변경한다.
+        두 필드 모두 생략하면 기존 값을 유지한다. 그 외 필드도 생략 시 기존 값을 유지한다.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                nickname:
+                  type: string
+                  minLength: 2
+                  maxLength: 12
+                  pattern: '^[가-힣A-Za-z0-9]+$'
+                birth_year:
+                  type: integer
+                  format: int32
+                  minimum: 1900
+                  nullable: true
+                gender:
+                  type: string
+                  nullable: true
+                  enum: [MALE, FEMALE, null]
+                profile_image_url:
+                  type: string
+                  maxLength: 1000
+            examples:
+              clearGender:
+                summary: 성별 선택 해제
+                value:
+                  nickname: 프로필닉네임
+                  gender: null
+              clearBirthYear:
+                summary: 출생연도 삭제
+                value:
+                  nickname: 프로필닉네임
+                  birth_year: null
+              preserveGender:
+                summary: 성별 생략 시 기존 선택 유지
+                value:
+                  nickname: 프로필닉네임
+      responses:
+        '200':
+          description: 프로필 수정 완료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                message: user updated
+                data:
+                  user_id: 7
+                  updated_at: '2026-10-04T00:00:00'
+        '400':
+          description: 잘못된 요청 또는 유효하지 않은 필드
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증되지 않음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 이미 사용 중인 닉네임
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    SuccessResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: object
+          required: [user_id, updated_at]
+          properties:
+            user_id:
+              type: integer
+              format: int64
+            updated_at:
+              type: string
+              format: date-time
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        data:
+          nullable: true

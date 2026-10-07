@@ -99,7 +99,7 @@ class UserAccountServiceTest {
         when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
         when(userRepository.existsByNicknameAndIdNot("다른닉", 1L)).thenReturn(true);
 
-        assertThatThrownBy(() -> service.updateProfile(1L, "다른닉", null, null, null))
+        assertThatThrownBy(() -> service.updateProfile(1L, "다른닉", null, false, null, false, null))
                 .isInstanceOfSatisfying(UserAccountException.class, exception -> {
                     assertThat(exception.getStatus()).isEqualTo(HttpStatus.CONFLICT);
                     assertThat(exception.getMessage()).isEqualTo("nickname already exists");
@@ -114,7 +114,7 @@ class UserAccountServiceTest {
         when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
         when(userRepository.existsByNicknameAndIdNot("기존닉", 1L)).thenReturn(false);
 
-        assertThat(service.updateProfile(1L, "기존닉", null, UserGender.FEMALE, null)).isSameAs(user);
+        assertThat(service.updateProfile(1L, "기존닉", null, false, UserGender.FEMALE, true, null)).isSameAs(user);
         verify(userRepository).existsByNicknameAndIdNot("기존닉", 1L);
     }
 
@@ -131,7 +131,7 @@ class UserAccountServiceTest {
         org.mockito.Mockito.doThrow(new DataIntegrityViolationException("duplicate nickname", constraintViolation))
                 .when(userRepository).flush();
 
-        assertThatThrownBy(() -> service.updateProfile(1L, "경합닉", null, null, null))
+        assertThatThrownBy(() -> service.updateProfile(1L, "경합닉", null, false, null, false, null))
                 .isInstanceOfSatisfying(UserAccountException.class, exception -> {
                     assertThat(exception.getStatus()).isEqualTo(HttpStatus.CONFLICT);
                     assertThat(exception.getCode()).isEqualTo("USER_NICKNAME_DUPLICATE");
@@ -146,7 +146,7 @@ class UserAccountServiceTest {
                 Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
         when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
 
-        assertThat(service.updateProfile(1L, null, (short) 2026, null, null)).isSameAs(user);
+        assertThat(service.updateProfile(1L, null, (short) 2026, true, null, false, null)).isSameAs(user);
     }
 
     @Test
@@ -156,7 +156,7 @@ class UserAccountServiceTest {
                 Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
         when(userRepository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.updateProfile(1L, null, (short) 2027, null, null))
+        assertThatThrownBy(() -> service.updateProfile(1L, null, (short) 2027, true, null, false, null))
                 .isInstanceOfSatisfying(UserAccountException.class, exception -> {
                     assertThat(exception.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
                     assertThat(exception.getMessage()).isEqualTo("invalid request");

@@ -49,7 +49,7 @@ public class SignupService {
     public long signup(SignupRequest request) {
         validateBirthYear(request.birthYear());
 
-        String email = request.email().trim().toLowerCase(Locale.ROOT);
+        String email = SignupRequest.normalizeEmail(request.email());
         if (signupRepository.existsUserByEmail(email)) {
             throw new DuplicateEmailException();
         }

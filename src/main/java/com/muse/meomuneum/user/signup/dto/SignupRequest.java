@@ -1,6 +1,7 @@
 package com.muse.meomuneum.user.signup.dto;
 
 import java.util.List;
+import java.util.Locale;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
@@ -16,4 +17,12 @@ public record SignupRequest(@NotBlank @Email @Size(max = 40) String email,
         @NotBlank @Size(min = 2, max = 12) @Pattern(regexp = "[가-힣A-Za-z0-9]+") String nickname,
         @JsonProperty("birth_year") @Min(1900) Short birthYear, @Pattern(regexp = "MALE|FEMALE") String gender,
         @JsonProperty("terms_ids") @NotNull @Size(min = 1) List<@NotNull Long> termsIds) {
+
+    public SignupRequest {
+        email = normalizeEmail(email);
+    }
+
+    public static String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
+    }
 }

@@ -243,25 +243,80 @@ public class MusicRecordService {
 
     @Transactional
     public UpdateResponse update(long userId, long recordId, JsonNode body) {
+        // Resolve ownership before inspecting supplied fields to avoid leaking record state.
+        MusicRecordDetailResponse current = detail(userId, recordId);
         if (body == null || !body.isObject()) {
             throw new MusicRecordException("music_record_update_invalid_body");
         }
         for (java.util.Map.Entry<String, JsonNode> field : body.properties()) {
-            if (!"custom_place_name".equals(field.getKey()) && !"emotion_memo".equals(field.getKey())) {
+            if (!"custom_place_name".equals(field.getKey()) && !"emotion_memo".equals(field.getKey())
+                    && !"music".equals(field.getKey())) {
                 throw new MusicRecordException("music_record_update_field_not_allowed");
             }
         }
-        MusicRecordDetailResponse current = detail(userId, recordId);
         String place = body.has("custom_place_name")
                 ? optionalText(body.get("custom_place_name"), 100, "custom_place_name")
                 : current.custom_place_name();
         String memo = body.has("emotion_memo")
                 ? optionalText(body.get("emotion_memo"), 500, "emotion_memo")
                 : current.emotion_memo();
-        if (Objects.equals(place, current.custom_place_name())
-                && Objects.equals(memo, current.emotion_memo())) {
+
+        JsonNode musicNode = body.get("music");
+        String provider = null;
+        String externalId = null;
+        if (musicNode != null) {
+            if (!musicNode.isObject()) {
+                throw new MusicRecordException("music_record_update_music_invalid");
+            }
+            for (java.util.Map.Entry<String, JsonNode> field : musicNode.properties()) {
+                if (!"provider".equals(field.getKey()) && !"external_music_id".equals(field.getKey())) {
+                    throw new MusicRecordException("music_record_update_music_invalid");
+                }
+            }
+            JsonNode providerNode = musicNode.get("provider");
+            JsonNode externalIdNode = musicNode.get("external_music_id");
+            if (providerNode == null || !providerNode.isTextual()
+                    || externalIdNode == null || !externalIdNode.isTextual()) {
+                throw new MusicRecordException("music_record_update_music_invalid");
+            }
+            provider = providerNode.asText();
+            externalId = externalIdNode.asText();
+            if (!"ITUNES".equals(provider) || !externalId.matches("[0-9]+")) {
+                throw new MusicRecordException("music_record_update_music_invalid");
+            }
+        }
+
+        boolean metadataChanged = !Objects.equals(place, current.custom_place_name())
+                || !Objects.equals(memo, current.emotion_memo());
+        if (musicNode == null && !metadataChanged) {
             throw new MusicRecordException("music_record_update_no_changes");
         }
+
+        if (musicNode != null) {
+            MusicRecordRepository.MusicIdentity existing = repository
+                    .findRecordMusicIdentity(userId, recordId)
+                    .orElseThrow(() -> new MusicRecordException("music_record_not_found",
+                            HttpStatus.NOT_FOUND, "music record not found"));
+            boolean sameMusic = provider.equals(existing.provider()) && externalId.equals(existing.externalId());
+            if (sameMusic && !metadataChanged) {
+                return new UpdateResponse(recordId, current.updated_at());
+            }
+            if (!sameMusic) {
+                MusicItem selected = itunes.lookup(externalId)
+                        .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
+                                "music not found"));
+                long musicId = repository.upsertMusic(selected);
+                Instant updatedAt = clock.instant();
+                if (repository.updateRecordMusic(userId, recordId, musicId, updatedAt) != 1) {
+                    throw new MusicRecordException("music_record_update_target_missing");
+                }
+                if (metadataChanged && repository.updateRecord(userId, recordId, place, memo, updatedAt) != 1) {
+                    throw new MusicRecordException("music_record_update_target_missing");
+                }
+                return new UpdateResponse(recordId, updatedAt);
+            }
+        }
+
         Instant updatedAt = clock.instant();
         if (repository.updateRecord(userId, recordId, place, memo, updatedAt) != 1) {
             throw new MusicRecordException("music_record_update_target_missing");
