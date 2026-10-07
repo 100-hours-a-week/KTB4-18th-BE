@@ -3,11 +3,13 @@ package com.muse.meomuneum.chat.room.controller;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.muse.meomuneum.chat.room.dto.ChatRoomJoinRequest;
@@ -30,6 +32,13 @@ public class ChatRoomController {
     @GetMapping("/regions/{regionId}/chat-room")
     public ApiResponse<ChatRoomResponse> findByRegion(@PathVariable Long regionId) {
         return ApiResponse.of("chat room retrieved", chatRoomEntryService.findByRegion(regionId));
+    }
+
+    @DeleteMapping("/chat-rooms/{roomId}/members/me")
+    public ResponseEntity<Void> leave(@PathVariable Long roomId,
+            @RequestParam("membership_id") Long membershipId, Authentication authentication) {
+        chatRoomEntryService.leave((Long) authentication.getPrincipal(), roomId, membershipId);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/chat-rooms/{roomId}/members")
