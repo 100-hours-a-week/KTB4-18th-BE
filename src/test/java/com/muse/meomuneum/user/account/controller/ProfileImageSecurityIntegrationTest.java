@@ -89,7 +89,7 @@ class ProfileImageSecurityIntegrationTest {
         org.mockito.Mockito.reset(repository);
         user = org.springframework.beans.BeanUtils.instantiateClass(User.class.getDeclaredConstructor());
         ReflectionTestUtils.setField(user, "id", 1L);
-        user.updateProfile("기존닉", (short) 1999, UserGender.FEMALE, "https://example.com/legacy.png",
+        user.updateProfile("기존닉", (short) 1999, true, UserGender.FEMALE, true, "https://example.com/legacy.png",
                 LocalDateTime.now());
         when(repository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
         when(repository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(user));
@@ -110,7 +110,7 @@ class ProfileImageSecurityIntegrationTest {
                 new MaxUploadSizeExceededException(10 * 1024 * 1024))).isNotNull();
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(new ObjectMapper().readTree(response.getContentAsByteArray()).get("message").asText())
-                .isEqualTo("image is too large");
+                .isEqualTo("10MB 이하의 이미지만 등록할 수 있어요.");
         assertThat(resolvers.getFirst().resolveException(new MockHttpServletRequest("PUT", "/other-upload"),
                 new MockHttpServletResponse(), null, new MaxUploadSizeExceededException(10))).isNull();
     }
@@ -143,7 +143,7 @@ class ProfileImageSecurityIntegrationTest {
     @Test
     void patchAssignedForeignUuidDoesNotGrantReadOrDeleteForeignImage() throws Exception {
         String foreign = storage.store(2L, image);
-        user.updateProfile(null, null, null, foreign, LocalDateTime.now());
+        user.updateProfile(null, null, false, null, false, foreign, LocalDateTime.now());
         mvc.perform(get(foreign).with(owner())).andExpect(status().isNotFound());
         upload();
         assertThat(storage.read(2L, foreign)).isNotEmpty();
@@ -165,6 +165,18 @@ class ProfileImageSecurityIntegrationTest {
         try (var files = Files.list(root.resolve("1"))) {
             assertThat(files.sorted().toList()).isEqualTo(before);
         }
+    }
+
+    @Test
+    void authenticatedWebpUploadReturnsNormalizedPng() throws Exception {
+        try (var input = getClass().getResourceAsStream("/profile-images/lossless.webp")) {
+            image = new MockMultipartFile("image", "fake.png", "image/png", input.readAllBytes());
+        }
+        upload();
+        mvc.perform(get(user.getProfileImageUrl()).with(owner())).andExpect(status().isOk())
+                .andExpect(content().contentType("image/png"));
+        byte[] normalized = storage.read(1L, user.getProfileImageUrl());
+        assertThat(normalized).startsWith((byte) 137, (byte) 80, (byte) 78, (byte) 71);
     }
 
     private void upload() throws Exception {

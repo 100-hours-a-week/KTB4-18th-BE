@@ -124,6 +124,78 @@ class ProfileImageStorageTest {
                 });
     }
 
+    @Test
+    void normalizesRealLosslessAndLossyWebpRegardlessOfDeclaredType() throws Exception {
+        for (String fixture : new String[]{"lossless.webp", "lossy.webp"}) {
+            byte[] source;
+            try (var input = getClass().getResourceAsStream("/profile-images/" + fixture)) {
+                source = input.readAllBytes();
+            }
+            ProfileImageStorage storage = storage();
+            String url = storage.store(1L,
+                    new MockMultipartFile("image", "fake.jpg", "image/jpeg", source));
+            byte[] png = storage.read(1L, url);
+            assertThat(png).startsWith((byte) 137, (byte) 80, (byte) 78, (byte) 71);
+            BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(png));
+            assertThat(decoded.getWidth()).isEqualTo(32);
+            assertThat(decoded.getHeight()).isEqualTo(20);
+            java.awt.Color pixel = new java.awt.Color(decoded.getRGB(10, 10), true);
+            assertThat(pixel.getRed()).isBetween(25, 35);
+            assertThat(pixel.getGreen()).isBetween(175, 185);
+            assertThat(pixel.getBlue()).isBetween(65, 75);
+            assertThat(pixel.getAlpha()).isEqualTo(255);
+        }
+    }
+
+    @Test
+    void rejectsCorruptWebpAndGifSpoofedAsWebpWithExactMessage() throws Exception {
+        byte[] webp;
+        try (var input = getClass().getResourceAsStream("/profile-images/lossless.webp")) {
+            webp = java.util.Arrays.copyOf(input.readAllBytes(), 24);
+        }
+        for (byte[] bytes : new byte[][]{webp, image("GIF", 10, 10).getBytes()}) {
+            assertThatThrownBy(() -> storage().store(1L,
+                    new MockMultipartFile("image", "fake.webp", "image/webp", bytes)))
+                    .isInstanceOfSatisfying(UserAccountException.class, exception -> {
+                        assertThat(exception.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(exception.getMessage()).isEqualTo("JPG, PNG, WEBP 형식의 이미지만 등록할 수 있어요.");
+                    });
+        }
+    }
+
+    @Test
+    void acceptsExactlyDecimalTenMegabytesAndRejectsNextByteIncludingHiddenStreamSize() throws Exception {
+        assertThat(ProfileImageStorage.MAX_BYTES).isEqualTo(10_000_000L);
+        ProfileImageStorage storage = storage();
+        byte[] boundary = java.util.Arrays.copyOf(image("PNG", 10, 10).getBytes(), 10_000_000);
+        String url = storage.store(1L, new MockMultipartFile("image", boundary));
+        assertThat(storage.read(1L, url).length).isLessThan(1000);
+        byte[] oversized = java.util.Arrays.copyOf(boundary, 10_000_001);
+        MockMultipartFile hiddenSize = new MockMultipartFile("image", oversized) {
+            @Override
+            public long getSize() {
+                return 1;
+            }
+        };
+        MockMultipartFile declaredOversized = new MockMultipartFile("image", boundary) {
+            @Override
+            public long getSize() {
+                return 10_000_001;
+            }
+        };
+        for (MockMultipartFile input : new MockMultipartFile[]{new MockMultipartFile("image", oversized),
+                hiddenSize, declaredOversized}) {
+            assertThatThrownBy(() -> storage.store(1L, input))
+                    .isInstanceOfSatisfying(UserAccountException.class, exception -> {
+                        assertThat(exception.getStatus()).isEqualTo(HttpStatus.CONTENT_TOO_LARGE);
+                        assertThat(exception.getMessage()).isEqualTo("10MB 이하의 이미지만 등록할 수 있어요.");
+                    });
+        }
+        try (var files = Files.list(root.resolve("1"))) {
+            assertThat(files.count()).isEqualTo(1);
+        }
+    }
+
     private ProfileImageStorage storage() {
         return new ProfileImageStorage(root.toString());
     }

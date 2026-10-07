@@ -43,7 +43,7 @@ public class ProfileImageService {
             cleanup(userId, replacement);
             throw exception;
         }
-        user.updateProfile(null, null, user.getGender(), replacement, LocalDateTime.now());
+        user.updateProfile(null, null, false, null, false, replacement, LocalDateTime.now());
         userRepository.flush();
         return replacement;
     }

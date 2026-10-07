@@ -62,7 +62,7 @@ class UserAccountControllerTest {
         assertThat(response.getContentType()).startsWith("application/json");
         assertThat(response.getCharacterEncoding()).isEqualTo("UTF-8");
         assertThat(new ObjectMapper().readTree(response.getContentAsByteArray()).get("message").asText())
-                .isEqualTo("image is too large");
+                .isEqualTo("10MB 이하의 이미지만 등록할 수 있어요.");
         assertThat(new ObjectMapper().readTree(response.getContentAsByteArray()).get("data").isNull()).isTrue();
     }
 
@@ -120,7 +120,8 @@ class UserAccountControllerTest {
         when(images.upload(eq(1L), any())).thenThrow(new MaxUploadSizeExceededException(5 * 1024 * 1024));
         mvc.perform(multipart(org.springframework.http.HttpMethod.PUT, "/api/v1/users/me/profile-image")
                 .file(new MockMultipartFile("image", new byte[]{1})).principal(principal))
-                .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.message").value("image is too large"));
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.message").value("10MB 이하의 이미지만 등록할 수 있어요."));
     }
 
     @Test
