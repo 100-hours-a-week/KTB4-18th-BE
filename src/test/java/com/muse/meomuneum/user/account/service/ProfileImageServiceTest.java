@@ -3,6 +3,7 @@ package com.muse.meomuneum.user.account.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
@@ -22,7 +23,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import com.muse.meomuneum.user.account.exception.UserAccountException;
 import com.muse.meomuneum.user.domain.User;
-import com.muse.meomuneum.user.domain.UserGender;
 import com.muse.meomuneum.user.repository.UserRepository;
 
 class ProfileImageServiceTest {
@@ -38,7 +38,6 @@ class ProfileImageServiceTest {
         TransactionSynchronizationManager.initSynchronization();
         when(repository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
         when(user.getProfileImageUrl()).thenReturn("previous");
-        when(user.getGender()).thenReturn(UserGender.FEMALE);
         when(storage.store(1L, image)).thenReturn("replacement");
     }
 
@@ -51,7 +50,7 @@ class ProfileImageServiceTest {
     void locksUserPreservesProfileAndDefersOldDeletionUntilCommit() {
         assertThat(service.upload(1L, image)).isEqualTo("replacement");
         verify(repository).findActiveByIdForUpdate(1L);
-        verify(user).updateProfile(isNull(), isNull(), eq(UserGender.FEMALE), eq("replacement"), any());
+        verify(user).updateProfile(isNull(), isNull(), eq(false), isNull(), eq(false), eq("replacement"), any());
         verify(repository).flush();
         verify(storage, never()).delete(any(), any());
         complete(TransactionSynchronization.STATUS_COMMITTED);
@@ -80,7 +79,7 @@ class ProfileImageServiceTest {
     void validationFailureDoesNotMutatePreviousProfile() {
         doThrow(new IllegalArgumentException("invalid image")).when(storage).store(1L, image);
         assertThatThrownBy(() -> service.upload(1L, image)).isInstanceOf(IllegalArgumentException.class);
-        verify(user, never()).updateProfile(any(), any(), any(), any(), any());
+        verify(user, never()).updateProfile(any(), any(), anyBoolean(), any(), anyBoolean(), any(), any());
         verify(repository, never()).flush();
         assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
     }

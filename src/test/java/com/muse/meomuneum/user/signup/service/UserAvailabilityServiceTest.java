@@ -8,20 +8,35 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.ValidatorFactory;
+
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.muse.meomuneum.user.signup.dto.SignupRequest;
 import com.muse.meomuneum.user.signup.exception.InvalidAvailabilityRequestException;
 import com.muse.meomuneum.user.signup.repository.SignupRepository;
 
 class UserAvailabilityServiceTest {
     private SignupRepository signupRepository;
     private UserAvailabilityService service;
+    private ValidatorFactory validatorFactory;
+    private Validator validator;
 
     @BeforeEach
     void setUp() {
         signupRepository = mock(SignupRepository.class);
-        service = new UserAvailabilityService(signupRepository);
+        validatorFactory = Validation.buildDefaultValidatorFactory();
+        validator = validatorFactory.getValidator();
+        service = new UserAvailabilityService(signupRepository, validator);
+    }
+
+    @AfterEach
+    void tearDown() {
+        validatorFactory.close();
     }
 
     @Test
@@ -40,6 +55,16 @@ class UserAvailabilityServiceTest {
         assertTrue(service.isAvailable("email", " QA@EXAMPLE.COM "));
 
         verify(signupRepository).existsUserByEmail("qa@example.com");
+    }
+
+    @Test
+    void appliesTheSignupEmailConstraintsBeforeQueryingUsers() {
+        String email = "foo@bar..com";
+
+        assertFalse(validator.validateValue(SignupRequest.class, "email", email).isEmpty());
+        assertThrows(InvalidAvailabilityRequestException.class, () -> service.isAvailable("email", email));
+
+        verifyNoInteractions(signupRepository);
     }
 
     @Test

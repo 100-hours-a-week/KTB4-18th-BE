@@ -89,7 +89,7 @@ class ProfileImageSecurityIntegrationTest {
         org.mockito.Mockito.reset(repository);
         user = org.springframework.beans.BeanUtils.instantiateClass(User.class.getDeclaredConstructor());
         ReflectionTestUtils.setField(user, "id", 1L);
-        user.updateProfile("기존닉", (short) 1999, UserGender.FEMALE, "https://example.com/legacy.png",
+        user.updateProfile("기존닉", (short) 1999, true, UserGender.FEMALE, true, "https://example.com/legacy.png",
                 LocalDateTime.now());
         when(repository.findActiveByIdForUpdate(1L)).thenReturn(Optional.of(user));
         when(repository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(user));
@@ -143,7 +143,7 @@ class ProfileImageSecurityIntegrationTest {
     @Test
     void patchAssignedForeignUuidDoesNotGrantReadOrDeleteForeignImage() throws Exception {
         String foreign = storage.store(2L, image);
-        user.updateProfile(null, null, null, foreign, LocalDateTime.now());
+        user.updateProfile(null, null, false, null, false, foreign, LocalDateTime.now());
         mvc.perform(get(foreign).with(owner())).andExpect(status().isNotFound());
         upload();
         assertThat(storage.read(2L, foreign)).isNotEmpty();
