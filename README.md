@@ -179,6 +179,66 @@ iTunes에서 메타데이터를 확인한 뒤 음악과 기록을 트랜잭션�
 
 ## 테스트 및 빌드
 
+### 지역 채팅 메시지·자동 제재 저장 기반 (#139)
+
+`ChatMessageStorageService.store`는 호출자가 권한·내용 검사를 마친 정상 메시지를 작성자·방·본문·
+client ID·서버 UTC 전송 시각과 함께 저장합니다. 공개 API·WebSocket·탐지·참여 구간별 조회는 후행 작업입니다.
+사용자 행 잠금과 실제 `UNIQUE(user_id, client_message_id)`로 동시 재시도 중복을 막고,
+같은 방·내용의 재시도에는 기존 ID와 `created=false`를 반환합니다. 후행 전파는 신규 저장 결과에만 적용합니다.
+다른 방·내용의 ID 재사용은 거절합니다. ID는 대소문자를 구분하고 작성자별로 구분합니다.
+
+본문은 공백만으로 구성될 수 없고 최대 300 Unicode code point, client ID는 공백이 아닌 최대 100자이며
+초과분을 절단하지 않습니다. 시각은 UTC 마이크로초 정밀도로 저장합니다.
+`findUnexpiredById`는 보관 기간 필터만 제공하므로 참여 구간 권한 검증 없이 공개 API에서 사용하면 안 됩니다.
+물리 삭제 후에는 client ID 기록도 없어져 무기한 멱등성은 제공하지 않습니다.
+
+`ChatBanStorageService.storeAutomaticBan`은 `PROFANITY`·`OBSCENITY` 사유와 시작·7일 뒤 만료 시각을
+저장합니다. 시스템 제재의 등록자 FK는 null이며 메시지 본문·탐지 개인정보를 제재 사유에 넣지 않습니다.
+동시 제재·재시도는 기존 활성 제재를 반환하고 만료를 연장하지 않습니다. `hasActiveBan`은 만료 시각부터
+false가 되며 별도의 삭제 실행을 기다리지 않습니다. 메시지 삭제와 제재 이력은 독립적입니다.
+
+메시지는 전송 시각부터 정확히 24시간에 유효 조회에서 제외합니다. `ChatMessageCleanupJob`은 UTC 매 정시에
+만료 행을 트랜잭션으로 물리 삭제합니다. 정상 운영 시 전송 후 최대 25시간 내 삭제를 목표로 합니다.
+실패 시 롤백하고 다음 정시 실행에서 남은 만료 행을 다시 처리하며, 조회 만료는 삭제 성공 여부와 무관합니다.
+`chat_message_cleanup_success`의 삭제 건수와 `chat_message_cleanup_failed` 이벤트를 감시합니다.
+실패 로그는 예외 클래스만 기록하며 SQL·메시지 본문을 남기지 않습니다.
+`CHAT_MESSAGE_CLEANUP_ENABLED`는 기본 true이고 통제된 유지보수·테스트에만 false로 설정합니다.
+재활성화 후 다음 정시 실행으로 재처리하거나 신뢰된 서버 내부에서 `deleteExpiredMessages()`를 호출합니다.
+관리자 삭제 REST API는 제공하지 않습니다.
+
+적용·복구 순서는 다음과 같습니다.
+
+1. 대상 DB와 기존 Flyway 이력을 확인합니다. 기존 Migration은 변경하지 않습니다.
+2. 기존 users·chat_rooms 생성 후 `V20261007205113__create_chat_room_messages_table.sql`,
+   `V20261007205453__create_chat_bans_table.sql`을 순서대로 적용합니다. 기존 테이블·데이터를 수정하지 않습니다.
+3. 메시지 PK·유일 키·작성자/방 FK·만료 인덱스, 제재 FK·기간/사유 CHECK·만료 인덱스와
+   Hibernate `ddl-auto=validate` 시작을 확인한 뒤 애플리케이션을 배포합니다. DB/JDBC 시간대는 UTC로 맞춥니다.
+4. 테스트 데이터로 동시 저장·만료 경계·물리 삭제를 확인하고 실제 정시 성공 로그를 확인합니다.
+5. MySQL DDL 실패 시 실제 테이블·Flyway 실패 이력을 확인하고 보정 Migration/승인된 복구 절차를 사용합니다.
+   자동 `clean`·무조건적인 `repair`·기존 파일 변경으로 우회하지 않습니다.
+6. 앱 복구 시 삭제 작업을 일시 중단하고 직전 검증 버전으로 복구하되 새 테이블·진행 중인 제재는 보존합니다.
+   실제 삭제된 메시지는 앱 롤백으로 복구되지 않습니다. 후행 채팅이 배포된 뒤에는 제재를 검사하지 않는
+   구버전으로 되돌리기 전에 채팅 진입을 차단해야 합니다.
+
+제재 만료 후 이력 보관 기간과 로그·백업 사본의 보존·삭제 정책은 별도 결정 대상입니다.
+이 메시지 삭제 작업이 백업까지 삭제한다고 간주하지 않습니다. 두 음악 기록 격리 로컬 프로필도
+신규 Migration을 포함하므로 IDE 실행 전 해당 `prepareMusicRecord*LocalMigrations`를 실행하세요.
+
+대상 통합 테스트는 Docker의 별도 MySQL 9.7.0에서 Flyway·JPA 매핑·동시 저장·DB 제약·24시간/7일 경계·
+물리 삭제 후 제재 유지와 삭제 실패 후 재실행을 검증합니다. Docker가 없어 스킵되면 완료로 간주하지 않습니다.
+
+```sh
+./gradlew spotlessCheck checkstyleMain checkstyleTest \
+  test --tests '*ChatStorageIntegrationTest' --tests '*ChatMessageCleanupJobTest' \
+  bootJar --no-daemon
+```
+
+2026-10-07 검증 결과: 신규 대상 테스트 14개 통과·스킵 0개. 별도 임시 MySQL로 실행한 전체 테스트는
+403개 중 384개 통과·실패 0개·기존 격리 로컬 프로필 테스트 19개 스킵입니다.
+Spotless·Checkstyle·`bootJar`도 통과했습니다. 운영 배포·실제 정시 실행은 수행하지 않았습니다.
+
+### 전체 백엔드 검증
+
 로컬 품질 검증에는 JDK 25, MySQL 9.7.0 테스트 DB와 Docker daemon이 필요합니다. 일반 통합 테스트는
 `TEST_DB_URL`의 MySQL을 사용하고, 채팅방 마이그레이션·동시성 통합 테스트는 Testcontainers로
 MySQL 9.7.0 컨테이너를 실행합니다. Docker를 사용할 수 없으면 해당 테스트가 스킵되므로 전체 품질
