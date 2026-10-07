@@ -1,0 +1,88 @@
+openapi: 3.0.3
+info:
+  title: Regional chat participation
+  version: 1.0.0
+  description: Single-server admission, reservation and account-wide departure (#140).
+paths:
+  /api/v1/regions/{region_id}/chat-room:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: region_id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Pre-provisioned active SIGUNGU room
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      room_id: { type: integer, format: int64 }
+                      region_id: { type: integer, format: int64 }
+                      region_name: { type: string }
+                      capacity: { type: integer, example: 25 }
+                      status: { type: string, enum: [ACTIVE] }
+        '401': { description: Authentication required }
+        '404': { description: Active room not found }
+  /api/v1/chat-rooms/{room_id}/members:
+    post:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: room_id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [location_resolution_token]
+              properties:
+                location_resolution_token: { type: string }
+      responses:
+        '201':
+          description: New membership; reserve one seat for 30 seconds
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MembershipResponse' }
+        '200':
+          description: Same active membership; does not extend an existing reservation or grace deadline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MembershipResponse' }
+        '400': { description: Invalid, expired, foreign-owner or region-mismatched location token }
+        '401': { description: Authentication required }
+        '403': { description: Inactive user or active chat ban; ban message is chat use banned }
+        '404': { description: Active room not found }
+        '409': { description: Connected plus reserved plus grace users have reached capacity }
+  /api/v1/chat-rooms/{room_id}/members/me:
+    delete:
+      description: Ends only this account's specified history. Repeating a previous leave cannot end a newer membership. All connections of that membership close with 4100 CHAT_LEFT.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: room_id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: membership_id, in: query, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '204': { description: Departure confirmed or already departed }
+        '400': { description: membership_id missing or malformed }
+        '401': { description: Authentication required }
+        '403': { description: Membership does not belong to the account and room }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    MembershipResponse:
+      type: object
+      properties:
+        message: { type: string }
+        data:
+          type: object
+          required: [membership_id, room_id, region_id, joined_at]
+          properties:
+            membership_id: { type: integer, format: int64 }
+            room_id: { type: integer, format: int64 }
+            region_id: { type: integer, format: int64 }
+            joined_at: { type: string, format: date-time, description: UTC with Z suffix }
