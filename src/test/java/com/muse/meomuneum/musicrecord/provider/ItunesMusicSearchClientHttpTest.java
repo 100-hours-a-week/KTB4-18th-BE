@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +52,7 @@ class ItunesMusicSearchClientHttpTest {
 
     private HttpServer server;
     private ItunesMusicSearchClient client;
+    private final AtomicReference<String> trackBody = new AtomicReference<>(TRACK_BODY);
     private final AtomicInteger searchStatus = new AtomicInteger(200);
     private final AtomicInteger lookupStatus = new AtomicInteger(200);
     private final List<String> configuredQueries = new CopyOnWriteArrayList<>();
@@ -58,8 +60,8 @@ class ItunesMusicSearchClientHttpTest {
     @BeforeEach
     void setUp() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/search", exchange -> respond(exchange, searchStatus.get(), TRACK_BODY));
-        server.createContext("/lookup", exchange -> respond(exchange, lookupStatus.get(), TRACK_BODY));
+        server.createContext("/search", exchange -> respond(exchange, searchStatus.get(), trackBody.get()));
+        server.createContext("/lookup", exchange -> respond(exchange, lookupStatus.get(), trackBody.get()));
         server.createContext("/configured/search", exchange -> {
             configuredQueries.add(exchange.getRequestURI().getRawQuery());
             respond(exchange, 200, TRACK_BODY);
@@ -85,6 +87,7 @@ class ItunesMusicSearchClientHttpTest {
 
     @Test
     void searchSubmitsRawImmutableProviderSnapshot() {
+        setArtworkJson("\"https://example.test/cover/100x100bb.jpg\"");
         var repository = mock(MusicRecordRepository.class);
         var storage = mock(MusicSearchStorageService.class);
         var service = new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
@@ -96,6 +99,8 @@ class ItunesMusicSearchClientHttpTest {
         org.mockito.Mockito.verify(storage).store(captured.capture());
         assertThat(captured.getValue()).isEqualTo(response.items());
         assertThat(captured.getValue().getFirst().music_id()).isNull();
+        assertThat(captured.getValue().getFirst().album_cover_url())
+                .isEqualTo("https://example.test/cover/680x680bb.jpg");
         assertThatThrownBy(() -> captured.getValue().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 
@@ -108,6 +113,72 @@ class ItunesMusicSearchClientHttpTest {
         assertThat(searched.getFirst().external_music_id()).isEqualTo("123");
         assertThat(lookedUp).isPresent();
         assertThat(lookedUp.orElseThrow().title()).isEqualTo("테스트 노래");
+    }
+
+    @Test
+    void searchAndLookupResizeBothSupportedArtworkFilenames() {
+        assertArtworkMapping("https://example.test/cover/100x100bb.jpg",
+                "https://example.test/cover/680x680bb.jpg");
+        assertArtworkMapping("https://example.test/cover.100x100-75.jpg",
+                "https://example.test/cover.680x680-75.jpg");
+    }
+
+    @Test
+    void artworkResizePreservesRawUrlComponents() {
+        assertArtworkMapping("https://example.test/100x100bb.jpg?#", "https://example.test/680x680bb.jpg?#");
+        assertArtworkMapping("https://example.test/cover.100x100.100x100-75.jpg",
+                "https://example.test/cover.100x100.680x680-75.jpg");
+        assertArtworkMapping("https://example.test/100x100/encoded%20cover/100x100bb.jpg"
+                + "?size=100x100&x=%2F#100x100",
+                "https://example.test/100x100/encoded%20cover/680x680bb.jpg?size=100x100&x=%2F#100x100");
+        assertArtworkMapping("HTTPS://example.test/100x100bb.jpg/encoded%2Fcover.100x100-75.jpg"
+                + "?size=100x100#100x100",
+                "HTTPS://example.test/100x100bb.jpg/encoded%2Fcover.680x680-75.jpg?size=100x100#100x100");
+    }
+
+    @Test
+    void artworkMappingPreservesUnsupportedOrInvalidUrls() {
+        for (String artwork : List.of("", "https://example.test/cover", "https://example.test/600x600bb.jpg",
+                "https://example.test/100x100bb.png", "https://example.test/100x100cc.jpg",
+                "https://example.test/cover.100x100-80.jpg", "https://example.test/100x100bb.jpg/cover",
+                "https://example.test/cover?file=100x100bb.jpg#cover.100x100-75.jpg",
+                "https://example.test/bad space/100x100bb.jpg", "https://example.test/%ZZ/100x100bb.jpg",
+                "/cover/100x100bb.jpg", "https:/cover/100x100bb.jpg", "file:///cover/100x100bb.jpg",
+                "ftp://example.test/100x100bb.jpg", "data:image/jpeg,100x100bb.jpg")) {
+            assertArtworkMapping(artwork, artwork);
+        }
+    }
+
+    @Test
+    void missingNullAndNontextArtworkRemainNull() {
+        trackBody.set(TRACK_BODY.replace("\"artworkUrl100\":\"https://example.test/cover\",", ""));
+        assertArtworkInSearchAndLookup(null);
+        for (String artwork : List.of("null", "123", "true", "{}", "[]")) {
+            setArtworkJson(artwork);
+            assertArtworkInSearchAndLookup(null);
+        }
+    }
+
+    private void assertArtworkMapping(String artwork, String expected) {
+        setArtworkJson(new ObjectMapper().writeValueAsString(artwork));
+        assertArtworkInSearchAndLookup(expected);
+    }
+
+    private void setArtworkJson(String artworkJson) {
+        trackBody.set(TRACK_BODY.replace("\"https://example.test/cover\"", artworkJson));
+    }
+
+    private void assertArtworkInSearchAndLookup(String expected) {
+        var searched = client.search("테스트 노래").getFirst();
+        var lookedUp = client.lookup("123").orElseThrow();
+        assertThat(searched.album_cover_url()).isEqualTo(expected);
+        assertThat(lookedUp.album_cover_url()).isEqualTo(expected);
+        assertThat(searched.external_music_id()).isEqualTo("123");
+        assertThat(lookedUp.external_music_id()).isEqualTo("123");
+        assertThat(searched.provider()).isEqualTo("ITUNES");
+        assertThat(searched.title()).isEqualTo("테스트 노래");
+        assertThat(searched.artist_name()).isEqualTo("테스트 가수");
+        assertThat(searched.preview_url()).isEqualTo("https://example.test/preview");
     }
 
     @Test
