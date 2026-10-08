@@ -27,5 +27,8 @@ public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, 
             """)
     List<ChatRoomMember> findAllActiveByChatRoomIdForUpdate(@Param("roomId") Long roomId);
 
+    @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region", "user"})
+    Optional<ChatRoomMember> findByIdAndUser_IdAndChatRoom_Id(Long id, Long userId, Long roomId);
+
     long countByChatRoom_IdAndDeletedAtIsNull(Long roomId);
 }

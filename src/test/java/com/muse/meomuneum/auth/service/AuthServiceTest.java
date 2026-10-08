@@ -38,6 +38,7 @@ class AuthServiceTest {
     private UserAuthenticationService users;
     private RefreshTokenSessionService sessions;
     private AuthService service;
+    private org.springframework.context.ApplicationEventPublisher events;
     private User user;
 
     @BeforeEach
@@ -46,8 +47,9 @@ class AuthServiceTest {
         cookieFactory = mock(RefreshTokenCookieFactory.class);
         users = mock(UserAuthenticationService.class);
         sessions = new RefreshTokenSessionService();
+        events = mock(org.springframework.context.ApplicationEventPublisher.class);
         service = new AuthService(jwt, new JwtProperties("project-api", "project-api", "test-secret", 3600, 1209600),
-                cookieFactory, users, sessions);
+                cookieFactory, users, sessions, events);
         user = mock(User.class);
         when(user.getId()).thenReturn(1L);
     }
@@ -103,6 +105,7 @@ class AuthServiceTest {
         service.logout(request, headers);
 
         assertThat(request.getSession(false)).isNull();
+        verify(events).publishEvent(new ChatLogoutEvent(1L));
         verify(cookieFactory).deleteRefreshTokenCookie(headers);
     }
 
@@ -123,6 +126,7 @@ class AuthServiceTest {
                 .extracting(error -> ((AuthenticationFailedException) error).getErrorCode())
                 .isEqualTo(AuthErrorCode.LOGOUT_SESSION_MISMATCH);
         assertThat(session.isInvalid()).isFalse();
+        verify(events, never()).publishEvent(org.mockito.ArgumentMatchers.any(Object.class));
         verify(cookieFactory, never()).deleteRefreshTokenCookie(org.mockito.ArgumentMatchers.any());
     }
 

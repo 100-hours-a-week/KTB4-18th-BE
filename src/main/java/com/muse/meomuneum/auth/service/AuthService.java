@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 
@@ -35,16 +36,18 @@ public class AuthService {
     private final RefreshTokenCookieFactory refreshTokenCookieFactory;
     private final UserAuthenticationService userAuthenticationService;
     private final RefreshTokenSessionService refreshTokenSessionService;
+    private final ApplicationEventPublisher events;
 
     public AuthService(JwtTokenProvider jwtTokenProvider, JwtProperties jwtProperties,
             RefreshTokenCookieFactory refreshTokenCookieFactory,
             UserAuthenticationService userAuthenticationService,
-            RefreshTokenSessionService refreshTokenSessionService) {
+            RefreshTokenSessionService refreshTokenSessionService, ApplicationEventPublisher events) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
         this.refreshTokenCookieFactory = refreshTokenCookieFactory;
         this.userAuthenticationService = userAuthenticationService;
         this.refreshTokenSessionService = refreshTokenSessionService;
+        this.events = events;
     }
 
     public TokenResponse login(LoginRequest request, HttpServletRequest servletRequest, HttpHeaders headers) {
@@ -89,6 +92,8 @@ public class AuthService {
     public void logout(HttpServletRequest request, HttpHeaders headers) {
         Optional<TokenClaims> accessLocator = getAccessTokenLocator(request);
         Optional<RefreshTokenClaims> refreshLocator = getRefreshTokenLogoutLocator(request);
+        Long userId = accessLocator.map(TokenClaims::userId)
+                .orElseGet(() -> refreshLocator.map(RefreshTokenClaims::userId).orElse(null));
         HttpSession session = request.getSession(false);
         if (session != null) {
             synchronized (session) {
@@ -99,9 +104,15 @@ public class AuthService {
                 if (!accessMatches || !refreshMatches) {
                     throw new AuthenticationFailedException(AuthErrorCode.LOGOUT_SESSION_MISMATCH);
                 }
+                if (userId == null) {
+                    userId = (Long) session.getAttribute(RefreshTokenSessionService.USER_ID_ATTRIBUTE);
+                }
                 refreshTokenSessionService.clear(session);
                 session.invalidate();
             }
+        }
+        if (userId != null) {
+            events.publishEvent(new ChatLogoutEvent(userId));
         }
         refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
     }

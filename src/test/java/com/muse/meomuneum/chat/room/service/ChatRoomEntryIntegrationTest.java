@@ -5,12 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +41,10 @@ import com.muse.meomuneum.chat.room.repository.ChatRoomRepository;
 import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "chat.message-cleanup.enabled=false", "recommendation.ai.base-url=http://localhost:8000",
+        "speech.transcription.ai.base-url=http://localhost:8000",
+        "location.reverse-geocoding.base-url=http://localhost:8000"})
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
 class ChatRoomEntryIntegrationTest {
@@ -47,6 +53,18 @@ class ChatRoomEntryIntegrationTest {
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
             .withDatabaseName("meomuneum_chat_entry_test").withUsername("meomuneum_test")
             .withPassword("meomuneum_test");
+
+    @org.springframework.boot.test.web.server.LocalServerPort
+    private int port;
+
+    @Autowired
+    private org.springframework.context.ApplicationEventPublisher events;
+
+    @Autowired
+    private com.muse.meomuneum.global.security.JwtTokenProvider jwt;
+
+    @Autowired
+    private com.muse.meomuneum.user.repository.UserRepository users;
 
     @Autowired
     private ChatRoomEntryService service;
@@ -78,6 +96,9 @@ class ChatRoomEntryIntegrationTest {
 
     @BeforeEach
     void resetEntryState() {
+        jdbcTemplate.queryForList("SELECT id FROM users WHERE email LIKE 'chat-entry-%'", Long.class)
+                .forEach(service::leaveAll);
+        jdbcTemplate.update("DELETE FROM chat_bans");
         jdbcTemplate.update("DELETE FROM chat_room_members");
         jdbcTemplate.update("DELETE FROM users WHERE email LIKE 'chat-entry-%'");
         jdbcTemplate.update("UPDATE chat_rooms SET capacity = 25, status = 'ACTIVE'");
@@ -197,6 +218,157 @@ class ChatRoomEntryIntegrationTest {
 
         assertEquals(ChatRoomErrorCode.LOCATION_REGION_MISMATCH, exception.getErrorCode());
         assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(userId).isEmpty());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void twentySixSimultaneousJoinsAdmitExactlyTwentyFiveUsers() throws Exception {
+        ChatRoom room = roomFor("41135");
+        List<Callable<String>> tasks = new java.util.ArrayList<>();
+        for (int index = 0; index < 26; index++) {
+            Long userId = createUser("many-" + index);
+            String token = issueToken(userId, room.getRegion());
+            tasks.add(() -> joinOutcome(userId, room.getId(), token));
+        }
+        List<String> outcomes = runConcurrently(tasks.toArray(Callable[]::new));
+        assertEquals(25L, outcomes.stream().filter("joined"::equals).count());
+        assertEquals(1L, outcomes.stream().filter("full"::equals).count());
+    }
+
+    @Test
+    void staleLeaveDoesNotEndANewerMembershipAndAnotherUserCannotLeaveIt() {
+        Long userId = createUser("leave-owner");
+        Long otherId = createUser("leave-other");
+        ChatRoom room = roomFor("41135");
+        String token = issueToken(userId, room.getRegion());
+        Long previous = service.join(userId, room.getId(), token).membership().membershipId();
+        service.leave(userId, room.getId(), previous);
+        Long current = service.join(userId, room.getId(), token).membership().membershipId();
+        service.leave(userId, room.getId(), previous);
+        assertEquals(current, memberRepository.findByUser_IdAndDeletedAtIsNull(userId).orElseThrow().getId());
+        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                () -> service.leave(otherId, room.getId(), current));
+    }
+
+    @Test
+    void bannedUsersCannotJoinConnectOrSubscribe() {
+        Long userId = createUser("banned");
+        ChatRoom room = roomFor("41135");
+        String token = issueToken(userId, room.getRegion());
+        Long membershipId = service.join(userId, room.getId(), token).membership().membershipId();
+        service.connect(userId, room.getId(), membershipId, "session");
+        jdbcTemplate.update("""
+                INSERT INTO chat_bans (user_id, reason, created_at, expires_at)
+                VALUES (?, 'PROFANITY', UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 7 DAY))
+                """, userId);
+        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                () -> service.join(userId, room.getId(), token));
+        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                () -> service.connect(userId, room.getId(), membershipId, "second"));
+        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                () -> service.authorizeConnection(userId, room.getId(), membershipId, "session"));
+    }
+
+    @Test
+    void browserStompAuthenticatesReceivesSubscriptionReceiptAndAccountWideLeaveClosesBothSockets()
+            throws Exception {
+        Long userId = createUser("websocket");
+        ChatRoom room = roomFor("41135");
+        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+                .membership().membershipId();
+        SocketProbe first = connectSocket(userId, room.getId(), membershipId);
+        SocketProbe second = connectSocket(userId, room.getId(), membershipId);
+        try {
+            first.socket.sendText("SUBSCRIBE\nid:room\ndestination:/topic/chat-rooms/" + room.getId()
+                    + "\nreceipt:ready\n\n\u0000", true).join();
+            assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("receipt-id:ready"));
+            service.leave(userId, room.getId(), membershipId);
+            assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
+            assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
+            org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                    () -> service.connect(userId, room.getId(), membershipId, "late"));
+        } finally {
+            first.socket.abort();
+            second.socket.abort();
+        }
+    }
+
+    @Test
+    void browserStompRejectsSubscriptionsToAnotherRoom() throws Exception {
+        Long userId = createUser("cross-room");
+        ChatRoom room = roomFor("41135");
+        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+                .membership().membershipId();
+        SocketProbe probe = connectSocket(userId, room.getId(), membershipId);
+        try {
+            probe.socket.sendText("SUBSCRIBE\nid:other\ndestination:/topic/chat-rooms/999999\n\n\u0000", true).join();
+            assertTrue(probe.frames.poll(5, TimeUnit.SECONDS).startsWith("ERROR"));
+        } finally {
+            probe.socket.abort();
+        }
+    }
+
+    @Test
+    void logoutEndsMembershipAndAllAccountConnections() throws Exception {
+        Long userId = createUser("logout");
+        ChatRoom room = roomFor("41135");
+        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+                .membership().membershipId();
+        SocketProbe first = connectSocket(userId, room.getId(), membershipId);
+        SocketProbe second = connectSocket(userId, room.getId(), membershipId);
+        try {
+            events.publishEvent(new com.muse.meomuneum.auth.service.ChatLogoutEvent(userId));
+            assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
+            assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
+            assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(userId).isEmpty());
+        } finally {
+            first.socket.abort();
+            second.socket.abort();
+        }
+    }
+
+    private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId) throws Exception {
+        SocketProbe probe = new SocketProbe();
+        probe.socket = java.net.http.HttpClient.newHttpClient().newWebSocketBuilder()
+                .header("Origin", "http://localhost:5174").subprotocols("v12.stomp")
+                .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), probe).get(5, TimeUnit.SECONDS);
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow());
+        probe.socket.sendText("CONNECT\naccept-version:1.2\nheart-beat:0,0\nAuthorization:Bearer " + token
+                + "\nroom_id:" + roomId + "\nmembership_id:" + membershipId + "\n\n\u0000", true).join();
+        assertTrue(probe.frames.poll(5, TimeUnit.SECONDS).startsWith("CONNECTED"));
+        return probe;
+    }
+
+    private static final class SocketProbe implements java.net.http.WebSocket.Listener {
+        private java.net.http.WebSocket socket;
+        private final BlockingQueue<String> frames = new LinkedBlockingQueue<>();
+        private final CompletableFuture<Integer> closed = new CompletableFuture<>();
+        private final StringBuilder text = new StringBuilder();
+
+        @Override
+        public java.util.concurrent.CompletionStage<?> onText(java.net.http.WebSocket socket, CharSequence data,
+                boolean last) {
+            text.append(data);
+            if (last) {
+                frames.add(text.toString());
+                text.setLength(0);
+            }
+            socket.request(1);
+            return null;
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<?> onBinary(java.net.http.WebSocket socket,
+                java.nio.ByteBuffer data, boolean last) {
+            return onText(socket, java.nio.charset.StandardCharsets.UTF_8.decode(data), last);
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<?> onClose(java.net.http.WebSocket socket, int status,
+                String reason) {
+            closed.complete(status);
+            return null;
+        }
     }
 
     private String joinOutcome(Long userId, Long roomId, String token) {

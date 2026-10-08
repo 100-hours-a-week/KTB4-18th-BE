@@ -50,7 +50,7 @@ class RefreshTokenRotationMvcTest {
         when(user.getRole()).thenReturn(UserRole.USER);
         when(users.findActiveUser(1L)).thenReturn(user);
         AuthService authService = new AuthService(jwt, properties, new RefreshTokenCookieFactory(properties, true),
-                users, sessions);
+                users, sessions, mock(org.springframework.context.ApplicationEventPublisher.class));
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, mock(CsrfTokenService.class)))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
     }

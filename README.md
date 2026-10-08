@@ -588,3 +588,42 @@ STT 결과 자체는 길이로 제한하거나 전사 실패 처리하지 않습
 DB prompt 보존, AI 전달 내용 일치, 초과 요청의 세션 생성 및 AI 호출 차단을 검증합니다.
 AI 제공자는 테스트 대역이며 실제 AI 서버와 운영 배포 환경은 별도 검증 대상입니다.
 관련 프론트엔드 이슈: https://github.com/100-hours-a-week/KTB4-18th-FE/issues/104
+
+## 지역 채팅 입퇴장과 접속 정원 (#140)
+
+REST 계약은 [chat-participation.openapi.yaml](api/chat-participation.openapi.yaml)을 따른다.
+위치 토큰은 기존 발급자의 서명·소유자·5분 유효기간과 SIGUNGU를 검증한다.
+입장 시 활성 사용자·방·제재를 확인하고, 신규 참여는 201, 같은 활성 참여는 200을 반환한다.
+퇴장은 `DELETE /api/v1/chat-rooms/{room_id}/members/me?membership_id={membership_id}`다.
+자신의 참여 이력을 확인하며 종료된 이전 이력을 다시 퇴장해도 새 이력에 영향을 주지 않는다.
+확정된 지역 이동은 이전 참여를 먼저 종료하므로 새 방 정원 초과에도 되돌리지 않는다.
+
+단일 서버 메모리에서 연결·30초 예약·30초 유예의 사용자 합집합을 정원으로 계산한다.
+REST 응답 직후 예약하고 첫 연결에서 접속으로 전환한다. 같은 사용자의 여러 연결은 1명이다.
+마지막 연결 종료에서만 유예가 시작되며, 예약·유예 경계 이후 다음 정원 계산에서 즉시 자리를 회수한다.
+이때 DB 참여 이력은 종료하지 않는다. 기한 후 재연결도 활성 이력과 제재·정원을 새로 확인한다.
+DB 트랜잭션이 실제 커밋된 다음 메모리를 반영하며 서버 내부에서 이 전환들을 직렬화한다.
+여러 애플리케이션 인스턴스 또는 Redis로 확장하는 용도로 사용할 수 없다.
+
+WebSocket은 네이티브 STOMP 1.2 `/ws`다. handshake URL에 토큰을 넣지 않는다.
+CONNECT 헤더는 `Authorization: Bearer {access_token}`, `room_id`, `membership_id`다.
+HTTP upgrade만 허용하고 실제 참여 인증은 CONNECT에서 처리한다. Origin은 기존
+`AUTH_CORS_ALLOWED_ORIGINS` 목록으로 제한한다. 수신 토큰 헤더는 즉시 제거해 오류 로그에 남기지 않는다.
+본인 방 `/topic/chat-rooms/{room_id}`와 `/user/queue/chat-status`만 구독할 수 있다.
+CONNECT·SUBSCRIBE에서 사용자·방·이력·제재를 다시 확인하고 임의 broker SEND를 차단한다.
+메시지 송수신은 후속 #141 범위로 아직 제공하지 않는다.
+
+방 SUBSCRIBE에 `receipt`를 보내면 simple broker 등록 완료 후 `RECEIPT receipt-id`를 반환한다.
+프론트는 CONNECTED만으로 준비 상태가 되지 않고 이 receipt까지 기다린다.
+재연결마다 새 Bearer 토큰을 전달한다. heartbeat는 양방향 10초이며, 열린 연결의 토큰 만료·참여
+권한·제재도 10초마다 확인한다. 별도의 자동 탐지 목록/판정은 이번 작업에 없다.
+실제 퇴장·지역 이동·로그아웃은 계정의 모든 해당 연결 권한을 종료하고 `4100 CHAT_LEFT`로 닫는다.
+제재 연결 정리는 `4101 CHAT_BANNED`, 토큰 만료는 `4102 AUTH_REQUIRED`다.
+처리 거부의 STOMP ERROR message는 `CHAT_FULL`, `CHAT_BANNED`, `CHAT_LEFT`, `AUTH_REQUIRED` 중 하나다.
+메시지 처리 단계에서 제재를 확정하는 #141은 저장 커밋 후 `leaveAll(userId, 4101, "CHAT_BANNED")`를
+호출해 즉시 모든 연결을 종료해야 한다. 저장 트랜잭션 내부에서 런타임 잠금을 취하지 않는다.
+
+배포는 BE를 먼저 적용한 뒤 FE #133을 적용한다. 프록시의 `/ws` upgrade 전달과 허용 Origin,
+26명 동시 진입, 다중 기기 1자리, 다른 방 구독 거부, 전체 퇴장 및 30초 단절을 스테이징에서 확인한다.
+롤백은 FE를 먼저 복구하고 BE를 복구한다. DB migration은 추가하지 않았으며 서버 재시작은
+연결/예약/유예 메모리를 초기화한다. 활성 DB 이력만으로 접속 자리 또는 과거 메시지 조회를 허용하지 않는다.
