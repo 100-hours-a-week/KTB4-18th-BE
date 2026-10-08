@@ -12,8 +12,10 @@ public class ChatStompErrorHandler extends StompSubProtocolErrorHandler {
     @Override
     public Message<byte[]> handleClientMessageProcessingError(Message<byte[]> clientMessage, Throwable exception) {
         String code = "AUTH_REQUIRED";
+        java.time.OffsetDateTime bannedUntil = null;
         for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
             if (cause instanceof ChatRoomException chatException) {
+                bannedUntil = chatException.getBannedUntil();
                 code = switch (chatException.getErrorCode()) {
                     case CHAT_BANNED -> "CHAT_BANNED";
                     case CHAT_ROOM_CAPACITY_EXCEEDED -> "CHAT_FULL";
@@ -24,6 +26,9 @@ public class ChatStompErrorHandler extends StompSubProtocolErrorHandler {
         }
         StompHeaderAccessor headers = StompHeaderAccessor.create(StompCommand.ERROR);
         headers.setMessage(code);
+        if (bannedUntil != null) {
+            headers.setNativeHeader("banned_until", bannedUntil.toString());
+        }
         return MessageBuilder.createMessage(new byte[0], headers.getMessageHeaders());
     }
 }
