@@ -55,7 +55,19 @@ paths:
               schema: { $ref: '#/components/schemas/MembershipResponse' }
         '400': { description: Invalid, expired, foreign-owner or region-mismatched location token }
         '401': { description: Authentication required }
-        '403': { description: Inactive user or active chat ban; ban message is chat use banned }
+        '403':
+          description: Inactive user or active chat ban; ban message is chat use banned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data:
+                    type: object
+                    nullable: true
+                    properties:
+                      banned_until: { type: string, format: date-time, description: UTC ban expiry when actively banned }
         '404': { description: Active room not found }
         '409': { description: Connected plus reserved plus grace users have reached capacity }
   /api/v1/chat-rooms/{room_id}/members/me:
