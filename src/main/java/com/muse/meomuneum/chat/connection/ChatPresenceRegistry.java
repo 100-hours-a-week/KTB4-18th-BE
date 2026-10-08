@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties;
@@ -22,18 +23,22 @@ public class ChatPresenceRegistry {
 
     private final Clock clock;
     private final ChatTransmissionPolicy transmission;
+    private final ApplicationEventPublisher events;
+    private final Map<Long, Long> revisions = new HashMap<>();
     private final Map<Long, Seat> seats = new HashMap<>();
 
     public ChatPresenceRegistry(Clock clock) {
         this(clock, new ChatTransmissionPolicy(clock,
-                new ChatMessagePolicyProperties.Rules(null, true, true, null, null)));
+                new ChatMessagePolicyProperties.Rules(null, true, true, null, null)), event -> {
+                });
     }
 
     @Autowired
     public ChatPresenceRegistry(Clock clock,
-            ChatTransmissionPolicy transmission) {
+            ChatTransmissionPolicy transmission, ApplicationEventPublisher events) {
         this.clock = clock;
         this.transmission = transmission;
+        this.events = events;
     }
 
     public synchronized <T> T exclusive(Supplier<T> work) {
@@ -63,16 +68,20 @@ public class ChatPresenceRegistry {
         }
         reserve(userId, roomId, membershipId);
         Seat seat = seats.get(userId);
+        int previousCount = connectedCount(roomId);
         seat.sessions.add(sessionId);
         seat.expiresAt = null;
+        changed(roomId, previousCount);
     }
 
     public synchronized void disconnect(String sessionId) {
         for (Seat seat : seats.values()) {
+            int previousCount = connectedCount(seat.roomId);
             seat.subscriptions.remove(sessionId);
             if (seat.sessions.remove(sessionId) && seat.sessions.isEmpty()) {
                 seat.expiresAt = clock.instant().plusSeconds(30);
             }
+            changed(seat.roomId, previousCount);
         }
     }
 
@@ -87,7 +96,9 @@ public class ChatPresenceRegistry {
         if (seat == null || !seat.membershipId.equals(membershipId)) {
             return Set.of();
         }
+        int previousCount = connectedCount(seat.roomId);
         seats.remove(userId);
+        changed(seat.roomId, previousCount);
         return Set.copyOf(seat.sessions);
     }
 
@@ -118,6 +129,44 @@ public class ChatPresenceRegistry {
         return seats.values().stream().filter(seat -> seat.roomId.equals(roomId) && seat.sessions.contains(sessionId))
                 .anyMatch(seat -> seat.subscriptions.getOrDefault(sessionId, Map.of()).values()
                         .contains("/topic/chat-rooms/" + roomId));
+    }
+
+    public synchronized int connectedCount(Long roomId) {
+        return (int) seats.values().stream().filter(seat -> seat.roomId.equals(roomId) && !seat.sessions.isEmpty())
+                .count();
+    }
+
+    private void changed(Long roomId, int previousCount) {
+        int count = connectedCount(roomId);
+        if (previousCount != count) {
+            revisions.merge(roomId, 1L, Long::sum);
+            events.publishEvent(new ChatPresenceChangedEvent(roomId, count, revisions.get(roomId), null, null));
+        }
+    }
+
+    public synchronized void sendSnapshot(String sessionId, String subscriptionId, String destination) {
+        seats.values().stream().filter(seat -> seat.sessions.contains(sessionId)
+                && destination.equals("/topic/chat-rooms/" + seat.roomId))
+                .forEach(seat -> events
+                        .publishEvent(new ChatPresenceChangedEvent(seat.roomId, connectedCount(seat.roomId),
+                                revisions.getOrDefault(seat.roomId, 0L), sessionId, subscriptionId)));
+    }
+
+    public synchronized Map<String, Set<String>> roomSubscriptions(Long roomId) {
+        Map<String, Set<String>> result = new HashMap<>();
+        seats.values().stream().filter(seat -> seat.roomId.equals(roomId))
+                .forEach(seat -> seat.subscriptions.forEach((session, subscriptions) -> {
+                    Set<String> ids = new HashSet<>();
+                    subscriptions.forEach((id, destination) -> {
+                        if (destination.equals("/topic/chat-rooms/" + roomId)) {
+                            ids.add(id);
+                        }
+                    });
+                    if (!ids.isEmpty()) {
+                        result.put(session, Set.copyOf(ids));
+                    }
+                }));
+        return Map.copyOf(result);
     }
 
     private static final class Seat {

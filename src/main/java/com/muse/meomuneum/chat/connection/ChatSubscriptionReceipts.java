@@ -41,7 +41,11 @@ public class ChatSubscriptionReceipts implements ExecutorChannelInterceptor {
                         || incoming.getDestination().startsWith("/queue/"))) {
             return;
         }
-        presence.subscribed(incoming.getSessionId(), incoming.getSubscriptionId(), incoming.getDestination());
+        presence.exclusive(() -> {
+            presence.subscribed(incoming.getSessionId(), incoming.getSubscriptionId(), incoming.getDestination());
+            presence.sendSnapshot(incoming.getSessionId(), incoming.getSubscriptionId(), incoming.getDestination());
+            return null;
+        });
         if (incoming.getReceipt() == null) {
             return;
         }

@@ -460,6 +460,69 @@ class ChatRoomEntryIntegrationTest {
         }
     }
 
+    @Test
+    void presenceSnapshotChangesDeduplicateConnectionsAndExcludeGraceAndOtherRooms() throws Exception {
+        Long owner = createUser("presence-one");
+        Long other = createUser("presence-two");
+        Long outsider = createUser("presence-other");
+        ChatRoom room = roomFor("41135");
+        ChatRoom otherRoom = roomFor("11680");
+        Long ownMembership = service.join(owner, room.getId(), issueToken(owner, room.getRegion()))
+                .membership().membershipId();
+        Long otherMembership = service.join(other, room.getId(), issueToken(other, room.getRegion()))
+                .membership().membershipId();
+        Long outsiderMembership = service.join(outsider, otherRoom.getId(), issueToken(outsider, otherRoom.getRegion()))
+                .membership().membershipId();
+        SocketProbe first = connectSocket(owner, room.getId(), ownMembership);
+        SocketProbe second = null;
+        SocketProbe device = null;
+        SocketProbe outside = null;
+        try {
+            subscribeMessages(first, room.getId());
+            assertPresence(first, 1);
+            second = connectSocket(other, room.getId(), otherMembership);
+            assertPresence(first, 2);
+            subscribeMessages(second, room.getId());
+            assertPresence(second, 2);
+            device = connectSocket(other, room.getId(), otherMembership);
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            second.socket.abort();
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            device.socket.abort();
+            assertPresence(first, 1);
+            device = connectSocket(other, room.getId(), otherMembership);
+            assertPresence(first, 2);
+            subscribeMessages(device, room.getId());
+            assertPresence(device, 2);
+            outside = connectSocket(outsider, otherRoom.getId(), outsiderMembership);
+            subscribeMessages(outside, otherRoom.getId());
+            assertPresence(outside, 1);
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            service.leave(other, room.getId(), otherMembership);
+            assertPresence(first, 1);
+            assertEquals(4100, device.closed.get(5, TimeUnit.SECONDS));
+            assertEquals(null, outside.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+        } finally {
+            first.socket.abort();
+            if (second != null) {
+                second.socket.abort();
+            }
+            if (device != null) {
+                device.socket.abort();
+            }
+            if (outside != null) {
+                outside.socket.abort();
+            }
+        }
+    }
+
+    private void assertPresence(SocketProbe probe, int count) throws Exception {
+        String frame = probe.presenceFrames.poll(5, TimeUnit.SECONDS);
+        assertTrue(frame != null, "expected presence event");
+        assertTrue(frame.contains("\"connected_count\":" + count));
+        assertTrue(frame.contains("\"version\":"));
+    }
+
     private String nextFrame(SocketProbe probe) throws Exception {
         String frame = probe.frames.poll(5, TimeUnit.SECONDS);
         assertTrue(frame != null, "expected a STOMP frame");
@@ -496,6 +559,7 @@ class ChatRoomEntryIntegrationTest {
 
     private static final class SocketProbe implements java.net.http.WebSocket.Listener {
         private java.net.http.WebSocket socket;
+        private final BlockingQueue<String> presenceFrames = new LinkedBlockingQueue<>();
         private final BlockingQueue<String> frames = new LinkedBlockingQueue<>();
         private final CompletableFuture<Integer> closed = new CompletableFuture<>();
         private String closeReason;
@@ -506,7 +570,11 @@ class ChatRoomEntryIntegrationTest {
                 boolean last) {
             text.append(data);
             if (last) {
-                frames.add(text.toString());
+                if (text.toString().contains("CHAT_PRESENCE")) {
+                    presenceFrames.add(text.toString());
+                } else {
+                    frames.add(text.toString());
+                }
                 text.setLength(0);
             }
             socket.request(1);
