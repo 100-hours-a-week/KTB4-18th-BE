@@ -18,6 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
+import com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
@@ -31,14 +32,16 @@ public class ChatStompInterceptor implements ChannelInterceptor {
     private final ChatRoomEntryService entry;
     private final Clock clock;
     private final ChatSocketSessions sockets;
+    private final ChatMessageDeliveryService delivery;
     private final Map<String, Identity> identities = new ConcurrentHashMap<>();
 
     public ChatStompInterceptor(JwtTokenProvider tokens, ChatRoomEntryService entry, Clock clock,
-            ChatSocketSessions sockets) {
+            ChatSocketSessions sockets, ChatMessageDeliveryService delivery) {
         this.tokens = tokens;
         this.entry = entry;
         this.clock = clock;
         this.sockets = sockets;
+        this.delivery = delivery;
     }
 
     @Override
@@ -48,6 +51,22 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             return message;
         }
         Map<String, Object> attributes = headers.getSessionAttributes();
+        if (headers.getCommand() == StompCommand.SEND) {
+            Identity sender = attributes == null ? null : (Identity) attributes.get("chat.identity");
+            if (sender == null || !sender.expiresAt().isAfter(clock.instant())) {
+                sockets.close(Set.of(headers.getSessionId()), 4102, "AUTH_REQUIRED");
+            } else {
+                try {
+                    delivery.send(sender.userId(), sender.roomId(), sender.membershipId(), headers.getSessionId(),
+                            headers.getDestination(),
+                            message.getPayload() instanceof byte[] bytes ? bytes : new byte[0]);
+                } catch (RuntimeException unavailable) {
+                    // Never let framework exception logging include a rejected SEND payload.
+                    sockets.close(Set.of(headers.getSessionId()), 4103, "SEND_FAILED");
+                }
+            }
+            return null;
+        }
         if (attributes == null) {
             throw new IllegalArgumentException("AUTH_REQUIRED");
         }
@@ -82,7 +101,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
         if (headers.getCommand() == StompCommand.SUBSCRIBE) {
             String destination = headers.getDestination();
             if (!("/topic/chat-rooms/" + identity.roomId()).equals(destination)
-                    && !"/user/queue/chat-status".equals(destination)) {
+                    && !"/user/queue/chat-status".equals(destination)
+                    && !"/user/queue/chat-events".equals(destination)) {
                 throw new IllegalArgumentException("CHAT_DESTINATION_DENIED");
             }
         } else if (headers.getCommand() != StompCommand.UNSUBSCRIBE) {
@@ -109,7 +129,7 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                         sessionId);
             } catch (ChatRoomException exception) {
                 if (exception.getErrorCode() == ChatRoomErrorCode.CHAT_BANNED) {
-                    entry.leaveAll(identity.userId(), 4101, "CHAT_BANNED");
+                    entry.leaveAll(identity.userId(), 4101, "CHAT_BANNED|" + exception.getBannedUntil());
                 } else {
                     sockets.close(Set.of(sessionId), 4100, "CHAT_LEFT");
                 }

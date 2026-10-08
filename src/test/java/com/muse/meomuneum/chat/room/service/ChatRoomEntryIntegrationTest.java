@@ -98,6 +98,7 @@ class ChatRoomEntryIntegrationTest {
     void resetEntryState() {
         jdbcTemplate.queryForList("SELECT id FROM users WHERE email LIKE 'chat-entry-%'", Long.class)
                 .forEach(service::leaveAll);
+        jdbcTemplate.update("DELETE FROM chat_room_messages");
         jdbcTemplate.update("DELETE FROM chat_bans");
         jdbcTemplate.update("DELETE FROM chat_room_members");
         jdbcTemplate.update("DELETE FROM users WHERE email LIKE 'chat-entry-%'");
@@ -327,6 +328,160 @@ class ChatRoomEntryIntegrationTest {
         }
     }
 
+    @Test
+    void textDeliveryAcknowledgesOnceAndNeverReplaysToLaterOrOtherRoomSubscribers() throws Exception {
+        Long firstId = createUser("message-first");
+        Long secondId = createUser("message-second");
+        Long thirdId = createUser("message-third");
+        ChatRoom room = roomFor("41135");
+        ChatRoom otherRoom = roomFor("11680");
+        Long firstMembership = service.join(firstId, room.getId(), issueToken(firstId, room.getRegion()))
+                .membership().membershipId();
+        Long secondMembership = service.join(secondId, room.getId(), issueToken(secondId, room.getRegion()))
+                .membership().membershipId();
+        Long thirdMembership = service.join(thirdId, otherRoom.getId(), issueToken(thirdId, otherRoom.getRegion()))
+                .membership().membershipId();
+        SocketProbe first = connectSocket(firstId, room.getId(), firstMembership);
+        SocketProbe second = connectSocket(secondId, room.getId(), secondMembership);
+        SocketProbe third = connectSocket(thirdId, otherRoom.getId(), thirdMembership);
+        try {
+            subscribeMessages(first, room.getId());
+            subscribeMessages(third, otherRoom.getId());
+            String id = java.util.UUID.randomUUID().toString();
+            sendMessage(first, room.getId(), id, "hello");
+            assertTrue(nextFrame(first).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            assertEquals(1L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Long.class));
+            assertEquals(null, second.frames.poll(150, TimeUnit.MILLISECONDS));
+            assertEquals(null, third.frames.poll(150, TimeUnit.MILLISECONDS));
+            subscribeMessages(second, room.getId());
+            assertEquals(null, second.frames.poll(150, TimeUnit.MILLISECONDS));
+            sendMessage(first, room.getId(), id, "hello");
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            assertEquals(null, second.frames.poll(150, TimeUnit.MILLISECONDS));
+            Thread.sleep(1050);
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "next");
+            assertTrue(nextFrame(first).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            String received = nextFrame(second);
+            assertTrue(received.contains("CHAT_MESSAGE"));
+            assertTrue(received.contains("message-firs"));
+            assertTrue(received.contains("created_at"));
+            assertEquals(null, third.frames.poll(150, TimeUnit.MILLISECONDS));
+        } finally {
+            first.socket.abort();
+            second.socket.abort();
+            third.socket.abort();
+        }
+    }
+
+    @Test
+    void normalRejectionsDoNotStoreBroadcastOrDisconnectAndMembershipCountsSurviveReconnect() throws Exception {
+        Long userId = createUser("message-block");
+        ChatRoom room = roomFor("41135");
+        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+                .membership().membershipId();
+        SocketProbe first = connectSocket(userId, room.getId(), membershipId);
+        try {
+            subscribeMessages(first, room.getId());
+            for (String text : List.of("", "x".repeat(301), "https://example.com", "010-0000-0000")) {
+                sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), text);
+                assertTrue(nextFrame(first).contains("CHAT_REJECTED"));
+            }
+            String firstId = java.util.UUID.randomUUID().toString();
+            sendMessage(first, room.getId(), firstId, "repeat");
+            assertTrue(nextFrame(first).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "fast");
+            assertTrue(nextFrame(first).contains("RATE_LIMIT"));
+            Thread.sleep(1050);
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "repeat");
+            assertTrue(nextFrame(first).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            first.socket.abort();
+            SocketProbe reconnect = connectSocket(userId, room.getId(), membershipId);
+            try {
+                subscribeMessages(reconnect, room.getId());
+                Thread.sleep(1050);
+                sendMessage(reconnect, room.getId(), java.util.UUID.randomUUID().toString(), "repeat");
+                assertTrue(nextFrame(reconnect).contains("DUPLICATE_CONTENT"));
+                sendMessage(reconnect, room.getId(), firstId, "changed");
+                assertTrue(nextFrame(reconnect).contains("CLIENT_ID_CONFLICT"));
+                assertEquals(2L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Long.class));
+                assertFalse(reconnect.closed.isDone());
+            } finally {
+                reconnect.socket.abort();
+            }
+        } finally {
+            first.socket.abort();
+        }
+    }
+
+    @Test
+    void reviewedProfanityBansAllAccountConnectionsAndBlocksEveryRoomWithoutStoringText() throws Exception {
+        Long offenderId = createUser("message-ban");
+        Long observerId = createUser("message-watch");
+        ChatRoom room = roomFor("41135");
+        Long membershipId = service.join(offenderId, room.getId(), issueToken(offenderId, room.getRegion()))
+                .membership().membershipId();
+        Long observerMembership = service.join(observerId, room.getId(), issueToken(observerId, room.getRegion()))
+                .membership().membershipId();
+        SocketProbe first = connectSocket(offenderId, room.getId(), membershipId);
+        SocketProbe second = connectSocket(offenderId, room.getId(), membershipId);
+        SocketProbe observer = connectSocket(observerId, room.getId(), observerMembership);
+        try {
+            subscribeMessages(first, room.getId());
+            subscribeMessages(second, room.getId());
+            subscribeMessages(observer, room.getId());
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "씨발");
+            assertEquals(4101, first.closed.get(5, TimeUnit.SECONDS));
+            assertEquals(4101, second.closed.get(5, TimeUnit.SECONDS));
+            assertTrue(first.closeReason.startsWith("CHAT_BANNED|"));
+            assertTrue(second.closeReason.startsWith("CHAT_BANNED|"));
+            assertEquals(null, observer.frames.poll(150, TimeUnit.MILLISECONDS));
+            assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Long.class));
+            assertEquals(1L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_bans", Long.class));
+            assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(offenderId).isEmpty());
+            assertEquals(7, jdbcTemplate.queryForObject(
+                    "SELECT TIMESTAMPDIFF(DAY, created_at, expires_at) FROM chat_bans", Integer.class));
+            ChatRoom otherRoom = roomFor("11680");
+            ChatRoomException denied = org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
+                    () -> service.join(offenderId, otherRoom.getId(), issueToken(offenderId, otherRoom.getRegion())));
+            assertEquals(ChatRoomErrorCode.CHAT_BANNED, denied.getErrorCode());
+            assertTrue(denied.getBannedUntil() != null);
+            jdbcTemplate
+                    .update("UPDATE chat_bans SET created_at = DATE_SUB(NOW(), INTERVAL 7 DAY), expires_at = NOW()");
+            assertTrue(service.join(offenderId, otherRoom.getId(), issueToken(offenderId, otherRoom.getRegion()))
+                    .created());
+        } finally {
+            first.socket.abort();
+            second.socket.abort();
+            observer.socket.abort();
+        }
+    }
+
+    private String nextFrame(SocketProbe probe) throws Exception {
+        String frame = probe.frames.poll(5, TimeUnit.SECONDS);
+        assertTrue(frame != null, "expected a STOMP frame");
+        return frame;
+    }
+
+    private void subscribeMessages(SocketProbe probe, Long roomId) throws Exception {
+        probe.socket.sendText("SUBSCRIBE\nid:room\ndestination:/topic/chat-rooms/" + roomId
+                + "\nreceipt:room\n\n\u0000", true).join();
+        assertTrue(nextFrame(probe).startsWith("RECEIPT"));
+        probe.socket.sendText("SUBSCRIBE\nid:events\ndestination:/user/queue/chat-events"
+                + "\nreceipt:events\n\n\u0000", true).join();
+        assertTrue(nextFrame(probe).startsWith("RECEIPT"));
+    }
+
+    private void sendMessage(SocketProbe probe, Long roomId, String id, String content) throws Exception {
+        String body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+                java.util.Map.of("client_message_id", id, "content", content));
+        probe.socket.sendText("SEND\ndestination:/app/chat-rooms/" + roomId
+                + "/messages\ncontent-type:application/json\n\n" + body + "\u0000", true).join();
+    }
+
     private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId) throws Exception {
         SocketProbe probe = new SocketProbe();
         probe.socket = java.net.http.HttpClient.newHttpClient().newWebSocketBuilder()
@@ -343,6 +498,7 @@ class ChatRoomEntryIntegrationTest {
         private java.net.http.WebSocket socket;
         private final BlockingQueue<String> frames = new LinkedBlockingQueue<>();
         private final CompletableFuture<Integer> closed = new CompletableFuture<>();
+        private String closeReason;
         private final StringBuilder text = new StringBuilder();
 
         @Override
@@ -366,6 +522,7 @@ class ChatRoomEntryIntegrationTest {
         @Override
         public java.util.concurrent.CompletionStage<?> onClose(java.net.http.WebSocket socket, int status,
                 String reason) {
+            closeReason = reason;
             closed.complete(status);
             return null;
         }

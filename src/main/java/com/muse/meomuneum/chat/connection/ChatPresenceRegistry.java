@@ -8,8 +8,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties;
+import com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 
@@ -18,10 +21,19 @@ import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 public class ChatPresenceRegistry {
 
     private final Clock clock;
+    private final ChatTransmissionPolicy transmission;
     private final Map<Long, Seat> seats = new HashMap<>();
 
     public ChatPresenceRegistry(Clock clock) {
+        this(clock, new ChatTransmissionPolicy(clock,
+                new ChatMessagePolicyProperties.Rules(null, true, true, null, null)));
+    }
+
+    @Autowired
+    public ChatPresenceRegistry(Clock clock,
+            ChatTransmissionPolicy transmission) {
         this.clock = clock;
+        this.transmission = transmission;
     }
 
     public synchronized <T> T exclusive(Supplier<T> work) {
@@ -57,6 +69,7 @@ public class ChatPresenceRegistry {
 
     public synchronized void disconnect(String sessionId) {
         for (Seat seat : seats.values()) {
+            seat.subscriptions.remove(sessionId);
             if (seat.sessions.remove(sessionId) && seat.sessions.isEmpty()) {
                 seat.expiresAt = clock.instant().plusSeconds(30);
             }
@@ -69,6 +82,7 @@ public class ChatPresenceRegistry {
     }
 
     public synchronized Set<String> remove(Long userId, Long membershipId) {
+        transmission.ended(membershipId);
         Seat seat = seats.get(userId);
         if (seat == null || !seat.membershipId.equals(membershipId)) {
             return Set.of();
@@ -82,10 +96,35 @@ public class ChatPresenceRegistry {
         seats.values().removeIf(seat -> seat.expiresAt != null && !seat.expiresAt.isAfter(now));
     }
 
+    public synchronized void subscribed(String sessionId, String subscriptionId, String destination) {
+        seats.values().stream().filter(seat -> seat.sessions.contains(sessionId))
+                .forEach(seat -> seat.subscriptions.computeIfAbsent(sessionId, ignored -> new HashMap<>())
+                        .put(subscriptionId, destination));
+    }
+
+    public synchronized void unsubscribed(String sessionId, String subscriptionId) {
+        seats.values().forEach(seat -> seat.subscriptions.getOrDefault(sessionId, new HashMap<>())
+                .remove(subscriptionId));
+    }
+
+    public synchronized Set<String> recipients(Long roomId) {
+        Set<String> result = new HashSet<>();
+        seats.values().stream().filter(seat -> seat.roomId.equals(roomId)).forEach(seat -> seat.sessions.stream()
+                .filter(session -> hasRoomSubscription(session, roomId)).forEach(result::add));
+        return Set.copyOf(result);
+    }
+
+    public synchronized boolean hasRoomSubscription(String sessionId, Long roomId) {
+        return seats.values().stream().filter(seat -> seat.roomId.equals(roomId) && seat.sessions.contains(sessionId))
+                .anyMatch(seat -> seat.subscriptions.getOrDefault(sessionId, Map.of()).values()
+                        .contains("/topic/chat-rooms/" + roomId));
+    }
+
     private static final class Seat {
         private final Long roomId;
         private final Long membershipId;
         private final Set<String> sessions = new HashSet<>();
+        private final Map<String, Map<String, String>> subscriptions = new HashMap<>();
         private Instant expiresAt;
 
         private Seat(Long roomId, Long membershipId, Instant expiresAt) {
