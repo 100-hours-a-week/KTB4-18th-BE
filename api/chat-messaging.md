@@ -16,6 +16,8 @@ STOMP 1.2 `/ws`. CONNECT의 Authorization Bearer, room_id, membership_id로 계�
 
 ## 이벤트
 
+접속 인원 최초 조회·변경 알림 `CHAT_PRESENCE`는 [접속 인원 계약](chat-presence.md)을 따른다.
+
 모두 `{ "type": "이벤트명", "data": {...} }`. 시각은 UTC ISO-8601. author/client_message_id는 서버가 인증 계정과 저장 결과로 설정한다.
 
 `CHAT_MESSAGE` 방 topic의 data:
