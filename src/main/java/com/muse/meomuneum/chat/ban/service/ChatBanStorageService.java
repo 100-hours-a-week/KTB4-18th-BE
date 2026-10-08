@@ -2,8 +2,10 @@ package com.muse.meomuneum.chat.ban.service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Optional;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -42,6 +44,12 @@ public class ChatBanStorageService {
         LocalDateTime now = now();
         return repository.existsByUser_IdAndDeletedAtIsNullAndCreatedAtLessThanEqualAndExpiresAtGreaterThan(userId,
                 now, now);
+    }
+
+    @Transactional
+    public Optional<OffsetDateTime> activeBanUntil(Long userId) {
+        return repository.findActiveByUserId(userId, now(), PageRequest.of(0, 1)).stream().findFirst()
+                .map(ban -> ban.getExpiresAt().atOffset(ZoneOffset.UTC));
     }
 
     private LocalDateTime now() {

@@ -16,6 +16,41 @@ import org.junit.jupiter.api.Test;
 
 class ChatPresenceRegistryTest {
     @Test
+    void countsActualDistinctAccountsAndVersionsOnlyCountChanges() {
+        Clock clock = Clock.systemUTC();
+        java.util.List<ChatPresenceChangedEvent> events = new java.util.ArrayList<>();
+        ChatPresenceRegistry registry = new ChatPresenceRegistry(clock,
+                new com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy(clock,
+                        new com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties.Rules(
+                                null, true, true, null, null)),
+                event -> events.add((ChatPresenceChangedEvent) event));
+        registry.reserve(1L, 10L, 100L);
+        assertEquals(0, registry.connectedCount(10L));
+        registry.connect(1L, 10L, 100L, 25, "first");
+        registry.connect(1L, 10L, 100L, 25, "second");
+        assertEquals(1, registry.connectedCount(10L));
+        assertEquals(1, events.size());
+        registry.subscribed("first", "room", "/topic/chat-rooms/10");
+        registry.sendSnapshot("first", "room", "/topic/chat-rooms/10");
+        assertEquals(1, events.getLast().revision());
+        registry.disconnect("second");
+        assertEquals(1, registry.connectedCount(10L));
+        registry.disconnect("first");
+        assertEquals(0, registry.connectedCount(10L));
+        assertEquals(2, events.getLast().revision());
+        assertEquals(3, events.size());
+        registry.connect(1L, 10L, 100L, 25, "reconnected");
+        assertEquals(3, events.getLast().revision());
+        registry.remove(1L, 100L);
+        assertEquals(0, registry.connectedCount(10L));
+        assertEquals(4, events.getLast().revision());
+        registry.disconnect("reconnected");
+        assertEquals(4, events.getLast().revision());
+        registry.sendSnapshot("reconnected", "room", "/topic/chat-rooms/10");
+        assertEquals(5, events.size());
+    }
+
+    @Test
     void lastConnectionAloneStartsGraceAndThirtySecondBoundaryFreesTheSeat() {
         Clock clock = org.mockito.Mockito.mock(Clock.class);
         Instant start = Instant.parse("2026-10-07T00:00:00Z");
@@ -86,5 +121,6 @@ class ChatPresenceRegistryTest {
             }
         }
         assertEquals(25, admitted.get());
+        assertEquals(25, registry.connectedCount(10L));
     }
 }

@@ -182,7 +182,7 @@ iTunes에서 메타데이터를 확인한 뒤 음악과 기록을 트랜잭션�
 ### 지역 채팅 메시지·자동 제재 저장 기반 (#139)
 
 `ChatMessageStorageService.store`는 호출자가 권한·내용 검사를 마친 정상 메시지를 작성자·방·본문·
-client ID·서버 UTC 전송 시각과 함께 저장합니다. 공개 API·WebSocket·탐지·참여 구간별 조회는 후행 작업입니다.
+client ID·서버 UTC 전송 시각과 함께 저장합니다. 실시간 송수신·탐지는 #141로 연결하며, 참여 구간별 내역 조회는 후행 작업입니다.
 사용자 행 잠금과 실제 `UNIQUE(user_id, client_message_id)`로 동시 재시도 중복을 막고,
 같은 방·내용의 재시도에는 기존 ID와 `created=false`를 반환합니다. 후행 전파는 신규 저장 결과에만 적용합니다.
 다른 방·내용의 ID 재사용은 거절합니다. ID는 대소문자를 구분하고 작성자별로 구분합니다.
@@ -609,19 +609,19 @@ WebSocket은 네이티브 STOMP 1.2 `/ws`다. handshake URL에 토큰을 넣지 
 CONNECT 헤더는 `Authorization: Bearer {access_token}`, `room_id`, `membership_id`다.
 HTTP upgrade만 허용하고 실제 참여 인증은 CONNECT에서 처리한다. Origin은 기존
 `AUTH_CORS_ALLOWED_ORIGINS` 목록으로 제한한다. 수신 토큰 헤더는 즉시 제거해 오류 로그에 남기지 않는다.
-본인 방 `/topic/chat-rooms/{room_id}`와 `/user/queue/chat-status`만 구독할 수 있다.
+본인 방 `/topic/chat-rooms/{room_id}`와 `/user/queue/chat-events`를 구독한다. 이전 `/user/queue/chat-status`도 허용한다.
 CONNECT·SUBSCRIBE에서 사용자·방·이력·제재를 다시 확인하고 임의 broker SEND를 차단한다.
-메시지 송수신은 후속 #141 범위로 아직 제공하지 않는다.
+메시지 송수신·ACK·전송 차단·자동 제재는 [chat-messaging.md](api/chat-messaging.md)를 따른다.
 
 방 SUBSCRIBE에 `receipt`를 보내면 simple broker 등록 완료 후 `RECEIPT receipt-id`를 반환한다.
 프론트는 CONNECTED만으로 준비 상태가 되지 않고 이 receipt까지 기다린다.
 재연결마다 새 Bearer 토큰을 전달한다. heartbeat는 양방향 10초이며, 열린 연결의 토큰 만료·참여
-권한·제재도 10초마다 확인한다. 별도의 자동 탐지 목록/판정은 이번 작업에 없다.
+권한·제재도 10초마다 확인한다. 승인한 초기 탐지 목록은 [chat-moderation-policy.md](api/chat-moderation-policy.md)를 따른다.
 실제 퇴장·지역 이동·로그아웃은 계정의 모든 해당 연결 권한을 종료하고 `4100 CHAT_LEFT`로 닫는다.
 제재 연결 정리는 `4101 CHAT_BANNED`, 토큰 만료는 `4102 AUTH_REQUIRED`다.
 처리 거부의 STOMP ERROR message는 `CHAT_FULL`, `CHAT_BANNED`, `CHAT_LEFT`, `AUTH_REQUIRED` 중 하나다.
-메시지 처리 단계에서 제재를 확정하는 #141은 저장 커밋 후 `leaveAll(userId, 4101, "CHAT_BANNED")`를
-호출해 즉시 모든 연결을 종료해야 한다. 저장 트랜잭션 내부에서 런타임 잠금을 취하지 않는다.
+메시지 처리에서 제재 저장 커밋 후 `leaveAll(userId, 4101, "CHAT_BANNED|{banned_until}")`을
+호출해 즉시 모든 연결을 종료한다. 저장 트랜잭션 내부에서 런타임 잠금을 취하지 않는다.
 
 배포는 BE를 먼저 적용한 뒤 FE #133을 적용한다. 프록시의 `/ws` upgrade 전달과 허용 Origin,
 26명 동시 진입, 다중 기기 1자리, 다른 방 구독 거부, 전체 퇴장 및 30초 단절을 스테이징에서 확인한다.

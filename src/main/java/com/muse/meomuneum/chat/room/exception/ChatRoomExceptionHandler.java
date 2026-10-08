@@ -1,5 +1,7 @@
 package com.muse.meomuneum.chat.room.exception;
 
+import java.util.Map;
+
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.ResponseEntity;
@@ -18,7 +20,11 @@ import com.muse.meomuneum.location.exception.LocationException;
 public class ChatRoomExceptionHandler {
 
     @ExceptionHandler(ChatRoomException.class)
-    public ResponseEntity<ApiResponse<Void>> handleChatRoomException(ChatRoomException exception) {
+    public ResponseEntity<? extends ApiResponse<?>> handleChatRoomException(ChatRoomException exception) {
+        if (exception.getBannedUntil() != null) {
+            return ResponseEntity.status(exception.getErrorCode().status()).body(ApiResponse.of(
+                    exception.getErrorCode().message(), Map.of("banned_until", exception.getBannedUntil())));
+        }
         return toErrorResponse(exception.getErrorCode());
     }
 

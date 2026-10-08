@@ -184,7 +184,7 @@ public class ChatRoomEntryService {
 
     private void checkBan(Long userId) {
         if (bans.hasActiveBan(userId)) {
-            throw new ChatRoomException(ChatRoomErrorCode.CHAT_BANNED);
+            throw new ChatRoomException(ChatRoomErrorCode.CHAT_BANNED, bans.activeBanUntil(userId).orElse(null));
         }
     }
 

@@ -16,9 +16,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class ChatSubscriptionReceipts implements ExecutorChannelInterceptor {
     private final ObjectProvider<MessageChannel> outbound;
+    private final ChatPresenceRegistry presence;
 
-    public ChatSubscriptionReceipts(@Qualifier("clientOutboundChannel") ObjectProvider<MessageChannel> outbound) {
+    public ChatSubscriptionReceipts(@Qualifier("clientOutboundChannel") ObjectProvider<MessageChannel> outbound,
+            ChatPresenceRegistry presence) {
         this.outbound = outbound;
+        this.presence = presence;
     }
 
     @Override
@@ -28,10 +31,22 @@ public class ChatSubscriptionReceipts implements ExecutorChannelInterceptor {
             return;
         }
         StompHeaderAccessor incoming = StompHeaderAccessor.wrap(message);
-        if (incoming.getCommand() != StompCommand.SUBSCRIBE || incoming.getReceipt() == null
+        if (incoming.getCommand() == StompCommand.UNSUBSCRIBE) {
+            presence.unsubscribed(incoming.getSessionId(), incoming.getSubscriptionId());
+            return;
+        }
+        if (incoming.getCommand() != StompCommand.SUBSCRIBE
                 || incoming.getDestination() == null
                 || !(incoming.getDestination().startsWith("/topic/")
                         || incoming.getDestination().startsWith("/queue/"))) {
+            return;
+        }
+        presence.exclusive(() -> {
+            presence.subscribed(incoming.getSessionId(), incoming.getSubscriptionId(), incoming.getDestination());
+            presence.sendSnapshot(incoming.getSessionId(), incoming.getSubscriptionId(), incoming.getDestination());
+            return null;
+        });
+        if (incoming.getReceipt() == null) {
             return;
         }
         StompHeaderAccessor receipt = StompHeaderAccessor.create(StompCommand.RECEIPT);

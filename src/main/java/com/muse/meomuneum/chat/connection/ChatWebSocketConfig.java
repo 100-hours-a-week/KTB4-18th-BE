@@ -22,17 +22,19 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final ChatStompInterceptor interceptor;
     private final ChatSubscriptionReceipts receipts;
+    private final ChatMessageOutboundGuard outboundGuard;
     private final ChatPresenceRegistry presence;
     private final ChatSocketSessions sockets;
     private final String[] origins;
     private final ThreadPoolTaskScheduler scheduler;
 
     public ChatWebSocketConfig(ChatStompInterceptor interceptor, ChatPresenceRegistry presence,
-            ChatSocketSessions sockets, ChatSubscriptionReceipts receipts,
+            ChatSocketSessions sockets, ChatSubscriptionReceipts receipts, ChatMessageOutboundGuard outboundGuard,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
             ThreadPoolTaskScheduler chatHeartbeatScheduler) {
         this.interceptor = interceptor;
         this.receipts = receipts;
+        this.outboundGuard = outboundGuard;
         this.presence = presence;
         this.sockets = sockets;
         this.origins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).toArray(String[]::new);
@@ -48,6 +50,7 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
         registry.setPreservePublishOrder(true);
+        registry.configureBrokerChannel().interceptors(receipts);
         registry.enableSimpleBroker("/topic", "/queue").setHeartbeatValue(new long[]{10000, 10000})
                 .setTaskScheduler(scheduler);
         registry.setApplicationDestinationPrefixes("/app");
@@ -56,6 +59,11 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.interceptors(interceptor, receipts);
+    }
+
+    @Override
+    public void configureClientOutboundChannel(ChannelRegistration registration) {
+        registration.interceptors(outboundGuard);
     }
 
     @Override

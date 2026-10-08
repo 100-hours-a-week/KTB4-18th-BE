@@ -28,7 +28,8 @@ class ChatStompInterceptorTest {
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
     private final ChatRoomEntryService entry = mock(ChatRoomEntryService.class);
     private final ChatStompInterceptor interceptor = new ChatStompInterceptor(jwt, entry,
-            Clock.fixed(NOW, ZoneOffset.UTC), mock(ChatSocketSessions.class));
+            Clock.fixed(NOW, ZoneOffset.UTC), mock(ChatSocketSessions.class),
+            mock(com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService.class));
 
     @Test
     void authenticatesThenAuthorizesEverySubscriptionAndRedactsTheAuthorizationHeader() {
@@ -49,7 +50,7 @@ class ChatStompInterceptorTest {
         verify(entry).authorizeConnection(7L, 700L, 900L, "session");
         subscribe.setDestination("/topic/chat-rooms/701");
         assertThrows(IllegalArgumentException.class, () -> send(subscribe));
-        assertThrows(IllegalArgumentException.class, () -> send(headers(StompCommand.SEND, attributes)));
+        send(headers(StompCommand.SEND, attributes));
     }
 
     @Test
