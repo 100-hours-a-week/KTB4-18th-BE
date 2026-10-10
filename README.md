@@ -611,7 +611,7 @@ HTTP upgrade만 허용하고 실제 참여 인증은 CONNECT에서 처리한다.
 `AUTH_CORS_ALLOWED_ORIGINS` 목록으로 제한한다. 수신 토큰 헤더는 즉시 제거해 오류 로그에 남기지 않는다.
 본인 방 `/topic/chat-rooms/{room_id}`와 `/user/queue/chat-events`를 구독한다. 이전 `/user/queue/chat-status`도 허용한다.
 CONNECT·SUBSCRIBE에서 사용자·방·이력·제재를 다시 확인하고 임의 broker SEND를 차단한다.
-메시지 송수신·ACK·전송 차단·자동 제재는 [chat-messaging.md](api/chat-messaging.md)를 따른다.
+메시지 송수신·ACK·전송 차단·마스킹은 [chat-messaging.md](api/chat-messaging.md)를 따른다.
 
 방 SUBSCRIBE에 `receipt`를 보내면 simple broker 등록 완료 후 `RECEIPT receipt-id`를 반환한다.
 프론트는 CONNECTED만으로 준비 상태가 되지 않고 이 receipt까지 기다린다.
@@ -620,10 +620,21 @@ CONNECT·SUBSCRIBE에서 사용자·방·이력·제재를 다시 확인하고 �
 실제 퇴장·지역 이동·로그아웃은 계정의 모든 해당 연결 권한을 종료하고 `4100 CHAT_LEFT`로 닫는다.
 제재 연결 정리는 `4101 CHAT_BANNED`, 토큰 만료는 `4102 AUTH_REQUIRED`다.
 처리 거부의 STOMP ERROR message는 `CHAT_FULL`, `CHAT_BANNED`, `CHAT_LEFT`, `AUTH_REQUIRED` 중 하나다.
-메시지 처리에서 제재 저장 커밋 후 `leaveAll(userId, 4101, "CHAT_BANNED|{banned_until}")`을
-호출해 즉시 모든 연결을 종료한다. 저장 트랜잭션 내부에서 런타임 잠금을 취하지 않는다.
+#155부터 욕설·음란성 메시지는 마스킹하며 자동 제재·강제 퇴장을 수행하지 않는다.
+기존 자동 제재는 이력을 보존하여 해제한다. 저장 트랜잭션 내부에서 런타임 잠금을 취하지 않는다.
 
 배포는 BE를 먼저 적용한 뒤 FE #133을 적용한다. 프록시의 `/ws` upgrade 전달과 허용 Origin,
 26명 동시 진입, 다중 기기 1자리, 다른 방 구독 거부, 전체 퇴장 및 30초 단절을 스테이징에서 확인한다.
 롤백은 FE를 먼저 복구하고 BE를 복구한다. DB migration은 추가하지 않았으며 서버 재시작은
 연결/예약/유예 메모리를 초기화한다. 활성 DB 이력만으로 접속 자리 또는 과거 메시지 조회를 허용하지 않는다.
+
+## 욕설·음란성 메시지 마스킹 (#155)
+
+`badwordfiltering:1.0.0`과 검토한 추가·제외·허용 파일을 기동 시 로딩한다.
+탐지 구간의 입력 code point 수만큼 `*`로 치환하고 저장·방송·ACK에 같은 본문을 사용한다.
+공백과 `@ _ - . *` 삽입을 지원하며 URL·개인정보·도배는 원문에서 먼저 검사한다.
+FE의 마스킹 ACK 호환성 변경이 선행되어야 한다. 기존 자동 제재 해제는 새 데이터 마이그레이션으로
+수행하며 운영 DB를 직접 변경하지 않았다. 구버전 BE와 혼용하거나 자동 롤백하지 않는다.
+
+목록·예문·검사 순서·배포/복구 기준은 [탐지 정책](api/chat-moderation-policy.md),
+실제 검증 결과는 [마스킹 검증 기록](api/chat-masking-verification.md)을 참고한다.

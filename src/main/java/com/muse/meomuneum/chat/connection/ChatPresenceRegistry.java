@@ -29,7 +29,7 @@ public class ChatPresenceRegistry {
 
     public ChatPresenceRegistry(Clock clock) {
         this(clock, new ChatTransmissionPolicy(clock,
-                new ChatMessagePolicyProperties.Rules(null, true, true, null, null)), event -> {
+                new ChatMessagePolicyProperties.Rules(null, true)), event -> {
                 });
     }
 

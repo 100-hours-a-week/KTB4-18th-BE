@@ -16,7 +16,7 @@ class ChatTransmissionPolicyTest {
     void limitsByUserAndCountsDuplicatesUntilActualMembershipEnd() {
         MutableClock clock = new MutableClock();
         ChatTransmissionPolicy policy = new ChatTransmissionPolicy(clock,
-                new ChatMessagePolicyProperties.Rules(null, true, true, null, null));
+                new ChatMessagePolicyProperties.Rules(null, true));
         policy.check(1L, 100L, "hello");
         policy.accepted(1L, 100L, "first", "hello", 10L);
         assertEquals(1000, assertThrows(ChatMessageRejection.class,

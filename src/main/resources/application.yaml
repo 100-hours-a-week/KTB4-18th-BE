@@ -78,6 +78,3 @@ chat:
   message-policy:
     minimum-interval: ${CHAT_MESSAGE_MINIMUM_INTERVAL:1s}
     detection-enabled: ${CHAT_PERSONAL_CONTENT_DETECTION_ENABLED:true}
-    automatic-ban-enabled: ${CHAT_AUTOMATIC_BAN_ENABLED:true}
-    profanity: [씨발, 개새끼]
-    obscenity: [자지 빨아, 보지 빨아]
