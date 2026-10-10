@@ -11,7 +11,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class ChatContentPolicyTest {
     private final ChatContentPolicy policy = new ChatContentPolicy(
-            new ChatMessagePolicyProperties.Rules(Duration.ofSeconds(1), true, true, null, null));
+            new ChatMessagePolicyProperties.Rules(Duration.ofSeconds(1), true));
 
     @Test
     void trimsLikeJavascriptAndCountsUnicodeCodePointsWithoutTruncation() {
@@ -21,20 +21,6 @@ class ChatContentPolicyTest {
                 () -> policy.validateText("😀".repeat(301))).reason());
         assertThrows(ChatMessageRejection.class, () -> policy.validateText("\uD800"));
         assertThrows(ChatMessageRejection.class, () -> policy.validateText("\u00A0\n"));
-    }
-
-    @Test
-    void reviewedLiteralMatchesIncludeQuotesAndLyricsWithoutGuessingOtherWords() {
-        assertEquals(com.muse.meomuneum.chat.ban.domain.ChatBanReason.PROFANITY,
-                policy.banReason("가사에 씨발이 있어").orElseThrow());
-        assertEquals(com.muse.meomuneum.chat.ban.domain.ChatBanReason.OBSCENITY,
-                policy.banReason("보지 빨아").orElseThrow());
-        for (String allowed : java.util.List.of("시발점", "성교육", "병신", "씨 발")) {
-            assertEquals(java.util.Optional.empty(), policy.banReason(allowed));
-        }
-        ChatContentPolicy disabled = new ChatContentPolicy(new ChatMessagePolicyProperties.Rules(
-                null, true, false, null, null));
-        assertEquals(java.util.Optional.empty(), disabled.banReason("씨발"));
     }
 
     @ParameterizedTest

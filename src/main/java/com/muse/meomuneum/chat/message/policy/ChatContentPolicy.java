@@ -1,12 +1,8 @@
 package com.muse.meomuneum.chat.message.policy;
 
-import java.text.Normalizer;
-import java.util.Optional;
 import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Component;
-
-import com.muse.meomuneum.chat.ban.domain.ChatBanReason;
 
 @Component
 public class ChatContentPolicy {
@@ -51,19 +47,6 @@ public class ChatContentPolicy {
             }
         }
         return text;
-    }
-
-    public Optional<ChatBanReason> banReason(String text) {
-        if (!rules.automaticBanEnabled()) {
-            return Optional.empty();
-        }
-        String normalized = Normalizer.normalize(text, Normalizer.Form.NFC);
-        if (rules.profanity().stream().anyMatch(normalized::contains)) {
-            return Optional.of(ChatBanReason.PROFANITY);
-        }
-        return rules.obscenity().stream().anyMatch(normalized::contains)
-                ? Optional.of(ChatBanReason.OBSCENITY)
-                : Optional.empty();
     }
 
     public void validatePersonalContent(String text) {

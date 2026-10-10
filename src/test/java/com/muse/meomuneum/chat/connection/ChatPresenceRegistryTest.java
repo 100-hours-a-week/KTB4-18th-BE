@@ -22,7 +22,7 @@ class ChatPresenceRegistryTest {
         ChatPresenceRegistry registry = new ChatPresenceRegistry(clock,
                 new com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy(clock,
                         new com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties.Rules(
-                                null, true, true, null, null)),
+                                null, true)),
                 event -> events.add((ChatPresenceChangedEvent) event));
         registry.reserve(1L, 10L, 100L);
         assertEquals(0, registry.connectedCount(10L));

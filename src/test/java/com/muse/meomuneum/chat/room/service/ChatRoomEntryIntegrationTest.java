@@ -418,41 +418,58 @@ class ChatRoomEntryIntegrationTest {
     }
 
     @Test
-    void reviewedProfanityBansAllAccountConnectionsAndBlocksEveryRoomWithoutStoringText() throws Exception {
-        Long offenderId = createUser("message-ban");
-        Long observerId = createUser("message-watch");
+    void profanityMasksStorageBroadcastAndAckWithoutBanningOrClosingAndRetriesOnlyAck() throws Exception {
+        Long author = createUser("mask");
+        Long viewer = createUser("mask-watch");
         ChatRoom room = roomFor("41135");
-        Long membershipId = service.join(offenderId, room.getId(), issueToken(offenderId, room.getRegion()))
+        Long membershipId = service.join(author, room.getId(), issueToken(author, room.getRegion()))
                 .membership().membershipId();
-        Long observerMembership = service.join(observerId, room.getId(), issueToken(observerId, room.getRegion()))
+        Long viewerMembership = service.join(viewer, room.getId(), issueToken(viewer, room.getRegion()))
                 .membership().membershipId();
-        SocketProbe first = connectSocket(offenderId, room.getId(), membershipId);
-        SocketProbe second = connectSocket(offenderId, room.getId(), membershipId);
-        SocketProbe observer = connectSocket(observerId, room.getId(), observerMembership);
+        SocketProbe first = connectSocket(author, room.getId(), membershipId);
+        SocketProbe second = connectSocket(author, room.getId(), membershipId);
+        SocketProbe observer = connectSocket(viewer, room.getId(), viewerMembership);
         try {
             subscribeMessages(first, room.getId());
             subscribeMessages(second, room.getId());
             subscribeMessages(observer, room.getId());
-            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "씨발");
-            assertEquals(4101, first.closed.get(5, TimeUnit.SECONDS));
-            assertEquals(4101, second.closed.get(5, TimeUnit.SECONDS));
-            assertTrue(first.closeReason.startsWith("CHAT_BANNED|"));
-            assertTrue(second.closeReason.startsWith("CHAT_BANNED|"));
+            String clientId = java.util.UUID.randomUUID().toString();
+            sendMessage(first, room.getId(), clientId, "가사에 씨발이 있어 😀");
+            String firstFrame = first.frames.poll(5, TimeUnit.SECONDS);
+            String nextFrame = first.frames.poll(5, TimeUnit.SECONDS);
+            assertTrue(firstFrame != null && nextFrame != null);
+            assertTrue(firstFrame.contains("가사에 **이 있어 😀"));
+            assertTrue(nextFrame.contains("가사에 **이 있어 😀"));
+            assertTrue(firstFrame.contains("CHAT_ACK") || nextFrame.contains("CHAT_ACK"));
+            assertTrue(second.frames.poll(5, TimeUnit.SECONDS).contains("가사에 **이 있어 😀"));
+            assertTrue(observer.frames.poll(5, TimeUnit.SECONDS).contains("가사에 **이 있어 😀"));
+            assertEquals("가사에 **이 있어 😀", jdbcTemplate.queryForObject(
+                    "SELECT content FROM chat_room_messages", String.class));
+            assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_bans", Long.class));
+            assertFalse(first.closed.isDone());
+            assertFalse(second.closed.isDone());
+            assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(author).isPresent());
+            // Same original UUID/content retries return stored masked ACK, without a second broadcast.
+            sendMessage(first, room.getId(), clientId, "가사에 씨발이 있어 😀");
+            String retry = first.frames.poll(5, TimeUnit.SECONDS);
+            assertTrue(retry.contains("CHAT_ACK") && retry.contains("가사에 **이 있어 😀"));
             assertEquals(null, observer.frames.poll(150, TimeUnit.MILLISECONDS));
-            assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Long.class));
-            assertEquals(1L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_bans", Long.class));
-            assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(offenderId).isEmpty());
-            assertEquals(7, jdbcTemplate.queryForObject(
-                    "SELECT TIMESTAMPDIFF(DAY, created_at, expires_at) FROM chat_bans", Integer.class));
-            ChatRoom otherRoom = roomFor("11680");
-            ChatRoomException denied = org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                    () -> service.join(offenderId, otherRoom.getId(), issueToken(offenderId, otherRoom.getRegion())));
-            assertEquals(ChatRoomErrorCode.CHAT_BANNED, denied.getErrorCode());
-            assertTrue(denied.getBannedUntil() != null);
-            jdbcTemplate
-                    .update("UPDATE chat_bans SET created_at = DATE_SUB(NOW(), INTERVAL 7 DAY), expires_at = NOW()");
-            assertTrue(service.join(offenderId, otherRoom.getId(), issueToken(offenderId, otherRoom.getRegion()))
-                    .created());
+            assertEquals(1L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Long.class));
+            // A different original with the same masking result must not reuse the UUID.
+            sendMessage(first, room.getId(), clientId, "가사에 씨바이 있어 😀");
+            assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("CLIENT_ID_CONFLICT"));
+            Thread.sleep(1050);
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "씨발 https://example.com");
+            assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("URL_NOT_ALLOWED"));
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "씨발 010-0000-0000");
+            assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("PERSONAL_INFORMATION"));
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "자지 빨아");
+            assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("*****"));
+            assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("*****"));
+            assertTrue(observer.frames.poll(5, TimeUnit.SECONDS).contains("*****"));
+            assertEquals("*****", jdbcTemplate.queryForObject(
+                    "SELECT content FROM chat_room_messages ORDER BY id DESC LIMIT 1", String.class));
+            assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_bans", Long.class));
         } finally {
             first.socket.abort();
             second.socket.abort();
