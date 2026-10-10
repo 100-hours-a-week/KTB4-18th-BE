@@ -75,7 +75,8 @@ public class ItunesMusicSearchClient {
                         && !result.path("artistName").asText().isBlank()) {
                     items.add(new MusicItem(null, "ITUNES", result.path("trackId").asText(),
                             result.path("trackName").asText(), result.path("artistName").asText(),
-                            nullable(result, "artworkUrl100"), nullable(result, "previewUrl"), null, false));
+                            resizeArtwork(nullable(result, "artworkUrl100")), nullable(result, "previewUrl"), null,
+                            false));
                 }
             }
             return items;
@@ -84,6 +85,37 @@ public class ItunesMusicSearchClient {
             throw providerFailure(operation + "_interrupted");
         } catch (IOException | tools.jackson.core.JacksonException | IllegalArgumentException exception) {
             throw providerFailure(operation + "_transport_or_parse");
+        }
+    }
+    private String resizeArtwork(String artworkUrl) {
+        if (artworkUrl == null) {
+            return null;
+        }
+        try {
+            URI uri = URI.create(artworkUrl);
+            if ((!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme()))
+                    || uri.getHost() == null) {
+                return artworkUrl;
+            }
+            String path = uri.getRawPath();
+            String filename = path.substring(path.lastIndexOf('/') + 1);
+            if (!"100x100bb.jpg".equals(filename) && !filename.matches(".+\\.100x100-75\\.jpg")) {
+                return artworkUrl;
+            }
+            int pathEnd = artworkUrl.length();
+            if (uri.getRawFragment() != null) {
+                pathEnd -= uri.getRawFragment().length() + 1;
+            }
+            if (uri.getRawQuery() != null) {
+                pathEnd -= uri.getRawQuery().length() + 1;
+            }
+            int sizeStart = pathEnd - filename.length();
+            if (!"100x100bb.jpg".equals(filename)) {
+                sizeStart += filename.length() - "100x100-75.jpg".length();
+            }
+            return artworkUrl.substring(0, sizeStart) + "680x680" + artworkUrl.substring(sizeStart + 7);
+        } catch (IllegalArgumentException exception) {
+            return artworkUrl;
         }
     }
     private MusicRecordException providerFailure(String reason) {

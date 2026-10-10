@@ -14,7 +14,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +40,7 @@ class ChatRoomEntryServiceTest {
     private UserRepository userRepository;
     private LocationResolutionTokenProvider tokenProvider;
     private ChatRoomEntryService service;
+    private com.muse.meomuneum.chat.connection.ChatPresenceRegistry presence;
 
     @BeforeEach
     void setUp() {
@@ -48,8 +48,12 @@ class ChatRoomEntryServiceTest {
         memberRepository = mock(ChatRoomMemberRepository.class);
         userRepository = mock(UserRepository.class);
         tokenProvider = mock(LocationResolutionTokenProvider.class);
+        presence = new com.muse.meomuneum.chat.connection.ChatPresenceRegistry(Clock.fixed(NOW, ZoneOffset.UTC));
         service = new ChatRoomEntryService(chatRoomRepository, memberRepository, userRepository, tokenProvider,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), presence,
+                mock(com.muse.meomuneum.chat.connection.ChatSocketSessions.class),
+                mock(com.muse.meomuneum.chat.ban.service.ChatBanStorageService.class),
+                mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 
     @Test
@@ -89,7 +93,7 @@ class ChatRoomEntryServiceTest {
         when(previousMembership.getChatRoom()).thenReturn(previousRoom);
         prepareJoin(user, targetRoom, claims(7L, 25L, "41135"));
         when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(previousMembership));
-        when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of(mock(ChatRoomMember.class)));
+        presence.reserve(8L, 700L, 901L);
 
         ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
 
@@ -103,7 +107,6 @@ class ChatRoomEntryServiceTest {
         User user = mock(User.class);
         ChatRoom room = room(700L, 25L, "41135", 25);
         prepareJoin(user, room, claims(7L, 25L, "41135"));
-        when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of());
         when(memberRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         ChatRoomJoinResult result = service.join(7L, 700L, "loc_token");

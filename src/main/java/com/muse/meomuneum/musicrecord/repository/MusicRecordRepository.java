@@ -90,6 +90,14 @@ public class MusicRecordRepository {
         return jdbc.query(sql, (row, index) -> location(row), sigunguId, dotId, sigunguId, sidoId)
                 .stream().findFirst();
     }
+    public void insertMusicIfAbsent(MusicItem music) {
+        MusicMetadataPolicy.validate(music.title(), music.artist_name());
+        jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
+                + "preview_url, youtube_video_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
+                music.provider(), music.external_music_id(), music.title(), music.artist_name(),
+                music.album_cover_url(), music.preview_url(), music.youtube_video_id());
+    }
+
     public long upsertMusic(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "

@@ -37,6 +37,7 @@ checkstyle {
 }
 
 dependencies {
+	implementation 'io.github.vaneproject:badwordfiltering:1.0.0'
 	implementation 'com.fasterxml.jackson.core:jackson-databind'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -50,6 +51,7 @@ dependencies {
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 	runtimeOnly 'com.mysql:mysql-connector-j'
+	runtimeOnly 'com.twelvemonkeys.imageio:imageio-webp:3.15.0'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
@@ -78,6 +80,9 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20260921200528__create_users_table.sql'
 		include 'V20260923142421__create_chat_room_foundation.sql'
 		include 'V20260923162348__seed_chat_regions_and_rooms.sql'
+		include 'V20261007205113__create_chat_room_messages_table.sql'
+		include 'V20261007205453__create_chat_bans_table.sql'
+		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -96,6 +101,9 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20260922195140__add_terms_type_version_unique_constraint.sql'
 		include 'V20260923142421__create_chat_room_foundation.sql'
 		include 'V20260923162348__seed_chat_regions_and_rooms.sql'
+		include 'V20261007205113__create_chat_room_messages_table.sql'
+		include 'V20261007205453__create_chat_bans_table.sql'
+		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'

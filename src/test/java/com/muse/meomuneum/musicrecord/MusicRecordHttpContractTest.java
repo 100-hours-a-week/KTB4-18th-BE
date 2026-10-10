@@ -30,6 +30,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 
 class MusicRecordHttpContractTest {
     private MockMvc mvc;
@@ -40,7 +41,7 @@ class MusicRecordHttpContractTest {
         repository = mock(MusicRecordRepository.class);
         MusicRecordService service = new MusicRecordService(repository,
                 mock(ItunesMusicSearchClient.class), mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("test-only-secret"));
+                new MusicSearchCursorCodec("test-only-secret"), mock(MusicSearchStorageService.class));
         CurrentUserResolver users = mock(CurrentUserResolver.class);
         when(users.resolve(nullable(Authentication.class))).thenReturn(1L);
         mvc = MockMvcBuilders.standaloneSetup(new MusicRecordController(service, users))

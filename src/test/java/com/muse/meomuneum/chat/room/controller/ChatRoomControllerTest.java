@@ -69,6 +69,17 @@ class ChatRoomControllerTest {
                 .andExpect(jsonPath("$.data.membership_id").value(900L));
     }
 
+    @Test
+    void leaveRequiresTheMembershipIdentifier() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .delete("/api/v1/chat-rooms/700/members/me").param("membership_id", "900")
+                .principal(new UsernamePasswordAuthenticationToken(7L, null))).andExpect(status().isNoContent());
+        org.mockito.Mockito.verify(service).leave(7L, 700L, 900L);
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .delete("/api/v1/chat-rooms/700/members/me")
+                .principal(new UsernamePasswordAuthenticationToken(7L, null))).andExpect(status().isBadRequest());
+    }
+
     private ChatRoomMembershipResponse membership() {
         return new ChatRoomMembershipResponse(900L, 700L, 25L, OffsetDateTime.parse("2026-09-25T00:00:00Z"));
     }
