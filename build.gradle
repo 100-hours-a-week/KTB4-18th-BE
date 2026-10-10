@@ -82,6 +82,7 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20260923162348__seed_chat_regions_and_rooms.sql'
 		include 'V20261007205113__create_chat_room_messages_table.sql'
 		include 'V20261007205453__create_chat_bans_table.sql'
+		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -102,6 +103,7 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20260923162348__seed_chat_regions_and_rooms.sql'
 		include 'V20261007205113__create_chat_room_messages_table.sql'
 		include 'V20261007205453__create_chat_bans_table.sql'
+		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'
