@@ -32,12 +32,12 @@ STOMP 1.2 `/ws`. CONNECT의 Authorization Bearer, room_id, membership_id로 계�
 
 reason: EMPTY_CONTENT, CONTENT_TOO_LONG, INVALID_CONTENT, INVALID_REQUEST, INVALID_CLIENT_ID, RATE_LIMIT, DUPLICATE_CONTENT, URL_NOT_ALLOWED, PERSONAL_INFORMATION, NOT_READY, DESTINATION_DENIED, CLIENT_ID_CONFLICT, RETRY_UNAVAILABLE, SEND_FAILED. 일반 위반은 메시지만 차단하고 연결/참여 유지. SEND_FAILED나 ACK 미확인 시 같은 UUID로 재시도 가능.
 
-`CHAT_BANNED`: `{room_id, membership_id, client_message_id, reason: PROFANITY|OBSCENITY, banned_until}`. 욕설/음란성 목록과 예외는 `chat-moderation-policy.md`. 메시지 저장·broadcast 없이 제재 커밋, 계정의 활성 참여 종료 및 모든 연결 close **4101**, reason `CHAT_BANNED|{banned_until}`. close가 이벤트보다 먼저 도착해도 종료 시각 표시 가능.
+욕설·음란성은 #155부터 [마스킹 정책](chat-moderation-policy.md)을 따른다. 저장·CHAT_MESSAGE·CHAT_ACK의 content는 동일한 마스킹 본문이다. 신규 자동 제재·CHAT_BANNED 메시지 이벤트·강제 퇴장을 수행하지 않는다. 기존 이벤트 필드·타입은 유지한다. FE는 ACK 본문과 입력 원문의 일치 여부로 전송 완료를 판단하지 않는다.
 
-제재 중 REST 입장 403 `chat use banned`, data `{banned_until}`. STOMP CONNECT/SUBSCRIBE/SEND 거부, ERROR의 banned_until 또는 close 종료 시각 제공. FE 입력과 재연결 중지. 종료 시각부터 제재 비활성.
+기존 또는 별도 등록 활성 제재에 대한 REST 403 `chat use banned`, data `{banned_until}` 및 STOMP ERROR/close 4101 종료 시각 계약은 유지한다. 기존 자동 제재는 새 마이그레이션으로 이력을 보존해 해제한다. 욕설·음란성 입력 자체는 이 오류의 신규 발생 원인이 아니다.
 
 ## 프론트 처리와 검증
 
 React text로 본문 표시. 입력 라벨, Enter 전송/Shift+Enter 줄바꿈/한글 조합 Enter 보호. 준비 전·공백·300자 초과 입력 차단. 재연결은 대기 항목을 미확인 상태로 유지하며 명시적 재전송에 기존 UUID 사용. 퇴장/새 입장 시 메시지·대기 상태·타이머·지연 이벤트 초기화. 본문·개인정보·토큰 로그 없음.
 
-검증: 실제 WebSocket 2인 송수신, 다른 방 격리, 늦은 구독 과거 메시지 미전달, UUID ACK 재시도, 일반 위반 연결 유지, 반복 카운트 재연결 유지, 모든 연결 제재 종료와 7일 경계. FE 이벤트 파싱·ACK/broadcast 역순 중복 제거·UUID 재시도·퇴장 지연 이벤트·안전한 본문 표시·키보드/조합 입력 검증.
+검증: 실제 WebSocket 2인 송수신, 다른 방 격리, 늦은 구독 과거 메시지 미전달, UUID ACK 재시도, 일반 위반 연결 유지, 반복 카운트 재연결 유지, 마스킹 저장·방송·ACK 일치, 신규 제재 미생성·연결 유지, 기존 활성 제재 경계. FE 이벤트 파싱·ACK/broadcast 역순 중복 제거·UUID 재시도·퇴장 지연 이벤트·안전한 본문 표시·키보드/조합 입력 검증.
