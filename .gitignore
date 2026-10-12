@@ -44,3 +44,13 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# Reproducible performance tooling and private generated evidence.
+!/performance/README.md
+!/performance/reports/**/README.md
+/performance/issues/
+/performance/.env
+/performance/generated/
+/performance/results/
+/performance/**/__pycache__/
+/performance/**/*.pyc

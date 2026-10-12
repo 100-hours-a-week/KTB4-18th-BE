@@ -1,0 +1,8 @@
+**/.env
+**/generated
+**/results
+.git
+.gradle
+build/*
+!build/libs/
+!build/libs/*-SNAPSHOT.jar

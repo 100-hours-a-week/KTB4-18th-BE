@@ -1,0 +1,97 @@
+name: meomuneum-performance
+services:
+  mysql:
+    image: mysql:9.7.0@sha256:c11782aa2a96624c1efc121768641d96954faa136d6aa82751b032d8c426ffbc
+    ports:
+      - '127.0.0.1:13306:3306'
+    cpus: 1.0
+    mem_limit: 1g
+    environment:
+      MYSQL_DATABASE: meomuneum_perf
+      MYSQL_USER: meomuneum_perf
+      MYSQL_PASSWORD: ${PERF_DB_PASSWORD:?copy .env.example to .env}
+      MYSQL_ROOT_PASSWORD: ${PERF_DB_ROOT_PASSWORD:?required}
+    command: ["--innodb-buffer-pool-size=268435456", "--max-connections=100"]
+    volumes:
+      - mysql97-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  mock:
+    build: ./mock
+    ports:
+      - '127.0.0.1:18090:8090'
+    cpus: 1.0
+    mem_limit: 256m
+    environment:
+      MOCK_MODE: ${MOCK_MODE:-normal}
+      MOCK_FIRST_TEXT_MS: ${MOCK_FIRST_TEXT_MS:-200}
+      MOCK_TOTAL_MS: ${MOCK_TOTAL_MS:-2000}
+      MOCK_STT_MS: ${MOCK_STT_MS:-1000}
+      MOCK_TRACK_COUNT: ${MOCK_TRACK_COUNT:-5}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  backend:
+    build:
+      context: ..
+      dockerfile: performance/Dockerfile
+    cpus: 2.0
+    mem_limit: 1g
+    environment:
+      SPRING_PROFILES_ACTIVE: performance
+      PERF_DB_PASSWORD: ${PERF_DB_PASSWORD}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?required}
+      LOCATION_TOKEN_SECRET: ${LOCATION_TOKEN_SECRET:?required}
+      AUTH_COOKIE_SECURE: 'false'
+      AUTH_CORS_ALLOWED_ORIGINS: http://localhost:5173
+      RECOMMENDATION_PROVIDER: ai
+      RECOMMENDATION_AI_BASE_URL: http://mock:8090
+      RECOMMENDATION_AI_READ_TIMEOUT: 15s
+      SPEECH_TRANSCRIPTION_PROVIDER: ai
+      SPEECH_TRANSCRIPTION_AI_BASE_URL: http://mock:8090
+      SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT: 15s
+      LOCATION_REVERSE_GEOCODING_BASE_URL: http://mock:8090
+      LOCATION_KAKAO_REST_API_KEY: local-mock-only
+    ports:
+      - '127.0.0.1:18080:8080'
+    depends_on:
+      mysql: {condition: service_healthy}
+      mock: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9091/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+  prometheus:
+    image: prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+    cpus: 0.5
+    mem_limit: 512m
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-remote-write-receiver", "--storage.tsdb.retention.time=3d"]
+    ports:
+      - '127.0.0.1:19090:9090'
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+  grafana:
+    image: grafana/grafana:12.1.1@sha256:a1701c2180249361737a99a01bc770db39381640e4d631825d38ff4535efa47d
+    cpus: 0.5
+    mem_limit: 512m
+    environment:
+      GF_SECURITY_ADMIN_USER: perf
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?required}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - '127.0.0.1:13000:3000'
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+volumes:
+  mysql97-data:
+  prometheus-data:
+  grafana-data:
