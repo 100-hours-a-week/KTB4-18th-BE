@@ -14,7 +14,8 @@ public enum ChatRoomErrorCode implements ErrorCode {
                             "chat room capacity exceeded"), CHAT_BANNED("CHAT_ROOM_403_BANNED", HttpStatus.FORBIDDEN,
                                     "chat use banned"), MEMBERSHIP_NOT_FOUND("CHAT_ROOM_403_MEMBERSHIP",
                                             HttpStatus.FORBIDDEN,
-                                            "chat membership unavailable");
+                                            "chat membership unavailable"), CHAT_VIEW_UNAVAILABLE("CHAT_ROOM_403_VIEW",
+                                                    HttpStatus.FORBIDDEN, "chat view unavailable");
 
     private final String code;
     private final HttpStatus status;
