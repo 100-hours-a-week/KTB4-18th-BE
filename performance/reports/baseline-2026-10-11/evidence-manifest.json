@@ -1,0 +1,33 @@
+{
+  "batch": "20261011T120430Z-baseline-batch",
+  "plotter_sha256": "2da7c374cf49735bbc15517ebc708d606bd7b0e4fa53fb6c2942afc607a557d9",
+  "plot_versions": {
+    "matplotlib": "3.11.2",
+    "numpy": "2.5.4"
+  },
+  "files": {
+    "chat-5users-r1-prometheus.json": "c70a908a4c2ba87ddbe464cd3ac902732fdb1aba285202a28aac0ed1746e8268",
+    "text-1rps-r3-prometheus.json": "759161fd7c6f36a94eac350be8fe179599caa10dc12cde65396c764deba22247",
+    "summary.csv": "2e90d31645707559b4d4c354c39e65acae0c1578443b1c4d5adae1f324b09e6a",
+    "voice-1rps-r1-prometheus.json": "30c6c85134a38f45e884f7fe3e08cdc9989d2203abbd37aeb9c4b620d0354470",
+    "overview.svg": "1ca08bade780327b66ee6fac5e8302acff960803beeb929b6a5fc1d1448a0fd1",
+    "overview.png": "940d9f424508d6945e5488d305d53ff503cf2342e1f5b4ba07491e362ade3e83",
+    "graph-data.json": "912ce6369c2d3328bcf64b0b31e808762c77fd265d00c4132b449fe8d2a06ffa",
+    "text-1rps-r2-prometheus.json": "b6d0002b42f8f1db869f5a8946c0da33f9af2e2b5acf1fb4ef94f9057c6c63b1",
+    "README.md": "0817eaaf75431af94e42e4a65f487f3d3aa3fc1525c11b906e17fb95742e37ab",
+    "voice-1rps-r2-prometheus.json": "f0f8fb7496e75d3f7360a1f083b4d0472a0f288f8c62b92b33f1c9b956a6e031",
+    "timeline.png": "1b9884aafa9947605090d5c413f0e2caf11fe0bc3f786421e4493cd7d4e5aa07",
+    "chat-5users-r2-prometheus.json": "711f1d26886bb7b585ac1bb27c887d0a1e1f49cf30b43b74dfddf6019c390371",
+    "text-1rps-r1-prometheus.json": "d55ca1996449ab79f533a45d02a5e4cd0c90da6d73e87071407f3e8a0e05fe1c",
+    "chat-5users-r3-prometheus.json": "114fb1f8fba7124441ce25675c98d2e0f4178e2d0a8d905dd91f43e206153d88",
+    "timeline.svg": "2d14d2f986ac44b697465ee77c97a7429b26ea2cd7d4dfae7a41d362356f6b75",
+    "voice-1rps-r3-prometheus.json": "b19c7bf25659bb7b6eb4ce9cad5d00e0c04bab542e11f89b2651dd264a8f4245"
+  },
+  "verification": {
+    "measurement_runs": 9,
+    "warmups": 9,
+    "preserved_ledger_entries": 26,
+    "raw_percentile_checks": 9,
+    "offline_graph_regeneration": "exact PNG/CSV/data match"
+  }
+}

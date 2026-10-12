@@ -1,0 +1,10 @@
+trial,run_id,samples,successful,failed,completed_rate,p95_ms,p99_ms,chat_delivery_p95_ms,sent,delivered,missing,duplicates,rejected,dropped_iterations,started,transcription_http_samples,transcription_http_p95_ms,successful_per_s_300s,checks_passed,checks_failed,backend_cpu_max_percent,backend_memory_max_mib
+text-1rps-r1,20261011T120644Z-recommendation-baseline,300,300,0,1,2082.2999999999997,2181.06,,0,0,0,0,0,0,300,0,,1.0,600,0,46.13,597.3
+text-1rps-r2,20261011T121407Z-recommendation-baseline,301,301,0,1,2074,2123.0,,0,0,0,0,0,0,301,0,,1.0033333333333334,602,0,43.0,599.0
+text-1rps-r3,20261011T122134Z-recommendation-baseline,300,300,0,1,2049,2133.01,,0,0,0,0,0,0,300,0,,1.0,600,0,47.15,599.8
+voice-1rps-r1,20261011T123010Z-recommendation-baseline,301,301,0,1,3329,3462.0,,0,0,0,0,0,0,301,301,1290.901,1.0033333333333334,903,0,43.6,634.9
+voice-1rps-r2,20261011T123740Z-recommendation-baseline,301,301,0,1,3299,3427.0,,0,0,0,0,0,0,301,301,1275.216,1.0033333333333334,903,0,55.48,638.1
+voice-1rps-r3,20261011T124510Z-recommendation-baseline,301,301,0,1,3290,3356.0,,0,0,0,0,0,0,301,301,1253.434,1.0033333333333334,903,0,52.84,636.2
+chat-5users-r1,20261011T125245Z-chat-baseline,750,5,0,1,51,78.01999999999998,51,750,3750,0,0,0,,0,0,,,5,0,15.7,606.6
+chat-5users-r2,20261011T130029Z-chat-baseline,750,5,0,1,33,49.01999999999998,33,750,3750,0,0,0,,0,0,,,5,0,18.43,613.4
+chat-5users-r3,20261011T130805Z-chat-baseline,750,5,0,1,76.09999999999994,138.01999999999998,76.54999999999983,750,3750,0,0,0,,0,0,,,5,0,27.72,606.6

@@ -1,0 +1,12 @@
+{
+  "accepted_runs": 12,
+  "measurements": 6,
+  "independent_raw_p95_checks": 12,
+  "fixed_vu_options_checks": 12,
+  "runtime_fingerprint_checks": 12,
+  "aborted_attempt_excluded": true,
+  "steps_sha256": "46643263307f2e843f6d1b87437c2da01d1376de397aa4e7c32ba7a8b5b3c6b4",
+  "plotter_sha256": "b93bf2c25ff874a1cb2ec2bce0240aa12ac95076b5fc4063afdb6b47605b7b33",
+  "matplotlib_version": "3.11.2",
+  "numpy_version": "2.5.4"
+}

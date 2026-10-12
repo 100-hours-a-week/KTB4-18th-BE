@@ -1,0 +1,138 @@
+{
+  "accepted": [
+    {
+      "at": "2026-10-11T13:54:15.147445+00:00",
+      "event": "run-recorded",
+      "trial": "text-2rps-r1",
+      "phase": "warmup",
+      "run_id": "20261011T135208Z-recommendation-warmup",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T13:59:24.184407+00:00",
+      "event": "run-recorded",
+      "trial": "text-2rps-r1",
+      "phase": "validation",
+      "run_id": "20261011T135415Z-recommendation-validation",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:02:05.221419+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r1",
+      "phase": "warmup",
+      "run_id": "20261011T135937Z-recommendation-warmup",
+      "exit_code": 99,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:07:14.228121+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r1",
+      "phase": "validation",
+      "run_id": "20261011T140205Z-recommendation-validation",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:09:34.248565+00:00",
+      "event": "run-recorded",
+      "trial": "text-2rps-r2",
+      "phase": "warmup",
+      "run_id": "20261011T140727Z-recommendation-warmup",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:14:43.575718+00:00",
+      "event": "run-recorded",
+      "trial": "text-2rps-r2",
+      "phase": "validation",
+      "run_id": "20261011T140934Z-recommendation-validation",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T15:06:03.893521+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r2",
+      "phase": "warmup",
+      "run_id": "20261011T150328Z-recommendation-warmup",
+      "exit_code": 99,
+      "source_batch": "20261011T150315Z-validation-replacement-batch",
+      "replaces_run_id": "20261011T141456Z-recommendation-warmup"
+    },
+    {
+      "at": "2026-10-11T15:11:12.915342+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r2",
+      "phase": "validation",
+      "run_id": "20261011T150603Z-recommendation-validation",
+      "exit_code": 0,
+      "source_batch": "20261011T150315Z-validation-replacement-batch",
+      "replaces_run_id": "20261011T141731Z-recommendation-validation"
+    },
+    {
+      "at": "2026-10-11T14:24:56.810869+00:00",
+      "event": "run-recorded",
+      "trial": "text-2rps-r3",
+      "phase": "warmup",
+      "run_id": "20261011T142249Z-recommendation-warmup",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:30:05.853347+00:00",
+      "event": "run-recorded",
+      "trial": "text-2rps-r3",
+      "phase": "validation",
+      "run_id": "20261011T142456Z-recommendation-validation",
+      "exit_code": 99,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:32:48.658985+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r3",
+      "phase": "warmup",
+      "run_id": "20261011T143013Z-recommendation-warmup",
+      "exit_code": 99,
+      "source_batch": "20261011T134814Z-validation-batch"
+    },
+    {
+      "at": "2026-10-11T14:37:57.711896+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r3",
+      "phase": "validation",
+      "run_id": "20261011T143248Z-recommendation-validation",
+      "exit_code": 0,
+      "source_batch": "20261011T134814Z-validation-batch"
+    }
+  ],
+  "excluded": [
+    {
+      "at": "2026-10-11T14:17:31.470264+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r2",
+      "phase": "warmup",
+      "run_id": "20261011T141456Z-recommendation-warmup",
+      "exit_code": 99
+    },
+    {
+      "at": "2026-10-11T14:22:36.808837+00:00",
+      "event": "run-recorded",
+      "trial": "text-4rps-r2",
+      "phase": "validation",
+      "run_id": "20261011T141731Z-recommendation-validation",
+      "exit_code": 0
+    }
+  ],
+  "reason": "4rps-r2 wall-clock anomaly (15 negative durations); paired warmup replaced for consistent setup",
+  "aborted_wrapper_run": "20261011T134827Z-recommendation-warmup",
+  "source_steps_sha256": {
+    "20261011T134814Z-validation-batch": "46643263307f2e843f6d1b87437c2da01d1376de397aa4e7c32ba7a8b5b3c6b4",
+    "20261011T150315Z-validation-replacement-batch": "776c57a61aea9f58f554078e35b72148166211090aff780d1001569512a95680"
+  }
+}
