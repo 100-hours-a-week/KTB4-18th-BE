@@ -6,9 +6,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -17,9 +19,15 @@ import com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 /** Single-server seats. All database transitions must finish inside exclusive(). */
 @Component
 public class ChatPresenceRegistry {
+
+    private Timer lockWaitTimer;
+    private Timer lockHoldTimer;
 
     private final Clock clock;
     private final ChatTransmissionPolicy transmission;
@@ -41,9 +49,36 @@ public class ChatPresenceRegistry {
         this.events = events;
     }
 
-    public synchronized <T> T exclusive(Supplier<T> work) {
-        expire();
-        return work.get();
+    @Autowired
+    void configurePerformanceMetrics(MeterRegistry registry,
+            @Value("${performance.metrics-enabled:false}") boolean enabled) {
+        if (enabled) {
+            lockWaitTimer = registry.timer("performance.chat.lock.wait");
+            lockHoldTimer = registry.timer("performance.chat.lock.hold");
+        }
+    }
+
+    public <T> T exclusive(Supplier<T> work) {
+        boolean measured = lockWaitTimer != null && !Thread.holdsLock(this);
+        long requestedAt = measured ? System.nanoTime() : 0;
+        long acquiredAt = 0;
+        long releasedAt = 0;
+        try {
+            synchronized (this) {
+                acquiredAt = measured ? System.nanoTime() : 0;
+                try {
+                    expire();
+                    return work.get();
+                } finally {
+                    releasedAt = measured ? System.nanoTime() : 0;
+                }
+            }
+        } finally {
+            if (measured) {
+                lockWaitTimer.record(acquiredAt - requestedAt, TimeUnit.NANOSECONDS);
+                lockHoldTimer.record(releasedAt - acquiredAt, TimeUnit.NANOSECONDS);
+            }
+        }
     }
 
     public synchronized boolean hasCapacity(Long userId, Long roomId, int capacity) {

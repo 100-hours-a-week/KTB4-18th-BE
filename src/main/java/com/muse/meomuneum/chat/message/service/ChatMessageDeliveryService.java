@@ -4,8 +4,11 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -29,6 +32,9 @@ import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 /** Handles SEND without allowing rejected payloads into framework error logging. */
 @Service
 public class ChatMessageDeliveryService {
@@ -43,6 +49,7 @@ public class ChatMessageDeliveryService {
     private final ObjectMapper mapper;
     private final ObjectProvider<SimpMessagingTemplate> broker;
     private final TransactionTemplate transactions;
+    private Timer dbStoreTimer;
 
     public ChatMessageDeliveryService(ChatPresenceRegistry presence,
             ChatRoomEntryService entry,
@@ -62,6 +69,30 @@ public class ChatMessageDeliveryService {
         this.broker = broker;
         transactions = new TransactionTemplate(transactionManager);
         transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    @Autowired
+    void configurePerformanceMetrics(MeterRegistry registry,
+            @Value("${performance.metrics-enabled:false}") boolean enabled) {
+        if (enabled) {
+            dbStoreTimer = registry.timer("performance.chat.db.store");
+        }
+    }
+
+    private ChatMessageResponse storeMessage(Long userId, Long roomId, String id, String masked) {
+        long startedAt = dbStoreTimer == null ? 0 : System.nanoTime();
+        try {
+            return transactions.execute(status -> {
+                if (messages.findByUser_IdAndClientMessageId(userId, id).isPresent()) {
+                    throw new ChatMessageRejection("CLIENT_ID_CONFLICT");
+                }
+                return ChatMessageResponse.from(storage.store(userId, roomId, id, masked).message());
+            });
+        } finally {
+            if (dbStoreTimer != null) {
+                dbStoreTimer.record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
+            }
+        }
     }
 
     public void send(Long userId, Long roomId, Long membershipId, String sessionId, String destination, byte[] body) {
@@ -98,13 +129,7 @@ public class ChatMessageDeliveryService {
                 contentPolicy.validatePersonalContent(text);
                 String masked = masking.mask(text);
                 String id = clientId;
-                ChatMessageResponse saved = transactions.execute(status -> {
-                    // A UUID from a previous process/membership must never expose old room content.
-                    if (messages.findByUser_IdAndClientMessageId(userId, id).isPresent()) {
-                        throw new ChatMessageRejection("CLIENT_ID_CONFLICT");
-                    }
-                    return ChatMessageResponse.from(storage.store(userId, roomId, id, masked).message());
-                });
+                ChatMessageResponse saved = storeMessage(userId, roomId, id, masked);
                 transmission.accepted(userId, membershipId, clientId, text, saved.messageId());
                 SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
                 headers.setHeader("chatRecipients", presence.recipients(roomId));

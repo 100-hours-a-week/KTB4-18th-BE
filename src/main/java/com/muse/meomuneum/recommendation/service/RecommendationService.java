@@ -13,8 +13,12 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -33,6 +37,7 @@ import com.muse.meomuneum.recommendation.provider.RecommendationStreamListener;
 import com.muse.meomuneum.recommendation.provider.StreamingRecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
@@ -56,19 +61,43 @@ public class RecommendationService {
         this.recommendationTaskExecutor = recommendationTaskExecutor;
     }
 
+    private Timer queueWaitTimer;
+    private Timer firstTextTimer;
+    private Counter rejectedTasks;
+
+    @Autowired
+    void configurePerformanceMetrics(@Value("${performance.metrics-enabled:false}") boolean enabled) {
+        if (enabled) {
+            queueWaitTimer = meterRegistry.timer("performance.recommendation.queue.wait");
+            firstTextTimer = meterRegistry.timer("performance.recommendation.first.text");
+            rejectedTasks = meterRegistry.counter("performance.recommendation.rejected");
+        }
+    }
+
     public RecommendationAcceptedResponse accept(RecommendationRequest request, String guestSessionId, Long userId) {
+        long acceptedAt = System.nanoTime();
         long recommendationId = repository.createSession(request, userId == null ? guestSessionId : null,
                 userId, Instant.now());
         eventStream.register(recommendationId);
         try {
-            recommendationTaskExecutor.execute(() -> process(recommendationId, request, guestSessionId, userId));
+            long queuedAt = System.nanoTime();
+            recommendationTaskExecutor.execute(() -> {
+                if (queueWaitTimer != null) {
+                    queueWaitTimer.record(System.nanoTime() - queuedAt, TimeUnit.NANOSECONDS);
+                }
+                process(recommendationId, request, guestSessionId, userId, acceptedAt);
+            });
         } catch (RejectedExecutionException exception) {
+            if (rejectedTasks != null) {
+                rejectedTasks.increment();
+            }
             fail(recommendationId, "FAILED", "추천 요청이 많아 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         }
         return new RecommendationAcceptedResponse(recommendationId, "PROCESSING", request.conversation_key());
     }
 
-    private void process(long recommendationId, RecommendationRequest request, String guestSessionId, Long userId) {
+    private void process(long recommendationId, RecommendationRequest request, String guestSessionId, Long userId,
+            long acceptedAt) {
         var requestTimer = Timer.start(meterRegistry);
         String outcome = "failure";
         try {
@@ -78,9 +107,13 @@ public class RecommendationService {
             try {
                 var command = new RecommendationCommand(UUID.fromString(request.conversation_key()),
                         UUID.randomUUID(), request.prompt().trim());
+                AtomicBoolean firstText = new AtomicBoolean();
                 RecommendationStreamListener listener = new RecommendationStreamListener() {
                     @Override
                     public void onText(String delta) {
+                        if (firstTextTimer != null && firstText.compareAndSet(false, true)) {
+                            firstTextTimer.record(System.nanoTime() - acceptedAt, TimeUnit.NANOSECONDS);
+                        }
                         eventStream.text(recommendationId, delta);
                     }
 
