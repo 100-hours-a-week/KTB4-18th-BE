@@ -1,0 +1,90 @@
+openapi: 3.0.3
+info:
+  title: Regional chat message query
+  version: 1.0.0
+  description: BE 145. Authenticated live tab view, permitted intervals and 24-hour retention are checked on every request.
+security: [{ bearerAuth: [] }]
+paths:
+  /api/v1/chat-rooms/{room_id}/messages:
+    get:
+      description: History is descending message ID; recovery is ascending. Cursor fixes the snapshot and scope. Absence messages are excluded before pagination.
+      parameters:
+        - { $ref: '#/components/parameters/Room' }
+        - { $ref: '#/components/parameters/Membership' }
+        - { $ref: '#/components/parameters/View' }
+        - { name: mode, in: query, schema: { type: string, enum: [history, recovery], default: history } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 4096 }, description: Opaque signed cursor; use CHAT_READY.recovery_cursor for reconnect recovery. }
+        - { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 50 } }
+      responses:
+        '200':
+          description: Permitted messages only; no hidden-message count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [items, next_cursor, has_next, snapshot_message_id, gaps]
+                    properties:
+                      items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/Message' } }
+                      next_cursor: { type: string, nullable: true }
+                      has_next: { type: boolean }
+                      snapshot_message_id: { type: integer, format: int64 }
+                      gaps: { type: array, items: { $ref: '#/components/schemas/Gap' } }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { description: Authentication required }
+        '403': { $ref: '#/components/responses/Denied' }
+  /api/v1/chat-rooms/{room_id}/messages/by-client-id/{client_message_id}:
+    get:
+      description: Only the caller's stored message inside this tab's permitted intervals. Foreign, absent and expired messages all return the same 404.
+      parameters:
+        - { $ref: '#/components/parameters/Room' }
+        - { $ref: '#/components/parameters/Membership' }
+        - { $ref: '#/components/parameters/View' }
+        - { name: client_message_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Own permitted stored message, including masked content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Message' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { description: Authentication required }
+        '403': { $ref: '#/components/responses/Denied' }
+        '404': { description: CHAT_MESSAGE_404_UNAVAILABLE; no original content or existence disclosure }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Room: { name: room_id, in: path, required: true, schema: { type: integer, format: int64 } }
+    Membership: { name: membership_id, in: query, required: true, schema: { type: integer, format: int64 } }
+    View: { name: X-Chat-View-Session, in: header, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Invalid: { description: CHAT_QUERY_400_INVALID; invalid size, mode, cursor, binding or expired cursor }
+    Denied: { description: Invalid or departed membership, disconnected or expired view, inactive user or active ban. data.code identifies the reason; active ban also includes data.banned_until. }
+  schemas:
+    Message:
+      type: object
+      required: [message_id, client_message_id, room_id, user_id, nickname, content, created_at]
+      properties:
+        message_id: { type: integer, format: int64 }
+        client_message_id: { type: string, format: uuid }
+        room_id: { type: integer, format: int64 }
+        user_id: { type: integer, format: int64 }
+        nickname: { type: string }
+        content: { type: string, description: Stored server content after masking }
+        created_at: { type: string, format: date-time, description: Server UTC }
+    Gap:
+      type: object
+      required: [reason, before_message_id, resumed_at]
+      properties:
+        reason: { type: string, enum: [ABSENCE, RETENTION] }
+        before_message_id: { type: integer, format: int64, description: Place marker before the first displayed message with a larger ID; retention uses 0. Not a count. }
+        resumed_at: { type: string, format: date-time, description: Server UTC; gap boundary only }

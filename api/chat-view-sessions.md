@@ -1,5 +1,9 @@
 # 지역 채팅 탭별 열람 구간
 
+2026-10-13 후속: BE #145의 실제 조회·CHAT_READY·cursor는
+`chat-message-recovery.md`와 `chat-message-query.openapi.yaml`에 구현 계약을 기록했다.
+아래의 후속/미구현 표기는 #143 완료 당시의 범위를 설명한다.
+
 BE #143. [이슈](https://github.com/100-hours-a-week/KTB4-18th-BE/issues/143).
 이 문서는 열람 문맥·참여 구간 기록과 재시작 검증에 한정한다.
 history/recovery REST, snapshot·cursor 및 FE 복구·캐시는 BE #145 / FE #136·#140 후속 작업이다.
