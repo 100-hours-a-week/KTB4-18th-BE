@@ -22,6 +22,7 @@ import com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
+import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.TokenClaims;
 
@@ -33,15 +34,17 @@ public class ChatStompInterceptor implements ChannelInterceptor {
     private final Clock clock;
     private final ChatSocketSessions sockets;
     private final ChatMessageDeliveryService delivery;
+    private final ChatViewLifecycle views;
     private final Map<String, Identity> identities = new ConcurrentHashMap<>();
 
     public ChatStompInterceptor(JwtTokenProvider tokens, ChatRoomEntryService entry, Clock clock,
-            ChatSocketSessions sockets, ChatMessageDeliveryService delivery) {
+            ChatSocketSessions sockets, ChatMessageDeliveryService delivery, ChatViewLifecycle views) {
         this.tokens = tokens;
         this.entry = entry;
         this.clock = clock;
         this.sockets = sockets;
         this.delivery = delivery;
+        this.views = views;
     }
 
     @Override
@@ -85,7 +88,16 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             if (claims.expiresAt() == null || !claims.expiresAt().isAfter(clock.instant())) {
                 throw new IllegalArgumentException("AUTH_REQUIRED");
             }
+            String requestedViewId = headers.getFirstNativeHeader("view_session_id");
+            headers.removeNativeHeader("view_session_id");
             entry.connect(claims.userId(), roomId, membershipId, headers.getSessionId());
+            try {
+                views.connected(claims.userId(), roomId, membershipId, headers.getSessionId(),
+                        requestedViewId);
+            } catch (RuntimeException failure) {
+                sockets.close(Set.of(headers.getSessionId()), 4103, "CHAT_VIEW_UNAVAILABLE");
+                throw failure;
+            }
             Identity identity = new Identity(claims.userId(), claims.expiresAt(), roomId, membershipId);
             attributes.put("chat.identity", identity);
             identities.put(headers.getSessionId(), identity);
@@ -105,7 +117,10 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                     && !"/user/queue/chat-events".equals(destination)) {
                 throw new IllegalArgumentException("CHAT_DESTINATION_DENIED");
             }
-        } else if (headers.getCommand() != StompCommand.UNSUBSCRIBE) {
+        } else if (headers.getCommand() == StompCommand.UNSUBSCRIBE) {
+            // End reading before asynchronous broker unregistration can race a later message.
+            views.unsubscribed(headers.getSessionId(), headers.getSubscriptionId());
+        } else {
             // Message sending is introduced by #141. Never allow direct broker publishing.
             throw new IllegalArgumentException("CHAT_SEND_UNAVAILABLE");
         }

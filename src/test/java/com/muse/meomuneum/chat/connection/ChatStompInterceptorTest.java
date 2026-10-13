@@ -29,7 +29,8 @@ class ChatStompInterceptorTest {
     private final ChatRoomEntryService entry = mock(ChatRoomEntryService.class);
     private final ChatStompInterceptor interceptor = new ChatStompInterceptor(jwt, entry,
             Clock.fixed(NOW, ZoneOffset.UTC), mock(ChatSocketSessions.class),
-            mock(com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService.class));
+            mock(com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService.class),
+            mock(com.muse.meomuneum.chat.view.ChatViewLifecycle.class));
 
     @Test
     void authenticatesThenAuthorizesEverySubscriptionAndRedactsTheAuthorizationHeader() {

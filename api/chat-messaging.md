@@ -16,6 +16,9 @@ STOMP 1.2 `/ws`. CONNECT의 Authorization Bearer, room_id, membership_id로 계�
 
 ## 이벤트
 
+탭별 열람 문맥 발급 `CHAT_VIEW_READY`와 선택 CONNECT 헤더 `view_session_id`는
+[열람 구간 계약](chat-view-sessions.md)을 따른다. 메시지 조회·복구 API는 #145 후속 작업이다.
+
 접속 인원 최초 조회·변경 알림 `CHAT_PRESENCE`는 [접속 인원 계약](chat-presence.md)을 따른다.
 
 모두 `{ "type": "이벤트명", "data": {...} }`. 시각은 UTC ISO-8601. author/client_message_id는 서버가 인증 계정과 저장 결과로 설정한다.

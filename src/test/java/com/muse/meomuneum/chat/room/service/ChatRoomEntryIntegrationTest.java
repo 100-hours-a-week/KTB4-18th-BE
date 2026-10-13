@@ -100,6 +100,7 @@ class ChatRoomEntryIntegrationTest {
                 .forEach(service::leaveAll);
         jdbcTemplate.update("DELETE FROM chat_room_messages");
         jdbcTemplate.update("DELETE FROM chat_bans");
+        jdbcTemplate.update("DELETE FROM chat_view_sessions");
         jdbcTemplate.update("DELETE FROM chat_room_members");
         jdbcTemplate.update("DELETE FROM users WHERE email LIKE 'chat-entry-%'");
         jdbcTemplate.update("UPDATE chat_rooms SET capacity = 25, status = 'ACTIVE'");
@@ -283,6 +284,8 @@ class ChatRoomEntryIntegrationTest {
             first.socket.sendText("SUBSCRIBE\nid:room\ndestination:/topic/chat-rooms/" + room.getId()
                     + "\nreceipt:ready\n\n\u0000", true).join();
             assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("receipt-id:ready"));
+            assertTrue(first.viewFrames.poll(5, TimeUnit.SECONDS).contains("view_session_id"));
+            assertEquals(null, second.viewFrames.poll(150, TimeUnit.MILLISECONDS));
             service.leave(userId, room.getId(), membershipId);
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
@@ -577,6 +580,7 @@ class ChatRoomEntryIntegrationTest {
     private static final class SocketProbe implements java.net.http.WebSocket.Listener {
         private java.net.http.WebSocket socket;
         private final BlockingQueue<String> presenceFrames = new LinkedBlockingQueue<>();
+        private final BlockingQueue<String> viewFrames = new LinkedBlockingQueue<>();
         private final BlockingQueue<String> frames = new LinkedBlockingQueue<>();
         private final CompletableFuture<Integer> closed = new CompletableFuture<>();
         private String closeReason;
@@ -589,6 +593,8 @@ class ChatRoomEntryIntegrationTest {
             if (last) {
                 if (text.toString().contains("CHAT_PRESENCE")) {
                     presenceFrames.add(text.toString());
+                } else if (text.toString().contains("CHAT_VIEW_READY")) {
+                    viewFrames.add(text.toString());
                 } else {
                     frames.add(text.toString());
                 }
