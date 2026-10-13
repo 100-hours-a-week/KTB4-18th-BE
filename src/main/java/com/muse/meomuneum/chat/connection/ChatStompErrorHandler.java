@@ -19,6 +19,7 @@ public class ChatStompErrorHandler extends StompSubProtocolErrorHandler {
                 code = switch (chatException.getErrorCode()) {
                     case CHAT_BANNED -> "CHAT_BANNED";
                     case CHAT_ROOM_CAPACITY_EXCEEDED -> "CHAT_FULL";
+                    case CHAT_VIEW_UNAVAILABLE -> "CHAT_VIEW_UNAVAILABLE";
                     default -> "CHAT_LEFT";
                 };
                 break;

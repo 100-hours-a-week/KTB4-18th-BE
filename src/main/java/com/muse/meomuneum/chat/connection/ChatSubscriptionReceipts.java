@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.chat.message.dto.ChatMessageEvent;
+import com.muse.meomuneum.chat.message.query.ChatMessageQueryService;
 import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 
 /** The simple broker has no native receipts; acknowledge only after it registers the subscription. */
@@ -29,13 +30,16 @@ public class ChatSubscriptionReceipts implements ExecutorChannelInterceptor {
     private final ChatPresenceRegistry presence;
     private final ChatViewLifecycle views;
     private final ObjectMapper mapper;
+    private final ChatMessageQueryService queries;
 
     public ChatSubscriptionReceipts(@Qualifier("clientOutboundChannel") ObjectProvider<MessageChannel> outbound,
-            ChatPresenceRegistry presence, ChatViewLifecycle views, ObjectMapper mapper) {
+            ChatPresenceRegistry presence, ChatViewLifecycle views, ObjectMapper mapper,
+            ChatMessageQueryService queries) {
         this.outbound = outbound;
         this.presence = presence;
         this.views = views;
         this.mapper = mapper;
+        this.queries = queries;
     }
 
     @Override
@@ -99,6 +103,12 @@ public class ChatSubscriptionReceipts implements ExecutorChannelInterceptor {
             byte[] body = mapper.writeValueAsBytes(new ChatMessageEvent("CHAT_VIEW_READY",
                     Map.of("view_session_id", viewId)));
             outbound.getObject().send(MessageBuilder.createMessage(body, headers.getMessageHeaders()));
+            Object last = incoming.getSessionAttributes() == null
+                    ? null
+                    : incoming.getSessionAttributes().get("chat.last_message_id");
+            byte[] ready = mapper.writeValueAsBytes(new ChatMessageEvent("CHAT_READY",
+                    queries.ready(incoming.getSessionId(), viewId, last instanceof Long id ? id : 0)));
+            outbound.getObject().send(MessageBuilder.createMessage(ready, headers.getMessageHeaders()));
         } catch (JsonProcessingException impossible) {
             throw new IllegalStateException("chat view serialization failed");
         }

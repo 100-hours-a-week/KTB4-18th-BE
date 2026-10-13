@@ -40,7 +40,8 @@ import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
 import com.muse.meomuneum.user.repository.UserRepository;
 
-@SpringBootTest(properties = {"chat.message-cleanup.enabled=false", "recommendation.ai.base-url=http://localhost:8000",
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "chat.message-cleanup.enabled=false", "recommendation.ai.base-url=http://localhost:8000",
         "speech.transcription.ai.base-url=http://localhost:8000",
         "location.reverse-geocoding.base-url=http://localhost:8000"})
 @ActiveProfiles("test")
@@ -74,6 +75,12 @@ class ChatViewStorageIntegrationTest {
     private JdbcTemplate jdbc;
     @Autowired
     private MutableClock clock;
+    @Autowired
+    private com.muse.meomuneum.chat.message.query.ChatMessageQueryService queries;
+    @Autowired
+    private com.muse.meomuneum.global.security.JwtTokenProvider jwt;
+    @org.springframework.boot.test.web.server.LocalServerPort
+    private int port;
     private Long userId;
     private Long roomId;
     private Long membershipId;
@@ -325,6 +332,166 @@ class ChatViewStorageIntegrationTest {
         assertEquals(0, count("chat_view_intervals"));
     }
 
+    @Test
+    void recoveryPagesStayWithinSnapshotWhileLiveMessagesContinue() {
+        String view = connectAndSubscribe("query", null);
+        Long first = message("first");
+        Long second = message("second");
+        Long third = message("third");
+        String cursor = (String) queries.ready("query", view, 0).get("recovery_cursor");
+        var page = queries.query(userId, roomId, membershipId, view, "recovery", cursor, 2);
+        assertEquals(List.of(first, second), page.items().stream().map(item -> item.messageId()).toList());
+        assertTrue(page.hasNext());
+        Long live = message("live-after-snapshot");
+        var next = queries.query(userId, roomId, membershipId, view, "recovery", page.nextCursor(), 2);
+        assertEquals(List.of(third), next.items().stream().map(item -> item.messageId()).toList());
+        assertFalse(next.hasNext());
+        assertEquals(third.longValue(), next.snapshotMessageId());
+        var history = queries.query(userId, roomId, membershipId, view, "history", null, 2);
+        assertEquals(List.of(live, third), history.items().stream().map(item -> item.messageId()).toList());
+        var older = queries.query(userId, roomId, membershipId, view, "history", history.nextCursor(), 2);
+        assertEquals(List.of(second, first), older.items().stream().map(item -> item.messageId()).toList());
+    }
+
+    @Test
+    void pagesAndClientIdLookupExcludeBeforeSubscribeAndAbsentMessages() {
+        Long before = message("before-subscribe");
+        String view = connectAndSubscribe("query", null);
+        Long live = message("live");
+        presence.disconnect("query");
+        clock.set(START.plusSeconds(29));
+        Long grace = message("grace");
+        clock.set(START.plusSeconds(30));
+        Long absent = message("absent");
+        clock.set(START.plusSeconds(120));
+        connectAndSubscribe("query-again", view);
+        Long resumed = message("resumed");
+        var page = queries.query(userId, roomId, membershipId, view, "recovery", null, 50);
+        assertEquals(List.of(live, grace, resumed), page.items().stream().map(item -> item.messageId()).toList());
+        assertFalse(page.hasNext());
+        assertEquals("ABSENCE", page.gaps().getFirst().reason());
+        for (Long forbidden : List.of(before, absent)) {
+            String client = jdbc.queryForObject("SELECT client_message_id FROM chat_room_messages WHERE id = ?",
+                    String.class, forbidden);
+            assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                    () -> queries.byClientId(userId, roomId, membershipId, view, client));
+        }
+        String client = jdbc.queryForObject("SELECT client_message_id FROM chat_room_messages WHERE id = ?",
+                String.class, resumed);
+        assertEquals(resumed, queries.byClientId(userId, roomId, membershipId, view, client).messageId());
+    }
+
+    @Test
+    void cursorCannotChangeViewModeOrPayloadAndEveryPageRechecksDeparture() {
+        String first = connectAndSubscribe("first", null);
+        String second = connectAndSubscribe("second", null);
+        message("first");
+        message("second");
+        String cursor = (String) queries.ready("first", first, 0).get("recovery_cursor");
+        assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                () -> queries.query(userId, roomId, membershipId, second, "recovery", cursor, 1));
+        assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                () -> queries.query(userId, roomId, membershipId, first, "history", cursor, 1));
+        assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                () -> queries.query(userId, roomId, membershipId, first, "recovery", "x" + cursor, 1));
+        var page = queries.query(userId, roomId, membershipId, first, "recovery", cursor, 1);
+        entry.leave(userId, roomId, membershipId);
+        assertThrows(ChatRoomException.class,
+                () -> queries.query(userId, roomId, membershipId, first, "recovery", page.nextCursor(), 1));
+    }
+
+    @Test
+    void clientIdLookupDoesNotReturnAnotherAuthorsMessageAndExpiredCursorCannotReviveData() {
+        String view = connectAndSubscribe("query", null);
+        jdbc.update(
+                "INSERT INTO users (email,password_hash,nickname,role) " +
+                        "VALUES ('view-writer@example.com','test-only','view-writer','USER')");
+        Long writer = jdbc.queryForObject("SELECT id FROM users WHERE email = 'view-writer@example.com'", Long.class);
+        String foreignId = UUID.randomUUID().toString();
+        messages.store(writer, roomId, foreignId, "other-author");
+        assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                () -> queries.byClientId(userId, roomId, membershipId, view, foreignId));
+        message("expires");
+        clock.set(START.plusSeconds(1));
+        String cursor = (String) queries.ready("query", view, 0).get("recovery_cursor");
+        clock.set(START.plusSeconds(24 * 3600));
+        var page = queries.query(userId, roomId, membershipId, view, "recovery", cursor, 50);
+        assertTrue(page.items().isEmpty());
+        assertEquals("RETENTION", page.gaps().getFirst().reason());
+        clock.set(START.plusSeconds(24 * 3600 + 1));
+        assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                () -> queries.query(userId, roomId, membershipId, view, "recovery", cursor, 50));
+    }
+
+    @Test
+    void activeBanAndSocketDisconnectBlockQueriesEvenWithSavedCursor() {
+        String view = connectAndSubscribe("query", null);
+        message("first");
+        String cursor = (String) queries.ready("query", view, 0).get("recovery_cursor");
+        jdbc.update(
+                "INSERT INTO chat_bans (user_id,banned_by_user_id,reason,created_at,expires_at) " +
+                        "VALUES (?,?,'PROFANITY',?,?)",
+                userId, userId, local(START), local(START.plusSeconds(3600)));
+        assertThrows(ChatRoomException.class,
+                () -> queries.query(userId, roomId, membershipId, view, "recovery", cursor, 50));
+        jdbc.update("DELETE FROM chat_bans");
+        presence.disconnect("query");
+        assertThrows(ChatRoomException.class,
+                () -> queries.query(userId, roomId, membershipId, view, "recovery", cursor, 50));
+    }
+
+    @Test
+    void realHttpRequiresAuthenticationViewHeaderAndValidBoundCursor() throws Exception {
+        String view = connectAndSubscribe("query", null);
+        Long id = message("http");
+        String path = "/api/v1/chat-rooms/" + roomId + "/messages?membership_id=" + membershipId;
+        assertEquals(401, http(path, null, view).statusCode());
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow());
+        assertEquals(400, http(path, token, null).statusCode());
+        assertEquals(400, http(path + "&size=51", token, view).statusCode());
+        var response = http(path, token, view);
+        assertEquals(200, response.statusCode());
+        assertTrue(response.body().contains("\"message_id\":" + id));
+        assertEquals(403, http(path, token, UUID.randomUUID().toString()).statusCode());
+        assertEquals(400, http(path + "&cursor=invalid", token, view).statusCode());
+        entry.leave(userId, roomId, membershipId);
+        assertEquals(403, http(path, token, view).statusCode());
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "CHAT_RECOVERY_FE_DIR", matches = ".+")
+    void actualFrontendClientRecoversAndMergesThroughRealHttpAndWebSocket() throws Exception {
+        clock.useRealTime();
+        var directory = java.nio.file.Path.of(System.getenv("CHAT_RECOVERY_FE_DIR"));
+        var process = new ProcessBuilder("node", "node_modules/vitest/vitest.mjs", "run",
+                "src/features/chat-entry/services/chatRecovery.integration.test.ts")
+                .directory(directory.toFile()).redirectErrorStream(true);
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_URL", "http://127.0.0.1:" + port);
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_TOKEN",
+                jwt.createAccessToken(users.findById(userId).orElseThrow()));
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", membershipId.toString());
+        Process running = process.start();
+        if (!running.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)) {
+            running.destroyForcibly();
+            throw new AssertionError("frontend integration timed out");
+        }
+        String output = new String(running.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(0, running.exitValue(), output);
+    }
+
+    private java.net.http.HttpResponse<String> http(String path, String token, String view) throws Exception {
+        var request = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:" + port + path));
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        if (view != null) {
+            request.header("X-Chat-View-Session", view);
+        }
+        return java.net.http.HttpClient.newHttpClient().send(request.GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+    }
+
     private ChatViewStorageService restartedStorage() {
         ChatViewStorageService restarted = new ChatViewStorageService(jdbc, members, users, bans, clock);
         restarted.recoverAfterRestart();
@@ -375,9 +542,15 @@ class ChatViewStorageIntegrationTest {
 
     static class MutableClock extends Clock {
         private volatile Instant instant = START;
+        private volatile boolean realTime;
 
         void set(Instant time) {
+            realTime = false;
             instant = time;
+        }
+
+        void useRealTime() {
+            realTime = true;
         }
 
         @Override
@@ -392,7 +565,7 @@ class ChatViewStorageIntegrationTest {
 
         @Override
         public Instant instant() {
-            return instant;
+            return realTime ? Instant.now() : instant;
         }
     }
 }

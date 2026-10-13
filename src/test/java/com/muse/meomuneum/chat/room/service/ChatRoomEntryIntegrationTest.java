@@ -593,7 +593,7 @@ class ChatRoomEntryIntegrationTest {
             if (last) {
                 if (text.toString().contains("CHAT_PRESENCE")) {
                     presenceFrames.add(text.toString());
-                } else if (text.toString().contains("CHAT_VIEW_READY")) {
+                } else if (text.toString().contains("CHAT_VIEW_READY") || text.toString().contains("CHAT_READY")) {
                     viewFrames.add(text.toString());
                 } else {
                     frames.add(text.toString());

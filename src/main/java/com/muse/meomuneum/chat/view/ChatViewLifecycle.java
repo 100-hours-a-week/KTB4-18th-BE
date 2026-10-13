@@ -106,6 +106,19 @@ public class ChatViewLifecycle {
     }
 
     /** For #145: a durable view alone is insufficient; require its current live subscription as well. */
+    public Context context(String socketId) {
+        return presence.exclusive(() -> {
+            Connection connection = connections.get(socketId);
+            if (connection == null || connection.subscriptions.isEmpty()) {
+                throw denied();
+            }
+            return new Context(connection.userId, connection.roomId, connection.membershipId);
+        });
+    }
+
+    public record Context(Long userId, Long roomId, Long membershipId) {
+    }
+
     public List<ChatViewInterval> authorize(Long userId, Long roomId, Long membershipId, String viewId) {
         return presence.exclusive(() -> {
             boolean subscribed = viewId != null && connections.entrySet().stream().anyMatch(entry -> {
