@@ -181,7 +181,7 @@ public class ChatViewStorageService {
         users.findActiveByIdForUpdate(userId)
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.USER_NOT_FOUND));
         if (bans.hasActiveBan(userId)) {
-            throw new ChatRoomException(ChatRoomErrorCode.CHAT_BANNED);
+            throw new ChatRoomException(ChatRoomErrorCode.CHAT_BANNED, bans.activeBanUntil(userId).orElse(null));
         }
         members.findByIdAndUser_IdAndChatRoom_Id(membershipId, userId, roomId)
                 .filter(ChatRoomMember::isActive).filter(member -> member.getChatRoom().isActive())

@@ -90,6 +90,17 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             }
             String requestedViewId = headers.getFirstNativeHeader("view_session_id");
             headers.removeNativeHeader("view_session_id");
+            String lastMessage = headers.getFirstNativeHeader("last_message_id");
+            headers.removeNativeHeader("last_message_id");
+            try {
+                long lastId = lastMessage == null ? 0 : Long.parseLong(lastMessage);
+                if (lastId < 0) {
+                    throw new IllegalArgumentException("CHAT_QUERY_INVALID");
+                }
+                attributes.put("chat.last_message_id", lastId);
+            } catch (NumberFormatException invalid) {
+                throw new IllegalArgumentException("CHAT_QUERY_INVALID");
+            }
             entry.connect(claims.userId(), roomId, membershipId, headers.getSessionId());
             try {
                 views.connected(claims.userId(), roomId, membershipId, headers.getSessionId(),
