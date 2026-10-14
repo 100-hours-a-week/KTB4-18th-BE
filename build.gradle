@@ -69,6 +69,19 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	exclude '**/ChatRecoveryProcessIntegrationTest.class'
+}
+
+// Separate JVM lifecycle tests deliberately kill only the server process they create.
+tasks.register('chatProcessTest', Test) {
+	dependsOn 'classes'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/ChatRecoveryProcessIntegrationTest.class'
+	systemProperty 'chat.process.classpath', sourceSets.main.runtimeClasspath.asPath
+	systemProperty 'user.timezone', 'UTC'
+	outputs.upToDateWhen { false }
 }
 
 // Temporary local profile: stage only migrations needed by music-record development.
@@ -83,6 +96,7 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20261007205113__create_chat_room_messages_table.sql'
 		include 'V20261007205453__create_chat_bans_table.sql'
 		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
+		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -104,6 +118,7 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20261007205113__create_chat_room_messages_table.sql'
 		include 'V20261007205453__create_chat_bans_table.sql'
 		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
+		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'

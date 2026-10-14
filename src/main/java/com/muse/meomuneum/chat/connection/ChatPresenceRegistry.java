@@ -16,6 +16,8 @@ import com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties;
 import com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
+import com.muse.meomuneum.chat.view.ChatViewConnectionClosedEvent;
+import com.muse.meomuneum.chat.view.ChatViewMembershipEndedEvent;
 
 /** Single-server seats. All database transitions must finish inside exclusive(). */
 @Component
@@ -75,6 +77,7 @@ public class ChatPresenceRegistry {
     }
 
     public synchronized void disconnect(String sessionId) {
+        events.publishEvent(new ChatViewConnectionClosedEvent(sessionId));
         for (Seat seat : seats.values()) {
             int previousCount = connectedCount(seat.roomId);
             seat.subscriptions.remove(sessionId);
@@ -91,6 +94,7 @@ public class ChatPresenceRegistry {
     }
 
     public synchronized Set<String> remove(Long userId, Long membershipId) {
+        events.publishEvent(new ChatViewMembershipEndedEvent(membershipId));
         transmission.ended(membershipId);
         Seat seat = seats.get(userId);
         if (seat == null || !seat.membershipId.equals(membershipId)) {

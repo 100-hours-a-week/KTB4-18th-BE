@@ -23,7 +23,11 @@ class ChatPresenceRegistryTest {
                 new com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy(clock,
                         new com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties.Rules(
                                 null, true)),
-                event -> events.add((ChatPresenceChangedEvent) event));
+                event -> {
+                    if (event instanceof ChatPresenceChangedEvent change) {
+                        events.add(change);
+                    }
+                });
         registry.reserve(1L, 10L, 100L);
         assertEquals(0, registry.connectedCount(10L));
         registry.connect(1L, 10L, 100L, 25, "first");
