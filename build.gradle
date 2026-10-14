@@ -69,6 +69,19 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	exclude '**/ChatRecoveryProcessIntegrationTest.class'
+}
+
+// Separate JVM lifecycle tests deliberately kill only the server process they create.
+tasks.register('chatProcessTest', Test) {
+	dependsOn 'classes'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/ChatRecoveryProcessIntegrationTest.class'
+	systemProperty 'chat.process.classpath', sourceSets.main.runtimeClasspath.asPath
+	systemProperty 'user.timezone', 'UTC'
+	outputs.upToDateWhen { false }
 }
 
 // Temporary local profile: stage only migrations needed by music-record development.
