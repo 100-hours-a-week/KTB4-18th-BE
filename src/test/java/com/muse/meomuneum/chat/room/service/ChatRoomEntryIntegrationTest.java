@@ -70,6 +70,9 @@ class ChatRoomEntryIntegrationTest {
     private ChatRoomEntryService service;
 
     @Autowired
+    private com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry authSessions;
+
+    @Autowired
     private ChatRoomRepository chatRoomRepository;
 
     @Autowired
@@ -104,6 +107,34 @@ class ChatRoomEntryIntegrationTest {
         jdbcTemplate.update("DELETE FROM chat_room_members");
         jdbcTemplate.update("DELETE FROM users WHERE email LIKE 'chat-entry-%'");
         jdbcTemplate.update("UPDATE chat_rooms SET capacity = 25, status = 'ACTIVE'");
+    }
+
+    @Test
+    void realSocketsKeepSignedSessionAcrossTokenRotationAndRemoveOnlyClosedConnection() throws Exception {
+        Long userId = createUser("auth-context");
+        ChatRoom room = roomFor("41135");
+        var joined = service.join(userId, room.getId(), issueToken(userId, room.getRegion())).membership();
+        String sid = java.util.UUID.randomUUID().toString();
+        String otherSid = java.util.UUID.randomUUID().toString();
+        var user = users.findById(userId).orElseThrow();
+        var first = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, sid));
+        var refreshed = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, sid));
+        var other = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, otherSid));
+        try {
+            assertEquals(2, authSessions.connections(userId, sid).size());
+            assertEquals(1, authSessions.connections(userId, otherSid).size());
+            first.socket.sendClose(1000, "test complete").join();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (authSessions.connections(userId, sid).size() != 1 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertEquals(1, authSessions.connections(userId, sid).size());
+            assertEquals(1, authSessions.connections(userId, otherSid).size());
+        } finally {
+            first.socket.abort();
+            refreshed.socket.abort();
+            other.socket.abort();
+        }
     }
 
     @Test
@@ -566,11 +597,15 @@ class ChatRoomEntryIntegrationTest {
     }
 
     private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId) throws Exception {
+        return connectSocket(userId, roomId, membershipId,
+                jwt.createAccessToken(users.findById(userId).orElseThrow(), java.util.UUID.randomUUID().toString()));
+    }
+
+    private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId, String token) throws Exception {
         SocketProbe probe = new SocketProbe();
         probe.socket = java.net.http.HttpClient.newHttpClient().newWebSocketBuilder()
                 .header("Origin", "http://localhost:5174").subprotocols("v12.stomp")
                 .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), probe).get(5, TimeUnit.SECONDS);
-        String token = jwt.createAccessToken(users.findById(userId).orElseThrow());
         probe.socket.sendText("CONNECT\naccept-version:1.2\nheart-beat:0,0\nAuthorization:Bearer " + token
                 + "\nroom_id:" + roomId + "\nmembership_id:" + membershipId + "\n\n\u0000", true).join();
         assertTrue(probe.frames.poll(5, TimeUnit.SECONDS).startsWith("CONNECTED"));

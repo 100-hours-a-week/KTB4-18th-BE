@@ -446,7 +446,8 @@ class ChatViewStorageIntegrationTest {
         Long id = message("http");
         String path = "/api/v1/chat-rooms/" + roomId + "/messages?membership_id=" + membershipId;
         assertEquals(401, http(path, null, view).statusCode());
-        String token = jwt.createAccessToken(users.findById(userId).orElseThrow());
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(),
+                java.util.UUID.randomUUID().toString());
         assertEquals(400, http(path, token, null).statusCode());
         assertEquals(400, http(path + "&size=51", token, view).statusCode());
         var response = http(path, token, view);
@@ -468,7 +469,7 @@ class ChatViewStorageIntegrationTest {
                 .directory(directory.toFile()).redirectErrorStream(true);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_URL", "http://127.0.0.1:" + port);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_TOKEN",
-                jwt.createAccessToken(users.findById(userId).orElseThrow()));
+                jwt.createAccessToken(users.findById(userId).orElseThrow(), java.util.UUID.randomUUID().toString()));
         process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", membershipId.toString());
         Process running = process.start();
