@@ -13,13 +13,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.muse.meomuneum.auth.application.AuthService;
+import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.dto.CsrfTokenResponse;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.response.AuthSuccessCode;
-import com.muse.meomuneum.auth.service.AuthService;
-import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.response.ApiResponse;
 
 @RestController
@@ -35,16 +35,27 @@ public class AuthController {
     }
 
     @GetMapping("/token/csrf")
-    public ResponseEntity<ApiResponse<CsrfTokenResponse>> issueCsrfToken(HttpServletRequest request) {
-        CsrfTokenResponse response = new CsrfTokenResponse(csrfTokenService.issueToken(request));
+    public ResponseEntity<ApiResponse<CsrfTokenResponse>> issueCsrfToken(HttpServletRequest request,
+            HttpServletResponse servletResponse) {
+        CsrfTokenResponse response = new CsrfTokenResponse(csrfTokenService.issueToken(request, servletResponse));
         return ResponseEntity.ok(ApiResponse.of("csrf token issued", response));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody LoginRequest request,
+    public ResponseEntity<ApiResponse<?>> login(@Valid @RequestBody LoginRequest request,
             HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
         HttpHeaders headers = new HttpHeaders();
-        TokenResponse tokenResponse = authService.login(request, servletRequest, headers);
+        headers.setCacheControl("no-store");
+        TokenResponse tokenResponse;
+        try {
+            tokenResponse = authService.login(request, servletRequest, headers);
+        } catch (AuthenticationFailedException exception) {
+            headers.getOrEmpty(HttpHeaders.SET_COOKIE)
+                    .forEach(cookie -> servletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie));
+            headers.remove(HttpHeaders.SET_COOKIE);
+            return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
+                    exception.getErrorCode().status());
+        }
         headers.getOrEmpty(HttpHeaders.SET_COOKIE)
                 .forEach(cookie -> servletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie));
         headers.remove(HttpHeaders.SET_COOKIE);
@@ -55,6 +66,7 @@ public class AuthController {
     @PostMapping("/token/refresh")
     public ResponseEntity<ApiResponse<?>> refresh(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
+        headers.setCacheControl("no-store");
         try {
             TokenResponse tokenResponse = authService.refresh(request, headers);
             return new ResponseEntity<>(ApiResponse.of("token refreshed", tokenResponse), headers, HttpStatus.OK);
@@ -64,9 +76,18 @@ public class AuthController {
         }
     }
 
+    @PostMapping("/login/recovery")
+    public ResponseEntity<ApiResponse<TokenResponse>> recoverLogin(HttpServletRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setCacheControl("no-store");
+        TokenResponse response = authService.recoverLogin(request, headers);
+        return new ResponseEntity<>(ApiResponse.of("login recovered", response), headers, HttpStatus.OK);
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
+        headers.setCacheControl("no-store");
         try {
             authService.logout(request, headers);
             return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);

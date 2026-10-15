@@ -13,7 +13,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import com.muse.meomuneum.auth.service.ChatLogoutEvent;
+import com.muse.meomuneum.auth.application.ChatLogoutEvent;
 import com.muse.meomuneum.chat.ban.service.ChatBanStorageService;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;

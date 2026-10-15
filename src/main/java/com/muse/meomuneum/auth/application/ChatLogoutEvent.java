@@ -1,4 +1,4 @@
-package com.muse.meomuneum.auth.service;
+package com.muse.meomuneum.auth.application;
 
 public record ChatLogoutEvent(Long userId) {
 }
