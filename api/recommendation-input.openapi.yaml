@@ -4,6 +4,68 @@ info:
   version: 1.0.0
   description: 기존 201~1000자 입력은 이제 400으로 거절됩니다. 성공 접수와 GET SSE 계약은 유지합니다.
 paths:
+  /api/v1/recommendations/images:
+    post:
+      summary: 장소 이미지 기반 추천 접수
+      description: >-
+        JPEG 원본은 일시 처리하며 저장하지 않습니다. 인증 사용자의 요청만 허용합니다.
+        이미지 파일은 최대 5 MiB, 전체 multipart 요청은 최대 6 MiB입니다.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image, conversation_key, input_type, trigger_type]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: JPEG 파일, 최대 5 MiB
+                conversation_key:
+                  type: string
+                  format: uuid
+                input_type:
+                  type: string
+                  const: IMAGE
+                trigger_type:
+                  type: string
+                  const: CHATBOT
+      responses:
+        '202':
+          description: PROCESSING 상태로 접수 완료
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/RecommendationAccepted'
+        '400':
+          description: 요청 필드 또는 이미지 형식 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+        '401':
+          description: Bearer 인증 필요
+        '413':
+          description: 이미지가 5 MiB 또는 전체 요청이 6 MiB를 초과함
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+        '415':
+          description: JPEG가 아닌 이미지
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
   /api/v1/recommendations:
     post:
       summary: 텍스트 또는 확정된 음성 전사문으로 추천 접수
@@ -53,3 +115,30 @@ paths:
               example:
                 message: 입력 내용과 요청 형식을 확인해 주세요. (최대 200자)
                 data: null
+components:
+  schemas:
+    RecommendationAccepted:
+      type: object
+      required: [recommendation_id, status, conversation_key]
+      properties:
+        recommendation_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          const: PROCESSING
+        conversation_key:
+          type: string
+          format: uuid
+    RecommendationError:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: 'null'
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
