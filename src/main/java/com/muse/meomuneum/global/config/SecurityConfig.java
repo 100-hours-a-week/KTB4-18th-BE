@@ -12,16 +12,13 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.context.DelegatingSecurityContextRepository;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
-import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.global.security.BearerTokenSecurityContextRepository;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.RequestOriginValidationFilter;
@@ -48,6 +45,7 @@ public class SecurityConfig {
             throws Exception {
         String[] csrfIgnoredPaths = {
                 "/api/v1/auth/login",
+                "/api/v1/auth/login-queue/tickets",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
@@ -105,21 +103,24 @@ public class SecurityConfig {
     }
 
     @Bean
-    public CsrfTokenRepository csrfTokenRepository() {
-        HttpSessionCsrfTokenRepository repository = new HttpSessionCsrfTokenRepository();
+    public CsrfTokenRepository csrfTokenRepository(
+            @Value("${auth.cookie.secure:true}") boolean secureCookie,
+            @Value("${auth.cookie.same-site:Lax}") String sameSite) {
+        CookieCsrfTokenRepository repository = new CookieCsrfTokenRepository();
         repository.setHeaderName("X-CSRF-TOKEN");
+        repository.setCookieName("XSRF-TOKEN");
+        repository.setCookiePath("/api/v1/auth");
+        repository.setCookieCustomizer(cookie -> cookie.httpOnly(true).secure(secureCookie).sameSite(sameSite));
         return repository;
     }
 
     @Bean
     public SecurityContextRepository securityContextRepository() {
-        SecurityContextRepository sessionRepository = new DelegatingSecurityContextRepository(
-                new RequestAttributeSecurityContextRepository(), new HttpSessionSecurityContextRepository());
-        return new BearerTokenSecurityContextRepository(sessionRepository);
+        return new RequestAttributeSecurityContextRepository();
     }
 
     @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public PasswordEncoder passwordEncoder(@Value("${auth.bcrypt.strength:8}") int strength) {
+        return new BCryptPasswordEncoder(strength);
     }
 }

@@ -13,6 +13,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.fasterxml.jackson.annotation.JsonSetter;
+import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
 import com.muse.meomuneum.user.account.service.ProfileImageService;
@@ -47,19 +49,27 @@ public class UserAccountController {
     private final UserTermsAgreementService userTermsAgreementService;
 
     private final ProfileImageService profileImageService;
+    private final AuthService authService;
 
     @Autowired
     public UserAccountController(UserAccountService userAccountService, CurrentUserResolver currentUserResolver,
-            UserTermsAgreementService userTermsAgreementService, ProfileImageService profileImageService) {
+            UserTermsAgreementService userTermsAgreementService, ProfileImageService profileImageService,
+            AuthService authService) {
         this.userAccountService = userAccountService;
         this.currentUserResolver = currentUserResolver;
         this.userTermsAgreementService = userTermsAgreementService;
         this.profileImageService = profileImageService;
+        this.authService = authService;
+    }
+
+    public UserAccountController(UserAccountService userAccountService, CurrentUserResolver currentUserResolver,
+            UserTermsAgreementService userTermsAgreementService, ProfileImageService profileImageService) {
+        this(userAccountService, currentUserResolver, userTermsAgreementService, profileImageService, null);
     }
 
     public UserAccountController(UserAccountService userAccountService, CurrentUserResolver currentUserResolver,
             UserTermsAgreementService userTermsAgreementService) {
-        this(userAccountService, currentUserResolver, userTermsAgreementService, null);
+        this(userAccountService, currentUserResolver, userTermsAgreementService, null, null);
     }
 
     @PutMapping(value = "/profile-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -98,7 +108,14 @@ public class UserAccountController {
     public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
             Authentication authentication,
             HttpServletRequest servletRequest) {
-        userAccountService.changePassword(userId(authentication), request.current_password(), request.new_password());
+        Long userId = userId(authentication);
+        userAccountService.changePassword(userId, request.current_password(), request.new_password());
+        if (authService != null) {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setCacheControl("no-store");
+            authService.revokeCurrentSession(servletRequest, headers, userId);
+            return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);
+        }
         if (servletRequest.getSession(false) != null) {
             servletRequest.getSession(false).invalidate();
         }

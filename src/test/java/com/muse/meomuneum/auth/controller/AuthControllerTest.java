@@ -12,21 +12,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.muse.meomuneum.auth.application.AuthService;
+import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.auth.service.AuthService;
-import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 
 class AuthControllerTest {
@@ -98,7 +98,8 @@ class AuthControllerTest {
 
     @Test
     void csrfIssueReturnsSpecifiedResponse() throws Exception {
-        when(csrfTokenService.issueToken(any(HttpServletRequest.class))).thenReturn("csrf-token");
+        when(csrfTokenService.issueToken(any(HttpServletRequest.class), any(HttpServletResponse.class)))
+                .thenReturn("csrf-token");
 
         mockMvc.perform(get("/api/v1/auth/token/csrf")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("csrf token issued"))
@@ -107,9 +108,7 @@ class AuthControllerTest {
 
     @Test
     void logoutPassesRequestAndReturnsNoContent() throws Exception {
-        MockHttpSession session = new MockHttpSession();
-
-        mockMvc.perform(post("/api/v1/auth/logout").session(session)).andExpect(status().isNoContent());
+        mockMvc.perform(post("/api/v1/auth/logout")).andExpect(status().isNoContent());
 
         verify(authService).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
     }

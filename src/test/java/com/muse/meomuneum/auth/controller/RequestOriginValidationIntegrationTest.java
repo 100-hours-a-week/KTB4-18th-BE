@@ -24,10 +24,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthService;
+import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
-import com.muse.meomuneum.auth.service.AuthService;
-import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.config.SecurityConfig;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
