@@ -1,4 +1,4 @@
-package com.muse.meomuneum.auth.service;
+package com.muse.meomuneum.auth.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

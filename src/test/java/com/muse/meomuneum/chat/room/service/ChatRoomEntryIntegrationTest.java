@@ -321,7 +321,7 @@ class ChatRoomEntryIntegrationTest {
         SocketProbe first = connectSocket(userId, room.getId(), membershipId);
         SocketProbe second = connectSocket(userId, room.getId(), membershipId);
         try {
-            events.publishEvent(new com.muse.meomuneum.auth.service.ChatLogoutEvent(userId));
+            events.publishEvent(new com.muse.meomuneum.auth.application.ChatLogoutEvent(userId));
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
             assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(userId).isEmpty());
