@@ -25,11 +25,11 @@ class AiImageRecommendationProviderTests {
     @Test
     void sendsMultipartAndParsesUsableImageStream() throws Exception {
         AtomicReference<String> requestBody = new AtomicReference<>();
-        HttpServer server = server(requestBody, "event: status\ndata: {\"status\":\"analyzing\"}\n\n"
+        HttpServer server = server(requestBody, "event: status\ndata: {\"stage\":\"analyzing\"}\n\n"
                 + "event: verdict\ndata: {\"usable\":true}\n\n"
                 + "event: scene\ndata: {\"scene\":\"park\"}\n\n"
                 + "event: text\ndata: {\"delta\":\"근처 산책길 느낌이에요.\"}\n\n"
-                + "event: status\ndata: {\"status\":\"searching\"}\n\n"
+                + "event: status\ndata: {\"stage\":\"searching\"}\n\n"
                 + "event: tracks\ndata: {\"tracks\":[]}\n\n"
                 + "event: text\ndata: {\"delta\":\"곡 정보를 찾지 못했어요.\"}\n\n"
                 + "event: done\ndata: {}\n\n");
@@ -55,7 +55,7 @@ class AiImageRecommendationProviderTests {
     void stripsUpstreamImageTrackReasonAndIgnoresHostileRejectionCopy() throws Exception {
         String usable = """
                 event: status
-                data: {"status":"analyzing"}
+                data: {"stage":"analyzing"}
 
                 event: verdict
                 data: {"usable":true}
@@ -67,7 +67,7 @@ class AiImageRecommendationProviderTests {
                 data: {"delta":"A safe public sentence."}
 
                 event: status
-                data: {"status":"searching"}
+                data: {"stage":"searching"}
 
                 event: tracks
                 data: {"tracks":[{"track_id":"1","title":"Song","artist":"Artist",
@@ -91,7 +91,7 @@ class AiImageRecommendationProviderTests {
 
     @Test
     void parsesRejectedEventWithoutForwardingItsFreeTextMessage() throws Exception {
-        String rejected = "event: status\ndata: {\"status\":\"analyzing\"}\n\n"
+        String rejected = "event: status\ndata: {\"stage\":\"analyzing\"}\n\n"
                 + "event: verdict\ndata: {\"usable\":false}\n\n"
                 + "event: scene\ndata: {\"scene\":\"unclear\"}\n\n"
                 + "event: rejected\ndata: {\"reason\":\"scene_unreadable\","
@@ -143,7 +143,7 @@ class AiImageRecommendationProviderTests {
         server.createContext("/v1/chat/images", exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, 0);
-            exchange.getResponseBody().write("event: status\ndata: {\"status\":\"analyzing\"}\n\n".getBytes(
+            exchange.getResponseBody().write("event: status\ndata: {\"stage\":\"analyzing\"}\n\n".getBytes(
                     java.nio.charset.StandardCharsets.UTF_8));
             exchange.getResponseBody().flush();
             try {
