@@ -20,13 +20,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.hazelcast.core.HazelcastException;
 import com.muse.meomuneum.auth.controller.AuthController;
-import com.muse.meomuneum.auth.controller.AuthSessionController;
-import com.muse.meomuneum.auth.controller.LoginQueueController;
 import com.muse.meomuneum.global.exception.ErrorCode;
 import com.muse.meomuneum.global.response.ApiResponse;
 
-@RestControllerAdvice(assignableTypes = {AuthController.class, LoginQueueController.class,
-        AuthSessionController.class})
+@RestControllerAdvice(assignableTypes = AuthController.class)
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class AuthExceptionHandler {
 

@@ -89,6 +89,11 @@ auth:
 
 recommendation:
   provider: ${RECOMMENDATION_PROVIDER:ai}
+  image:
+    provider: ${RECOMMENDATION_IMAGE_PROVIDER:ai}
+    mock:
+      outcome: ${RECOMMENDATION_IMAGE_MOCK_OUTCOME:usable}
+    timeout: ${RECOMMENDATION_IMAGE_TIMEOUT:60s}
   itunes:
     country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
     timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
