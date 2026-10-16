@@ -567,6 +567,66 @@ class ChatRoomEntryIntegrationTest {
         }
     }
 
+    @Test
+    void separateMembershipsKeepOneAccountPerRoomAndIndependentPresence() throws Exception {
+        Long owner = createUser("account-seats");
+        ChatRoom room = roomFor("41135");
+        ChatRoom otherRoom = roomFor("11680");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity=1 WHERE id IN (?,?)", room.getId(), otherRoom.getId());
+        Long firstId = createSessionMembership(owner, room.getId());
+        Long secondId = createSessionMembership(owner, room.getId());
+        Long outsideId = createSessionMembership(owner, otherRoom.getId());
+        SocketProbe first = null;
+        SocketProbe second = null;
+        SocketProbe outside = null;
+        try {
+            first = connectSocket(owner, room.getId(), firstId);
+            subscribeMessages(first, room.getId());
+            assertPresence(first, 1);
+            second = connectSocket(owner, room.getId(), secondId);
+            subscribeMessages(second, room.getId());
+            assertPresence(second, 1);
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            outside = connectSocket(owner, otherRoom.getId(), outsideId);
+            subscribeMessages(outside, otherRoom.getId());
+            assertPresence(outside, 1);
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            service.leave(owner, room.getId(), secondId);
+            assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(first.closed.isDone());
+            assertFalse(outside.closed.isDone());
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "remaining connection");
+            assertTrue(nextFrame(first).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            assertEquals(null, outside.frames.poll(150, TimeUnit.MILLISECONDS));
+            service.leave(owner, room.getId(), firstId);
+            assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(outside.closed.isDone());
+            Thread.sleep(1050); // Account-wide rate limiting also applies across rooms.
+            sendMessage(outside, otherRoom.getId(), java.util.UUID.randomUUID().toString(), "independent room");
+            assertTrue(nextFrame(outside).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(outside).contains("CHAT_ACK"));
+        } finally {
+            service.leave(owner, room.getId(), firstId);
+            service.leave(owner, room.getId(), secondId);
+            service.leave(owner, otherRoom.getId(), outsideId);
+            for (SocketProbe socket : new SocketProbe[]{first, second, outside}) {
+                if (socket != null) {
+                    socket.socket.abort();
+                }
+            }
+        }
+    }
+
+    private Long createSessionMembership(Long userId, Long roomId) {
+        // B4 will provide REST creation; B3 validates counting with explicit B2-compatible fixtures.
+        String sid = java.util.UUID.randomUUID().toString();
+        jdbcTemplate.update("INSERT INTO chat_room_members (user_id,room_id,auth_session_id) VALUES (?,?,?)",
+                userId, roomId, sid);
+        return jdbcTemplate.queryForObject("SELECT id FROM chat_room_members WHERE auth_session_id=?", Long.class, sid);
+    }
+
     private void assertPresence(SocketProbe probe, int count) throws Exception {
         String frame = probe.presenceFrames.poll(5, TimeUnit.SECONDS);
         assertTrue(frame != null, "expected presence event");
