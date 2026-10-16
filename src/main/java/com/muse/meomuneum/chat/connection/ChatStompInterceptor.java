@@ -107,7 +107,7 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             } catch (NumberFormatException invalid) {
                 throw new IllegalArgumentException("CHAT_QUERY_INVALID");
             }
-            entry.connect(claims.userId(), roomId, membershipId, headers.getSessionId());
+            entry.connect(claims.userId(), authContext.authSessionId(), roomId, membershipId, headers.getSessionId());
             try {
                 views.connected(claims.userId(), roomId, membershipId, headers.getSessionId(),
                         requestedViewId);

@@ -37,3 +37,7 @@ B1 / F1, 2026-10-16. 두 저장소의 `feature/chat-auth-session-context` 작업
 - 새 BE를 적용한 뒤 FE를 적용하고 같은 세션 갱신·인증 변경 중 복구 취소를 확인한다.
 - 롤백 시 FE/BE를 기존 버전으로 되돌린다. DB 변경·마이그레이션은 없다.
 - GitHub 이슈 번호는 미확인이다. 이 대화에서 작성한 B1/F1 이슈 초안을 기준으로 작업했으며 외부 이슈 생성·PR·push는 수행하지 않았다.
+
+## B4 이후의 참여 소유권
+
+B4에서 REST 입장과 CONNECT를 DB의 `auth_session_id`에 연결했다. 같은 계정의 다른 sid는 같은 membership을 공유하지 않는다. 아래 B1 검증 기록은 당시 범위이며, 현재 참여 계약·호환성은 [기기별 참여 문서](chat-device-membership.md)를 따른다.

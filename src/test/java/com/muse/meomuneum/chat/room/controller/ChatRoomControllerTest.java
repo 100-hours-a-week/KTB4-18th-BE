@@ -1,5 +1,6 @@
 package com.muse.meomuneum.chat.room.controller;
 
+import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -47,10 +48,10 @@ class ChatRoomControllerTest {
     @Test
     void returnsCreatedForTheFirstJoin() throws Exception {
         ChatRoomMembershipResponse membership = membership();
-        when(service.join(7L, 700L, "loc_token")).thenReturn(new ChatRoomJoinResult(membership, true));
+        when(service.join(7L, sid(7L), 700L, "loc_token")).thenReturn(new ChatRoomJoinResult(membership, true));
 
         mockMvc.perform(post("/api/v1/chat-rooms/700/members")
-                .principal(new UsernamePasswordAuthenticationToken(7L, null)).contentType(MediaType.APPLICATION_JSON)
+                .principal(authentication()).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"location_resolution_token\":\"loc_token\"}")).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("chat room joined"))
                 .andExpect(jsonPath("$.data.membership_id").value(900L))
@@ -60,10 +61,10 @@ class ChatRoomControllerTest {
     @Test
     void returnsOkAndTheExistingMembershipForAnIdempotentRetry() throws Exception {
         ChatRoomMembershipResponse membership = membership();
-        when(service.join(7L, 700L, "loc_token")).thenReturn(new ChatRoomJoinResult(membership, false));
+        when(service.join(7L, sid(7L), 700L, "loc_token")).thenReturn(new ChatRoomJoinResult(membership, false));
 
         mockMvc.perform(post("/api/v1/chat-rooms/700/members")
-                .principal(new UsernamePasswordAuthenticationToken(7L, null)).contentType(MediaType.APPLICATION_JSON)
+                .principal(authentication()).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"location_resolution_token\":\"loc_token\"}")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("already joined"))
                 .andExpect(jsonPath("$.data.membership_id").value(900L));
@@ -73,11 +74,18 @@ class ChatRoomControllerTest {
     void leaveRequiresTheMembershipIdentifier() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .delete("/api/v1/chat-rooms/700/members/me").param("membership_id", "900")
-                .principal(new UsernamePasswordAuthenticationToken(7L, null))).andExpect(status().isNoContent());
-        org.mockito.Mockito.verify(service).leave(7L, 700L, 900L);
+                .principal(authentication())).andExpect(status().isNoContent());
+        org.mockito.Mockito.verify(service).leave(7L, sid(7L), 700L, 900L);
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .delete("/api/v1/chat-rooms/700/members/me")
-                .principal(new UsernamePasswordAuthenticationToken(7L, null))).andExpect(status().isBadRequest());
+                .principal(authentication())).andExpect(status().isBadRequest());
+    }
+
+    private UsernamePasswordAuthenticationToken authentication() {
+        var authentication = new UsernamePasswordAuthenticationToken(7L, null);
+        authentication.setDetails(new com.muse.meomuneum.global.security.TokenClaims(7L, java.util.List.of("USER"),
+                java.time.Instant.now().plusSeconds(60), sid(7L), "fixture"));
+        return authentication;
     }
 
     private ChatRoomMembershipResponse membership() {
