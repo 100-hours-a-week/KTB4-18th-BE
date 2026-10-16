@@ -1,0 +1,5 @@
+auth:
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5175}
+  local-mock-login:
+    user-id: ${AUTH_LOCAL_MOCK_USER_ID:}
