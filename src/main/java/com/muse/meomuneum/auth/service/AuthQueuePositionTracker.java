@@ -87,7 +87,7 @@ final class AuthQueuePositionTracker {
                 || status == HazelcastAuthStateStore.TicketStatus.RETRYABLE
                         ? status
                         : HazelcastAuthStateStore.TicketStatus.WAITING;
-        return new HazelcastAuthStateStore.TicketView(visible, outcome, ahead, 10, ticket.ticketId());
+        return new HazelcastAuthStateStore.TicketView(visible, outcome, ahead, 6, ticket.ticketId());
     }
 
     private boolean ownsQueuePosition(HazelcastAuthStateStore.TicketStatus status) {
