@@ -70,7 +70,7 @@ public class ChatRoomEntryService {
 
     public ChatRoomJoinResult join(Long userId, String authSessionId, Long roomId, String locationResolutionToken) {
         requireAuthSession(authSessionId);
-        LocationResolutionClaims claims = tokenProvider.validate(locationResolutionToken, userId);
+        LocationResolutionClaims claims = tokenProvider.validateForChat(locationResolutionToken, userId, authSessionId);
         Transition transition = presence.exclusive(() -> {
             Transition committed = transactions
                     .execute(status -> joinInTransaction(userId, authSessionId, roomId, claims));
