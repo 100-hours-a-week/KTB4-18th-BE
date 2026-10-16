@@ -59,7 +59,7 @@ public class LoginQueueController {
                         .body(ApiResponse.failure("OPERATION_IN_PROGRESS"));
             }
             var waiting = new HazelcastAuthStateStore.TicketView(
-                    HazelcastAuthStateStore.TicketStatus.WAITING, null, null, 10, null);
+                    HazelcastAuthStateStore.TicketStatus.WAITING, null, null, 6, null);
             return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                     .header(HttpHeaders.SET_COOKIE,
                             queueCookie(exception.queueCookie(), properties.queueCookieSeconds()))

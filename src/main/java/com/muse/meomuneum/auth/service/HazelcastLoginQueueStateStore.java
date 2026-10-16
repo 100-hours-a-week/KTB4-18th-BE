@@ -378,7 +378,7 @@ final class HazelcastLoginQueueStateStore {
                 }
                 Ticket inProgress = tickets.get(previous.ticketId());
                 TicketView view = inProgress == null
-                        ? new TicketView(TicketStatus.WAITING, null, null, 10, previous.ticketId())
+                        ? new TicketView(TicketStatus.WAITING, null, null, 6, previous.ticketId())
                         : ticketView(inProgress);
                 return new CreateTicket(cookie, view, false);
             }
