@@ -167,7 +167,7 @@ final class HazelcastLoginQueueTicketTransitions {
                             || operation.status() == HazelcastAuthStateStore.CreateOperationStatus.OFFERING)) {
                 operations.enforceStatusReadLimit(ticketId);
                 return new HazelcastAuthStateStore.TicketView(HazelcastAuthStateStore.TicketStatus.WAITING, null,
-                        null, 10, ticketId);
+                        null, 6, ticketId);
             }
         }
         if (ticket == null) {

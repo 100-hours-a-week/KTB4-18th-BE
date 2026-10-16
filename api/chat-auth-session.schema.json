@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Regional chat STOMP CONNECT native headers",
+  "description": "B1/F1. Identity is derived from verified access JWT sub/sid. auth_session_id is an optional equality assertion, never a standalone credential. JWTs without a canonical UUID sid are rejected.",
+  "type": "object",
+  "required": [
+    "Authorization",
+    "room_id",
+    "membership_id"
+  ],
+  "properties": {
+    "Authorization": {
+      "type": "string",
+      "pattern": "^Bearer .+$"
+    },
+    "auth_session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "If supplied, must exactly equal the signed JWT sid. Removed from native headers after processing."
+    },
+    "room_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "membership_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "view_session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Independent tab reading context; not an auth session."
+    },
+    "last_message_id": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    }
+  }
+}

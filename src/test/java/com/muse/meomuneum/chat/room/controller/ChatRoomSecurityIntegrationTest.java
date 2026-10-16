@@ -56,21 +56,36 @@ class ChatRoomSecurityIntegrationTest {
 
     @Test
     void acceptsAuthenticatedBearerJoinWithoutCsrfToken() throws Exception {
-        when(chatRoomEntryService.join(any(), any(), any())).thenReturn(new ChatRoomJoinResult(
+        when(chatRoomEntryService.join(any(), any(), any(), any())).thenReturn(new ChatRoomJoinResult(
                 new ChatRoomMembershipResponse(900L, 700L, 25L, OffsetDateTime.parse("2026-09-25T00:00:00Z")), true));
 
         mockMvc.perform(post("/api/v1/chat-rooms/700/members")
                 .header(HttpHeaders.ORIGIN, "http://localhost:5173")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + createAccessToken())
+                .header("auth_session_id", "550e8400-e29b-41d4-a716-446655440099")
                 .contentType(MediaType.APPLICATION_JSON).content(requestBody())).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.message").value("chat room joined"));
+        org.mockito.Mockito.verify(chatRoomEntryService).join(1L,
+                "550e8400-e29b-41d4-a716-446655440000", 700L, "loc_token");
+    }
+
+    @Test
+    void rejectsSignedTokenWithoutSessionBeforeJoining() throws Exception {
+        User user = mock(User.class);
+        when(user.getId()).thenReturn(1L);
+        when(user.getRole()).thenReturn(UserRole.USER);
+        mockMvc.perform(post("/api/v1/chat-rooms/700/members")
+                .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + jwtTokenProvider.createAccessToken(user))
+                .contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+                .andExpect(status().isUnauthorized());
     }
 
     private String createAccessToken() {
         User user = mock(User.class);
         when(user.getId()).thenReturn(1L);
         when(user.getRole()).thenReturn(UserRole.USER);
-        return jwtTokenProvider.createAccessToken(user);
+        return jwtTokenProvider.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     private String requestBody() {

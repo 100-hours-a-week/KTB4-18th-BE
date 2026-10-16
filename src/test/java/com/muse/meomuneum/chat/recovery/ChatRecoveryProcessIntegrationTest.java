@@ -139,7 +139,8 @@ class ChatRecoveryProcessIntegrationTest {
         SignedJWT signed = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), new JWTClaimsSet.Builder()
                 .issuer("project-api").subject(Long.toString(id)).audience("project-api")
                 .issueTime(Date.from(now)).expirationTime(Date.from(now.plusSeconds(3600)))
-                .claim("typ", "access").claim("roles", List.of("USER")).build());
+                .claim("typ", "access").claim("roles", List.of("USER")).claim("sid", UUID.randomUUID().toString())
+                .build());
         signed.sign(new MACSigner(SECRET));
         String token = signed.serialize();
         var location = request("POST", "/api/v1/locations/resolve", token, null,
