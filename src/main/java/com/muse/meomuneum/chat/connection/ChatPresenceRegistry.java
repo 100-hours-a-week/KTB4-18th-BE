@@ -19,7 +19,7 @@ import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.view.ChatViewConnectionClosedEvent;
 import com.muse.meomuneum.chat.view.ChatViewMembershipEndedEvent;
 
-/** Single-server seats. All database transitions must finish inside exclusive(). */
+/** Single-server membership seats, counted per account and room. Database transitions finish inside exclusive(). */
 @Component
 public class ChatPresenceRegistry {
 
@@ -50,17 +50,20 @@ public class ChatPresenceRegistry {
 
     public synchronized boolean hasCapacity(Long userId, Long roomId, int capacity) {
         expire();
-        Seat own = seats.get(userId);
-        return own != null && own.roomId.equals(roomId)
-                || seats.values().stream().filter(seat -> seat.roomId.equals(roomId)).count() < capacity;
+        return seats.values().stream().anyMatch(seat -> seat.userId.equals(userId) && seat.roomId.equals(roomId))
+                || seats.values().stream().filter(seat -> seat.roomId.equals(roomId))
+                        .map(seat -> seat.userId).distinct().count() < capacity;
     }
 
     public synchronized void reserve(Long userId, Long roomId, Long membershipId) {
-        Seat seat = seats.get(userId);
-        if (seat != null && seat.membershipId.equals(membershipId)) {
+        Seat seat = seats.get(membershipId);
+        if (seat != null) {
+            if (!seat.userId.equals(userId) || !seat.roomId.equals(roomId)) {
+                throw new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND);
+            }
             return; // Retries must not indefinitely renew a disconnected reservation.
         }
-        seats.put(userId, new Seat(roomId, membershipId, clock.instant().plusSeconds(30)));
+        seats.put(membershipId, new Seat(userId, roomId, clock.instant().plusSeconds(30)));
     }
 
     public synchronized void connect(Long userId, Long roomId, Long membershipId, int capacity, String sessionId) {
@@ -69,7 +72,7 @@ public class ChatPresenceRegistry {
             throw new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED);
         }
         reserve(userId, roomId, membershipId);
-        Seat seat = seats.get(userId);
+        Seat seat = seats.get(membershipId);
         int previousCount = connectedCount(roomId);
         seat.sessions.add(sessionId);
         seat.expiresAt = null;
@@ -89,19 +92,22 @@ public class ChatPresenceRegistry {
     }
 
     public synchronized boolean ownsConnection(Long userId, Long membershipId, String sessionId) {
-        Seat seat = seats.get(userId);
-        return seat != null && seat.membershipId.equals(membershipId) && seat.sessions.contains(sessionId);
+        Seat seat = seats.get(membershipId);
+        return seat != null && seat.userId.equals(userId) && seat.sessions.contains(sessionId);
     }
 
     public synchronized Set<String> remove(Long userId, Long membershipId) {
+        Seat seat = seats.get(membershipId);
+        if (seat != null && !seat.userId.equals(userId)) {
+            return Set.of();
+        }
         events.publishEvent(new ChatViewMembershipEndedEvent(membershipId));
         transmission.ended(membershipId);
-        Seat seat = seats.get(userId);
-        if (seat == null || !seat.membershipId.equals(membershipId)) {
+        if (seat == null) {
             return Set.of();
         }
         int previousCount = connectedCount(seat.roomId);
-        seats.remove(userId);
+        seats.remove(membershipId);
         changed(seat.roomId, previousCount);
         return Set.copyOf(seat.sessions);
     }
@@ -137,7 +143,7 @@ public class ChatPresenceRegistry {
 
     public synchronized int connectedCount(Long roomId) {
         return (int) seats.values().stream().filter(seat -> seat.roomId.equals(roomId) && !seat.sessions.isEmpty())
-                .count();
+                .map(seat -> seat.userId).distinct().count();
     }
 
     private void changed(Long roomId, int previousCount) {
@@ -174,15 +180,15 @@ public class ChatPresenceRegistry {
     }
 
     private static final class Seat {
+        private final Long userId;
         private final Long roomId;
-        private final Long membershipId;
         private final Set<String> sessions = new HashSet<>();
         private final Map<String, Map<String, String>> subscriptions = new HashMap<>();
         private Instant expiresAt;
 
-        private Seat(Long roomId, Long membershipId, Instant expiresAt) {
+        private Seat(Long userId, Long roomId, Instant expiresAt) {
+            this.userId = userId;
             this.roomId = roomId;
-            this.membershipId = membershipId;
             this.expiresAt = expiresAt;
         }
     }
