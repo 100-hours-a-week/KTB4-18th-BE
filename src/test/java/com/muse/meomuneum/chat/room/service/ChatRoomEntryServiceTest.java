@@ -1,5 +1,6 @@
 package com.muse.meomuneum.chat.room.service;
 
+import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -62,9 +63,10 @@ class ChatRoomEntryServiceTest {
         ChatRoom room = room(700L, 25L, "41135", 25);
         ChatRoomMember membership = membership(900L, room);
         prepareJoin(user, room, claims(7L, 25L, "41135"));
-        when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(membership));
+        when(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(7L, sid(7L)))
+                .thenReturn(Optional.of(membership));
 
-        ChatRoomJoinResult result = service.join(7L, 700L, "loc_token");
+        ChatRoomJoinResult result = service.join(7L, sid(7L), 700L, "loc_token");
 
         assertFalse(result.created());
         assertEquals(900L, result.membership().membershipId());
@@ -78,7 +80,8 @@ class ChatRoomEntryServiceTest {
         ChatRoom room = room(700L, 25L, "41135", 25);
         prepareJoin(user, room, claims(7L, 30L, "11680"));
 
-        ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
+        ChatRoomException exception = assertThrows(ChatRoomException.class,
+                () -> service.join(7L, sid(7L), 700L, "loc_token"));
 
         assertEquals(ChatRoomErrorCode.LOCATION_REGION_MISMATCH, exception.getErrorCode());
         verify(memberRepository, never()).saveAndFlush(any());
@@ -92,10 +95,12 @@ class ChatRoomEntryServiceTest {
         ChatRoomMember previousMembership = mock(ChatRoomMember.class);
         when(previousMembership.getChatRoom()).thenReturn(previousRoom);
         prepareJoin(user, targetRoom, claims(7L, 25L, "41135"));
-        when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(previousMembership));
+        when(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(7L, sid(7L)))
+                .thenReturn(Optional.of(previousMembership));
         presence.reserve(8L, 700L, 901L);
 
-        ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
+        ChatRoomException exception = assertThrows(ChatRoomException.class,
+                () -> service.join(7L, sid(7L), 700L, "loc_token"));
 
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, exception.getErrorCode());
         verify(previousMembership).leave(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC));
@@ -109,9 +114,22 @@ class ChatRoomEntryServiceTest {
         prepareJoin(user, room, claims(7L, 25L, "41135"));
         when(memberRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        ChatRoomJoinResult result = service.join(7L, 700L, "loc_token");
+        ChatRoomJoinResult result = service.join(7L, sid(7L), 700L, "loc_token");
 
         assertEquals(NOW.atOffset(ZoneOffset.UTC), result.membership().joinedAt());
+        var captor = org.mockito.ArgumentCaptor.forClass(ChatRoomMember.class);
+        verify(memberRepository).saveAndFlush(captor.capture());
+        assertEquals(sid(7L), captor.getValue().getAuthSessionId());
+    }
+
+    @Test
+    void rejectsMissingOrInvalidSessionBeforeUsingLocationOrDatabase() {
+        for (String session : new String[]{null, "invalid", "550E8400-E29B-41D4-A716-446655440000"}) {
+            ChatRoomException exception = assertThrows(ChatRoomException.class,
+                    () -> service.join(7L, session, 700L, "loc_token"));
+            assertEquals(ChatRoomErrorCode.AUTH_REQUIRED, exception.getErrorCode());
+        }
+        org.mockito.Mockito.verifyNoInteractions(tokenProvider, memberRepository, userRepository);
     }
 
     private void prepareJoin(User user, ChatRoom room, LocationResolutionClaims claims) {

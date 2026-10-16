@@ -50,7 +50,7 @@ class ChatStompInterceptorTest {
         assertNull(connect.getFirstNativeHeader("Authorization"));
         assertNull(connect.getFirstNativeHeader("auth_session_id"));
         assertEquals(Set.of("session"), authSessions.connections(7L, "550e8400-e29b-41d4-a716-446655440000"));
-        verify(entry).connect(7L, 700L, 900L, "session");
+        verify(entry).connect(7L, "550e8400-e29b-41d4-a716-446655440000", 700L, 900L, "session");
 
         StompHeaderAccessor subscribe = headers(StompCommand.SUBSCRIBE, attributes);
         subscribe.setDestination("/topic/chat-rooms/700");
