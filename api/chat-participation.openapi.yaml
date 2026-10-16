@@ -1,8 +1,11 @@
 openapi: 3.0.3
 info:
   title: Regional chat participation
-  version: 1.0.0
-  description: Single-server admission, reservation and account-wide departure (#140).
+  version: 1.1.0
+  description: >-
+    Single-server admission and account-per-room capacity. Membership is bound to the
+    verified access JWT sub/sid. Missing or noncanonical sid requires login again.
+    Account-wide logout remains unchanged until the separate logout work.
 paths:
   /api/v1/regions/{region_id}/chat-room:
     get:
@@ -26,10 +29,15 @@ paths:
                       region_name: { type: string }
                       capacity: { type: integer, example: 25 }
                       status: { type: string, enum: [ACTIVE] }
-        '401': { description: Authentication required }
+        '401': { description: Authentication required; membership mutation also requires canonical signed JWT sid }
         '404': { description: Active room not found }
   /api/v1/chat-rooms/{room_id}/members:
     post:
+      description: >-
+        Creates or reuses membership for the signed JWT sid. Same sid and room return
+        the existing active membership; a different sid creates independent membership.
+        The authenticated sid is never read from a request field or device header.
+        Existing same-session region-transition behavior is retained; other sessions are untouched.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: room_id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -44,17 +52,17 @@ paths:
                 location_resolution_token: { type: string }
       responses:
         '201':
-          description: New membership; reserve one seat for 30 seconds
+          description: New session membership; reserve the account in this room for 30 seconds
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MembershipResponse' }
         '200':
-          description: Same active membership; does not extend an existing reservation or grace deadline
+          description: Same active sid and room membership; does not extend an existing reservation or grace deadline
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MembershipResponse' }
         '400': { description: Invalid, expired, foreign-owner or region-mismatched location token }
-        '401': { description: Authentication required }
+        '401': { description: Authentication required; membership mutation also requires canonical signed JWT sid }
         '403':
           description: Inactive user or active chat ban; ban message is chat use banned
           content:
@@ -69,10 +77,10 @@ paths:
                     properties:
                       banned_until: { type: string, format: date-time, description: UTC ban expiry when actively banned }
         '404': { description: Active room not found }
-        '409': { description: Connected plus reserved plus grace users have reached capacity }
+        '409': { description: Distinct accounts with connections, reservations or grace have reached capacity; another session of an existing account in this room is allowed }
   /api/v1/chat-rooms/{room_id}/members/me:
     delete:
-      description: Ends only this account's specified history. Repeating a previous leave cannot end a newer membership. All connections of that membership close with 4100 CHAT_LEFT.
+      description: Ends only the specified membership owned by both the signed JWT sub and sid. Repeating a previous leave cannot end a newer membership. All connections of that membership close with 4100 CHAT_LEFT; tab-only leave is separate work.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: room_id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -80,8 +88,8 @@ paths:
       responses:
         '204': { description: Departure confirmed or already departed }
         '400': { description: membership_id missing or malformed }
-        '401': { description: Authentication required }
-        '403': { description: Membership does not belong to the account and room }
+        '401': { description: Authentication required; membership mutation also requires canonical signed JWT sid }
+        '403': { description: Membership does not belong to the account, signed authentication session and room }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
