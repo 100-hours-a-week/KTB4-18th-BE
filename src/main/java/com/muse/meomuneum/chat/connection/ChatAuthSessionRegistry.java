@@ -18,15 +18,18 @@ public class ChatAuthSessionRegistry {
 
     public Context resolve(TokenClaims claims, String requestedSessionId) {
         String sid = claims.sessionId();
-        try {
-            if (sid == null || !UUID.fromString(sid).toString().equals(sid)
-                    || (requestedSessionId != null && !sid.equals(requestedSessionId))) {
-                throw new IllegalArgumentException("AUTH_REQUIRED");
-            }
-        } catch (IllegalArgumentException invalid) {
+        if (!isValidSessionId(sid) || (requestedSessionId != null && !sid.equals(requestedSessionId))) {
             throw new IllegalArgumentException("AUTH_REQUIRED");
         }
         return new Context(claims.userId(), sid);
+    }
+
+    public static boolean isValidSessionId(String sid) {
+        try {
+            return sid != null && UUID.fromString(sid).toString().equals(sid);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
     }
 
     public void register(String connectionId, Context context) {

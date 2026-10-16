@@ -16,7 +16,10 @@ import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, Long> {
 
     @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
-    Optional<ChatRoomMember> findByUser_IdAndDeletedAtIsNull(Long userId);
+    Optional<ChatRoomMember> findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(Long userId, String authSessionId);
+
+    @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
+    List<ChatRoomMember> findAllByUser_IdAndDeletedAtIsNull(Long userId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
