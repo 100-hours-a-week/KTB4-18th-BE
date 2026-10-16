@@ -1,5 +1,6 @@
 package com.muse.meomuneum.chat.view;
 
+import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -113,7 +114,7 @@ class ChatViewStorageIntegrationTest {
     @Test
     void beginsAtActualSubscriptionAndUsesIdsToDisambiguateSameMicrosecond() {
         Long before = message("before");
-        entry.connect(userId, roomId, membershipId, "socket");
+        entry.connect(userId, sid(userId), roomId, membershipId, "socket");
         lifecycle.connected(userId, roomId, membershipId, "socket", null);
         assertEquals(0, count("chat_view_sessions"));
         assertThrows(ChatRoomException.class, () -> lifecycle.authorize(userId, roomId, membershipId, null));
@@ -185,7 +186,7 @@ class ChatViewStorageIntegrationTest {
         String second = connectAndSubscribe("second", null);
         presence.disconnect("first");
         clock.set(START.plusSeconds(5));
-        entry.leave(userId, roomId, membershipId);
+        entry.leave(userId, sid(userId), roomId, membershipId);
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM chat_view_sessions WHERE ended_at IS NOT NULL",
                 Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_view_intervals WHERE ends_at IS NULL",
@@ -202,7 +203,7 @@ class ChatViewStorageIntegrationTest {
             assertEquals(1, count("chat_view_sessions"));
             assertTrue(members.findByIdAndUser_IdAndChatRoom_Id(membershipId, userId, roomId)
                     .orElseThrow().isActive());
-            entry.leave(userId, roomId, membershipId);
+            entry.leave(userId, sid(userId), roomId, membershipId);
             assertThrows(ChatRoomException.class, () -> storage.validateContext(userId, roomId, membershipId, view));
             status.setRollbackOnly();
         });
@@ -395,7 +396,7 @@ class ChatViewStorageIntegrationTest {
         assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
                 () -> queries.query(userId, roomId, membershipId, first, "recovery", "x" + cursor, 1));
         var page = queries.query(userId, roomId, membershipId, first, "recovery", cursor, 1);
-        entry.leave(userId, roomId, membershipId);
+        entry.leave(userId, sid(userId), roomId, membershipId);
         assertThrows(ChatRoomException.class,
                 () -> queries.query(userId, roomId, membershipId, first, "recovery", page.nextCursor(), 1));
     }
@@ -446,7 +447,8 @@ class ChatViewStorageIntegrationTest {
         Long id = message("http");
         String path = "/api/v1/chat-rooms/" + roomId + "/messages?membership_id=" + membershipId;
         assertEquals(401, http(path, null, view).statusCode());
-        String token = jwt.createAccessToken(users.findById(userId).orElseThrow());
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(),
+                sid(userId));
         assertEquals(400, http(path, token, null).statusCode());
         assertEquals(400, http(path + "&size=51", token, view).statusCode());
         var response = http(path, token, view);
@@ -454,7 +456,7 @@ class ChatViewStorageIntegrationTest {
         assertTrue(response.body().contains("\"message_id\":" + id));
         assertEquals(403, http(path, token, UUID.randomUUID().toString()).statusCode());
         assertEquals(400, http(path + "&cursor=invalid", token, view).statusCode());
-        entry.leave(userId, roomId, membershipId);
+        entry.leave(userId, sid(userId), roomId, membershipId);
         assertEquals(403, http(path, token, view).statusCode());
     }
 
@@ -468,7 +470,7 @@ class ChatViewStorageIntegrationTest {
                 .directory(directory.toFile()).redirectErrorStream(true);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_URL", "http://127.0.0.1:" + port);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_TOKEN",
-                jwt.createAccessToken(users.findById(userId).orElseThrow()));
+                jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId)));
         process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", membershipId.toString());
         Process running = process.start();
@@ -499,7 +501,7 @@ class ChatViewStorageIntegrationTest {
     }
 
     private String connectAndSubscribe(String socket, String view) {
-        entry.connect(userId, roomId, membershipId, socket);
+        entry.connect(userId, sid(userId), roomId, membershipId, socket);
         lifecycle.connected(userId, roomId, membershipId, socket, view);
         return lifecycle.subscribed(socket, "room", topic());
     }
@@ -509,8 +511,8 @@ class ChatViewStorageIntegrationTest {
     }
 
     private Long createMembership() {
-        jdbc.update("INSERT INTO chat_room_members (user_id,room_id,created_at) VALUES (?,?,?)",
-                userId, roomId, local(clock.instant()));
+        jdbc.update("INSERT INTO chat_room_members (user_id,room_id,created_at,auth_session_id) VALUES (?,?,?,?)",
+                userId, roomId, local(clock.instant()), sid(userId));
         return jdbc.queryForObject("SELECT id FROM chat_room_members WHERE user_id = ? AND deleted_at IS NULL",
                 Long.class, userId);
     }

@@ -35,20 +35,28 @@ public class ChatRoomMember {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "auth_session_id", columnDefinition = "char(36)", length = 36, updatable = false)
+    private String authSessionId;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
     protected ChatRoomMember() {
     }
 
-    private ChatRoomMember(User user, ChatRoom chatRoom, LocalDateTime createdAt) {
+    private ChatRoomMember(User user, ChatRoom chatRoom, LocalDateTime createdAt, String authSessionId) {
         this.user = Objects.requireNonNull(user);
         this.chatRoom = Objects.requireNonNull(chatRoom);
         this.createdAt = Objects.requireNonNull(createdAt);
+        this.authSessionId = Objects.requireNonNull(authSessionId);
     }
 
-    public static ChatRoomMember join(User user, ChatRoom chatRoom, LocalDateTime joinedAt) {
-        return new ChatRoomMember(user, chatRoom, joinedAt);
+    public static ChatRoomMember join(User user, ChatRoom chatRoom, LocalDateTime joinedAt, String authSessionId) {
+        return new ChatRoomMember(user, chatRoom, joinedAt, authSessionId);
+    }
+
+    public String getAuthSessionId() {
+        return authSessionId;
     }
 
     public Long getId() {
