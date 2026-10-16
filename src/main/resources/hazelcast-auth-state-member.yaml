@@ -1,0 +1,21 @@
+hazelcast:
+  cluster-name: meomuneum-auth
+  config-replacers:
+    replacers:
+      - class-name: com.hazelcast.config.replacer.PropertyReplacer
+  split-brain-protection:
+    auth-state-majority:
+      enabled: true
+      protect-on: READ_WRITE
+      # Required JVM property; supply a majority threshold for the deployed member count.
+      minimum-cluster-size: ${auth.state.hazelcast.minimum-cluster-size}
+  map:
+    "login-queue-*-v2":
+      split-brain-protection-ref: auth-state-majority
+    "auth-*-v2":
+      split-brain-protection-ref: auth-state-majority
+  queue:
+    login-queue-order-v2:
+      # Set to queue-capacity + local-bcrypt-concurrency on every member.
+      max-size: ${auth.state.queue.max-size}
+      split-brain-protection-ref: auth-state-majority

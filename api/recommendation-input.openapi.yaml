@@ -4,6 +4,150 @@ info:
   version: 1.0.0
   description: 기존 201~1000자 입력은 이제 400으로 거절됩니다. 성공 접수와 GET SSE 계약은 유지합니다.
 paths:
+  /api/v1/recommendations/images:
+    post:
+      summary: 장소 이미지 기반 추천 접수
+      description: >-
+        JPEG 원본은 일시 처리하며 저장하지 않습니다. 인증 사용자의 요청만 허용합니다.
+        이미지 파일은 최대 5 MiB, 전체 multipart 요청은 최대 6 MiB입니다.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image, conversation_key, input_type, trigger_type]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: JPEG 파일, 최대 5 MiB
+                conversation_key:
+                  type: string
+                  format: uuid
+                input_type:
+                  type: string
+                  const: IMAGE
+                trigger_type:
+                  type: string
+                  const: CHATBOT
+      responses:
+        '202':
+          description: PROCESSING 상태로 접수 완료
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/RecommendationAccepted'
+        '400':
+          description: 요청 필드 또는 이미지 형식 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+        '401':
+          description: Bearer 인증 필요
+        '413':
+          description: 이미지가 5 MiB 또는 전체 요청이 6 MiB를 초과함
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+        '415':
+          description: JPEG가 아닌 이미지
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+        '429':
+          description: 이미지 작업 또는 이미지 스트림 보관 용량이 가득 참
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+        '503':
+          description: 현재 AI provider가 이미지 추천을 지원하지 않음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationError'
+  /api/v1/recommendations/{recommendation_id}/events:
+    get:
+      summary: 추천 SSE 결과 조회
+      description: >-
+        이미지 추천은 동일 ID의 process-local 순서 저널을 재생합니다(세션당 256 이벤트/64 KiB,
+        최대 32개/2 MiB, 최대 10분 보관). terminal 이벤트 1개와 tracks/done/error용 48 KiB를 예약합니다.
+        재시작 시 저장된 IMAGE/PROCESSING 세션은 FAILED로 복구되고, 동일 ID 연결에는 안전한 합성 error가 반환됩니다.
+        사용 가능한 빈 곡 결과는 tracks([]) 뒤 추가 text가 올 수 있고 이후 done으로 끝납니다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: recommendation_id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 기존 recommendation ID의 순서가 보장된 SSE replay
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE event 이름과 JSON payload는 아래 image schemas를 따릅니다.
+              examples:
+                usable:
+                  value: |-
+                    event: verdict
+                    data: {"usable":true}
+
+                    event: text
+                    data: {"delta":"산책길에 어울리는 음악이에요."}
+
+                    event: tracks
+                    data: {"tracks":[]}
+
+                    event: text
+                    data: {"delta":"음악 정보를 찾지 못했어요."}
+
+                    event: done
+                    data: {"status":"COMPLETED","items":[]}
+                rejected:
+                  value: |-
+                    event: verdict
+                    data: {"usable":false}
+
+                    event: rejected
+                    data: {"reason":"scene_unreadable","message":"사진에서 장소를 알아보기 어려워요. 장소가 잘 보이게 다시 촬영해 주세요."}
+
+                    event: tracks
+                    data: {"tracks":[]}
+
+                    event: done
+                    data: {"status":"COMPLETED","items":[]}
+      x-sse-event-contract:
+        usable: [verdict, text*, tracks, text-if-empty, done]
+        rejected: [verdict, rejected, tracks-empty, done]
+        failure: [error]
+        schemas:
+          verdict: '#/components/schemas/ImageVerdictEvent'
+          rejected: '#/components/schemas/ImageRejectedEvent'
+          text: '#/components/schemas/ImageTextEvent'
+          tracks: '#/components/schemas/ImageTracksEvent'
+          terminalError: '#/components/schemas/ImageErrorEvent'
+    description: >-
+      Image events: verdict {usable:boolean}, rejected {reason: allowlisted, message: fixed BE copy}, text {delta:string},
+      tracks {tracks: array}, done {status/items}, or error {detail: safe copy}. For usable results, tracks may be followed
+      by text only when tracks is empty. For rejected results, verdict -> rejected -> tracks([]) -> done. AI status/scene,
+      rejected.message, and image track reason are never forwarded from upstream.
   /api/v1/recommendations:
     post:
       summary: 텍스트 또는 확정된 음성 전사문으로 추천 접수
@@ -53,3 +197,72 @@ paths:
               example:
                 message: 입력 내용과 요청 형식을 확인해 주세요. (최대 200자)
                 data: null
+components:
+  schemas:
+    RecommendationAccepted:
+      type: object
+      required: [recommendation_id, status, conversation_key]
+      properties:
+        recommendation_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          const: PROCESSING
+        conversation_key:
+          type: string
+          format: uuid
+    RecommendationError:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: 'null'
+    ImageVerdictEvent:
+      type: object
+      required: [usable]
+      properties:
+        usable:
+          type: boolean
+    ImageRejectedEvent:
+      type: object
+      required: [reason, message]
+      properties:
+        reason:
+          type: string
+          enum: [scene_unreadable, not_a_place, provider_blocked]
+        message:
+          type: string
+          description: 서버 고정 문구이며 AI의 자유 문구는 전달하지 않음
+    ImageTracksEvent:
+      type: object
+      required: [tracks]
+      properties:
+        tracks:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            properties:
+              reason:
+                type: 'null'
+                description: 이미지 추천의 AI 사유 필드는 전달하지 않음
+    ImageTextEvent:
+      type: object
+      required: [delta]
+      properties:
+        delta:
+          type: string
+    ImageErrorEvent:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          description: AI provider의 원문 오류는 전달하지 않는 안전한 서버 문구
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

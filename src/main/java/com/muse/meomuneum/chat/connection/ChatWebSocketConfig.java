@@ -25,13 +25,14 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final ChatMessageOutboundGuard outboundGuard;
     private final ChatPresenceRegistry presence;
     private final ChatSocketSessions sockets;
+    private final ChatAuthSessionRegistry authSessions;
     private final String[] origins;
     private final ThreadPoolTaskScheduler scheduler;
 
     public ChatWebSocketConfig(ChatStompInterceptor interceptor, ChatPresenceRegistry presence,
             ChatSocketSessions sockets, ChatSubscriptionReceipts receipts, ChatMessageOutboundGuard outboundGuard,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
-            ThreadPoolTaskScheduler chatHeartbeatScheduler) {
+            ThreadPoolTaskScheduler chatHeartbeatScheduler, ChatAuthSessionRegistry authSessions) {
         this.interceptor = interceptor;
         this.receipts = receipts;
         this.outboundGuard = outboundGuard;
@@ -39,6 +40,7 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
         this.sockets = sockets;
         this.origins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).toArray(String[]::new);
         this.scheduler = chatHeartbeatScheduler;
+        this.authSessions = authSessions;
     }
 
     @Override
@@ -79,6 +81,7 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
             @Override
             public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) throws Exception {
                 sockets.remove(session.getId());
+                authSessions.remove(session.getId());
                 presence.disconnect(session.getId());
                 super.afterConnectionClosed(session, closeStatus);
             }

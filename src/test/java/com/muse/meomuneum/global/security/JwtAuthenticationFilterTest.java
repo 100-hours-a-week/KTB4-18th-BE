@@ -146,11 +146,14 @@ class JwtAuthenticationFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/users/me");
         request.addHeader("Authorization", "Bearer valid-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(jwtTokenProvider.parseAccessToken("valid-token")).thenReturn(new TokenClaims(1L, List.of("USER")));
+        TokenClaims claims = new TokenClaims(1L, List.of("USER"), java.time.Instant.now().plusSeconds(60),
+                "550e8400-e29b-41d4-a716-446655440000", "fixture");
+        when(jwtTokenProvider.parseAccessToken("valid-token")).thenReturn(claims);
         doAnswer(invocation -> {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             assertThat(authentication).isNotNull();
             assertThat(authentication.getPrincipal()).isEqualTo(1L);
+            assertThat(authentication.getDetails()).isSameAs(claims);
             assertThat(authentication.getAuthorities()).extracting("authority").containsExactly("ROLE_USER");
             return null;
         }).when(filterChain).doFilter(any(HttpServletRequest.class), any(HttpServletResponse.class));

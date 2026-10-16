@@ -21,6 +21,10 @@ speech:
 
 recommendation:
   provider: itunes
+  image:
+    provider: ${RECOMMENDATION_IMAGE_PROVIDER:mock}
+    mock:
+      outcome: ${RECOMMENDATION_IMAGE_MOCK_OUTCOME:usable}
 
 location:
   token:

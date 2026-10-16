@@ -1,5 +1,6 @@
 package com.muse.meomuneum.chat.room.service;
 
+import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -70,6 +71,9 @@ class ChatRoomEntryIntegrationTest {
     private ChatRoomEntryService service;
 
     @Autowired
+    private com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry authSessions;
+
+    @Autowired
     private ChatRoomRepository chatRoomRepository;
 
     @Autowired
@@ -107,13 +111,43 @@ class ChatRoomEntryIntegrationTest {
     }
 
     @Test
+    void realSocketsKeepSignedSessionAcrossTokenRotationAndRemoveOnlyClosedConnection() throws Exception {
+        Long userId = createUser("auth-context");
+        ChatRoom room = roomFor("41135");
+        var joined = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion())).membership();
+        String sid = sid(userId);
+        String otherSid = java.util.UUID.randomUUID().toString();
+        var user = users.findById(userId).orElseThrow();
+        var first = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, sid));
+        var refreshed = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, sid));
+        Long otherMembership = service.join(userId, otherSid, room.getId(), issueToken(userId, room.getRegion()))
+                .membership().membershipId();
+        var other = connectSocket(userId, room.getId(), otherMembership, jwt.createAccessToken(user, otherSid));
+        try {
+            assertEquals(2, authSessions.connections(userId, sid).size());
+            assertEquals(1, authSessions.connections(userId, otherSid).size());
+            first.socket.sendClose(1000, "test complete").join();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (authSessions.connections(userId, sid).size() != 1 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertEquals(1, authSessions.connections(userId, sid).size());
+            assertEquals(1, authSessions.connections(userId, otherSid).size());
+        } finally {
+            first.socket.abort();
+            refreshed.socket.abort();
+            other.socket.abort();
+        }
+    }
+
+    @Test
     void repeatedConcurrentJoinKeepsOneActiveMembership() throws Exception {
         Long userId = createUser("same-user");
         ChatRoom room = roomFor("41135");
         String token = issueToken(userId, room.getRegion());
 
-        List<ChatRoomJoinResult> results = runConcurrently(() -> service.join(userId, room.getId(), token),
-                () -> service.join(userId, room.getId(), token));
+        List<ChatRoomJoinResult> results = runConcurrently(() -> service.join(userId, sid(userId), room.getId(), token),
+                () -> service.join(userId, sid(userId), room.getId(), token));
 
         assertEquals(1L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
         assertEquals(results.get(0).membership().membershipId(), results.get(1).membership().membershipId());
@@ -159,7 +193,7 @@ class ChatRoomEntryIntegrationTest {
                     }));
 
             assertTrue(snapshotCreated.await(5, TimeUnit.SECONDS));
-            service.join(firstUserId, room.getId(), firstToken);
+            service.join(firstUserId, sid(firstUserId), room.getId(), firstToken);
             firstJoinCompleted.countDown();
 
             assertEquals("full", secondOutcome.get(5, TimeUnit.SECONDS));
@@ -176,18 +210,23 @@ class ChatRoomEntryIntegrationTest {
         Long secondUserId = createUser("swap-second");
         ChatRoom firstRoom = roomFor("41135");
         ChatRoom secondRoom = roomFor("11680");
-        service.join(firstUserId, firstRoom.getId(), issueToken(firstUserId, firstRoom.getRegion()));
-        service.join(secondUserId, secondRoom.getId(), issueToken(secondUserId, secondRoom.getRegion()));
+        service.join(firstUserId, sid(firstUserId), firstRoom.getId(), issueToken(firstUserId, firstRoom.getRegion()));
+        service.join(secondUserId, sid(secondUserId), secondRoom.getId(),
+                issueToken(secondUserId, secondRoom.getRegion()));
 
         List<ChatRoomJoinResult> results = runConcurrently(
-                () -> service.join(firstUserId, secondRoom.getId(), issueToken(firstUserId, secondRoom.getRegion())),
-                () -> service.join(secondUserId, firstRoom.getId(), issueToken(secondUserId, firstRoom.getRegion())));
+                () -> service.join(firstUserId, sid(firstUserId), secondRoom.getId(),
+                        issueToken(firstUserId, secondRoom.getRegion())),
+                () -> service.join(secondUserId, sid(secondUserId), firstRoom.getId(),
+                        issueToken(secondUserId, firstRoom.getRegion())));
 
         assertEquals(2, results.size());
         assertEquals(secondRoom.getId(),
-                memberRepository.findByUser_IdAndDeletedAtIsNull(firstUserId).orElseThrow().getChatRoom().getId());
+                memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(firstUserId, sid(firstUserId))
+                        .orElseThrow().getChatRoom().getId());
         assertEquals(firstRoom.getId(),
-                memberRepository.findByUser_IdAndDeletedAtIsNull(secondUserId).orElseThrow().getChatRoom().getId());
+                memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(secondUserId, sid(secondUserId))
+                        .orElseThrow().getChatRoom().getId());
     }
 
     @Test
@@ -198,14 +237,18 @@ class ChatRoomEntryIntegrationTest {
         ChatRoom fullRoom = roomFor("11680");
         jdbcTemplate.update("UPDATE chat_rooms SET capacity = 1 WHERE id = ?", fullRoom.getId());
 
-        service.join(movingUserId, previousRoom.getId(), issueToken(movingUserId, previousRoom.getRegion()));
-        service.join(occupyingUserId, fullRoom.getId(), issueToken(occupyingUserId, fullRoom.getRegion()));
+        service.join(movingUserId, sid(movingUserId), previousRoom.getId(),
+                issueToken(movingUserId, previousRoom.getRegion()));
+        service.join(occupyingUserId, sid(occupyingUserId), fullRoom.getId(),
+                issueToken(occupyingUserId, fullRoom.getRegion()));
 
         ChatRoomException exception = org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.join(movingUserId, fullRoom.getId(), issueToken(movingUserId, fullRoom.getRegion())));
+                () -> service.join(movingUserId, sid(movingUserId), fullRoom.getId(),
+                        issueToken(movingUserId, fullRoom.getRegion())));
 
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, exception.getErrorCode());
-        assertFalse(memberRepository.findByUser_IdAndDeletedAtIsNull(movingUserId).isPresent());
+        assertFalse(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(movingUserId, sid(movingUserId))
+                .isPresent());
         assertEquals(1L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(fullRoom.getId()));
     }
 
@@ -216,10 +259,11 @@ class ChatRoomEntryIntegrationTest {
         ChatRoom actualRoom = roomFor("11680");
 
         ChatRoomException exception = org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.join(userId, requestedRoom.getId(), issueToken(userId, actualRoom.getRegion())));
+                () -> service.join(userId, sid(userId), requestedRoom.getId(),
+                        issueToken(userId, actualRoom.getRegion())));
 
         assertEquals(ChatRoomErrorCode.LOCATION_REGION_MISMATCH, exception.getErrorCode());
-        assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(userId).isEmpty());
+        assertTrue(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(userId, sid(userId)).isEmpty());
     }
 
     @SuppressWarnings("unchecked")
@@ -243,13 +287,14 @@ class ChatRoomEntryIntegrationTest {
         Long otherId = createUser("leave-other");
         ChatRoom room = roomFor("41135");
         String token = issueToken(userId, room.getRegion());
-        Long previous = service.join(userId, room.getId(), token).membership().membershipId();
-        service.leave(userId, room.getId(), previous);
-        Long current = service.join(userId, room.getId(), token).membership().membershipId();
-        service.leave(userId, room.getId(), previous);
-        assertEquals(current, memberRepository.findByUser_IdAndDeletedAtIsNull(userId).orElseThrow().getId());
+        Long previous = service.join(userId, sid(userId), room.getId(), token).membership().membershipId();
+        service.leave(userId, sid(userId), room.getId(), previous);
+        Long current = service.join(userId, sid(userId), room.getId(), token).membership().membershipId();
+        service.leave(userId, sid(userId), room.getId(), previous);
+        assertEquals(current, memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(userId, sid(userId))
+                .orElseThrow().getId());
         org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.leave(otherId, room.getId(), current));
+                () -> service.leave(otherId, sid(otherId), room.getId(), current));
     }
 
     @Test
@@ -257,16 +302,16 @@ class ChatRoomEntryIntegrationTest {
         Long userId = createUser("banned");
         ChatRoom room = roomFor("41135");
         String token = issueToken(userId, room.getRegion());
-        Long membershipId = service.join(userId, room.getId(), token).membership().membershipId();
-        service.connect(userId, room.getId(), membershipId, "session");
+        Long membershipId = service.join(userId, sid(userId), room.getId(), token).membership().membershipId();
+        service.connect(userId, sid(userId), room.getId(), membershipId, "session");
         jdbcTemplate.update("""
                 INSERT INTO chat_bans (user_id, reason, created_at, expires_at)
                 VALUES (?, 'PROFANITY', UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 7 DAY))
                 """, userId);
         org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.join(userId, room.getId(), token));
+                () -> service.join(userId, sid(userId), room.getId(), token));
         org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.connect(userId, room.getId(), membershipId, "second"));
+                () -> service.connect(userId, sid(userId), room.getId(), membershipId, "second"));
         org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
                 () -> service.authorizeConnection(userId, room.getId(), membershipId, "session"));
     }
@@ -276,7 +321,7 @@ class ChatRoomEntryIntegrationTest {
             throws Exception {
         Long userId = createUser("websocket");
         ChatRoom room = roomFor("41135");
-        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+        Long membershipId = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
                 .membership().membershipId();
         SocketProbe first = connectSocket(userId, room.getId(), membershipId);
         SocketProbe second = connectSocket(userId, room.getId(), membershipId);
@@ -286,11 +331,11 @@ class ChatRoomEntryIntegrationTest {
             assertTrue(first.frames.poll(5, TimeUnit.SECONDS).contains("receipt-id:ready"));
             assertTrue(first.viewFrames.poll(5, TimeUnit.SECONDS).contains("view_session_id"));
             assertEquals(null, second.viewFrames.poll(150, TimeUnit.MILLISECONDS));
-            service.leave(userId, room.getId(), membershipId);
+            service.leave(userId, sid(userId), room.getId(), membershipId);
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
             org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                    () -> service.connect(userId, room.getId(), membershipId, "late"));
+                    () -> service.connect(userId, sid(userId), room.getId(), membershipId, "late"));
         } finally {
             first.socket.abort();
             second.socket.abort();
@@ -301,7 +346,7 @@ class ChatRoomEntryIntegrationTest {
     void browserStompRejectsSubscriptionsToAnotherRoom() throws Exception {
         Long userId = createUser("cross-room");
         ChatRoom room = roomFor("41135");
-        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+        Long membershipId = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
                 .membership().membershipId();
         SocketProbe probe = connectSocket(userId, room.getId(), membershipId);
         try {
@@ -316,15 +361,15 @@ class ChatRoomEntryIntegrationTest {
     void logoutEndsMembershipAndAllAccountConnections() throws Exception {
         Long userId = createUser("logout");
         ChatRoom room = roomFor("41135");
-        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+        Long membershipId = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
                 .membership().membershipId();
         SocketProbe first = connectSocket(userId, room.getId(), membershipId);
         SocketProbe second = connectSocket(userId, room.getId(), membershipId);
         try {
-            events.publishEvent(new com.muse.meomuneum.auth.service.ChatLogoutEvent(userId));
+            events.publishEvent(new com.muse.meomuneum.auth.application.ChatLogoutEvent(userId));
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
-            assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(userId).isEmpty());
+            assertTrue(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(userId, sid(userId)).isEmpty());
         } finally {
             first.socket.abort();
             second.socket.abort();
@@ -338,11 +383,13 @@ class ChatRoomEntryIntegrationTest {
         Long thirdId = createUser("message-third");
         ChatRoom room = roomFor("41135");
         ChatRoom otherRoom = roomFor("11680");
-        Long firstMembership = service.join(firstId, room.getId(), issueToken(firstId, room.getRegion()))
+        Long firstMembership = service.join(firstId, sid(firstId), room.getId(), issueToken(firstId, room.getRegion()))
                 .membership().membershipId();
-        Long secondMembership = service.join(secondId, room.getId(), issueToken(secondId, room.getRegion()))
+        Long secondMembership = service
+                .join(secondId, sid(secondId), room.getId(), issueToken(secondId, room.getRegion()))
                 .membership().membershipId();
-        Long thirdMembership = service.join(thirdId, otherRoom.getId(), issueToken(thirdId, otherRoom.getRegion()))
+        Long thirdMembership = service
+                .join(thirdId, sid(thirdId), otherRoom.getId(), issueToken(thirdId, otherRoom.getRegion()))
                 .membership().membershipId();
         SocketProbe first = connectSocket(firstId, room.getId(), firstMembership);
         SocketProbe second = connectSocket(secondId, room.getId(), secondMembership);
@@ -382,7 +429,7 @@ class ChatRoomEntryIntegrationTest {
     void normalRejectionsDoNotStoreBroadcastOrDisconnectAndMembershipCountsSurviveReconnect() throws Exception {
         Long userId = createUser("message-block");
         ChatRoom room = roomFor("41135");
-        Long membershipId = service.join(userId, room.getId(), issueToken(userId, room.getRegion()))
+        Long membershipId = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
                 .membership().membershipId();
         SocketProbe first = connectSocket(userId, room.getId(), membershipId);
         try {
@@ -425,9 +472,9 @@ class ChatRoomEntryIntegrationTest {
         Long author = createUser("mask");
         Long viewer = createUser("mask-watch");
         ChatRoom room = roomFor("41135");
-        Long membershipId = service.join(author, room.getId(), issueToken(author, room.getRegion()))
+        Long membershipId = service.join(author, sid(author), room.getId(), issueToken(author, room.getRegion()))
                 .membership().membershipId();
-        Long viewerMembership = service.join(viewer, room.getId(), issueToken(viewer, room.getRegion()))
+        Long viewerMembership = service.join(viewer, sid(viewer), room.getId(), issueToken(viewer, room.getRegion()))
                 .membership().membershipId();
         SocketProbe first = connectSocket(author, room.getId(), membershipId);
         SocketProbe second = connectSocket(author, room.getId(), membershipId);
@@ -451,7 +498,8 @@ class ChatRoomEntryIntegrationTest {
             assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_bans", Long.class));
             assertFalse(first.closed.isDone());
             assertFalse(second.closed.isDone());
-            assertTrue(memberRepository.findByUser_IdAndDeletedAtIsNull(author).isPresent());
+            assertTrue(
+                    memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(author, sid(author)).isPresent());
             // Same original UUID/content retries return stored masked ACK, without a second broadcast.
             sendMessage(first, room.getId(), clientId, "가사에 씨발이 있어 😀");
             String retry = first.frames.poll(5, TimeUnit.SECONDS);
@@ -487,11 +535,12 @@ class ChatRoomEntryIntegrationTest {
         Long outsider = createUser("presence-other");
         ChatRoom room = roomFor("41135");
         ChatRoom otherRoom = roomFor("11680");
-        Long ownMembership = service.join(owner, room.getId(), issueToken(owner, room.getRegion()))
+        Long ownMembership = service.join(owner, sid(owner), room.getId(), issueToken(owner, room.getRegion()))
                 .membership().membershipId();
-        Long otherMembership = service.join(other, room.getId(), issueToken(other, room.getRegion()))
+        Long otherMembership = service.join(other, sid(other), room.getId(), issueToken(other, room.getRegion()))
                 .membership().membershipId();
-        Long outsiderMembership = service.join(outsider, otherRoom.getId(), issueToken(outsider, otherRoom.getRegion()))
+        Long outsiderMembership = service
+                .join(outsider, sid(outsider), otherRoom.getId(), issueToken(outsider, otherRoom.getRegion()))
                 .membership().membershipId();
         SocketProbe first = connectSocket(owner, room.getId(), ownMembership);
         SocketProbe second = null;
@@ -518,7 +567,7 @@ class ChatRoomEntryIntegrationTest {
             subscribeMessages(outside, otherRoom.getId());
             assertPresence(outside, 1);
             assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
-            service.leave(other, room.getId(), otherMembership);
+            service.leave(other, sid(other), room.getId(), otherMembership);
             assertPresence(first, 1);
             assertEquals(4100, device.closed.get(5, TimeUnit.SECONDS));
             assertEquals(null, outside.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
@@ -534,6 +583,209 @@ class ChatRoomEntryIntegrationTest {
                 outside.socket.abort();
             }
         }
+    }
+
+    @Test
+    void separateMembershipsKeepOneAccountPerRoomAndIndependentPresence() throws Exception {
+        Long owner = createUser("account-seats");
+        ChatRoom room = roomFor("41135");
+        ChatRoom otherRoom = roomFor("11680");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity=1 WHERE id IN (?,?)", room.getId(), otherRoom.getId());
+        Long firstId = createSessionMembership(owner, room.getId());
+        Long secondId = createSessionMembership(owner, room.getId());
+        Long outsideId = createSessionMembership(owner, otherRoom.getId());
+        SocketProbe first = null;
+        SocketProbe second = null;
+        SocketProbe outside = null;
+        try {
+            first = connectSocket(owner, room.getId(), firstId);
+            subscribeMessages(first, room.getId());
+            assertPresence(first, 1);
+            second = connectSocket(owner, room.getId(), secondId);
+            subscribeMessages(second, room.getId());
+            assertPresence(second, 1);
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            outside = connectSocket(owner, otherRoom.getId(), outsideId);
+            subscribeMessages(outside, otherRoom.getId());
+            assertPresence(outside, 1);
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            service.leave(owner, memberRepository.findById(secondId).orElseThrow().getAuthSessionId(), room.getId(),
+                    secondId);
+            assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(first.closed.isDone());
+            assertFalse(outside.closed.isDone());
+            assertEquals(null, first.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            sendMessage(first, room.getId(), java.util.UUID.randomUUID().toString(), "remaining connection");
+            assertTrue(nextFrame(first).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(first).contains("CHAT_ACK"));
+            assertEquals(null, outside.frames.poll(150, TimeUnit.MILLISECONDS));
+            service.leave(owner, memberRepository.findById(firstId).orElseThrow().getAuthSessionId(), room.getId(),
+                    firstId);
+            assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(outside.closed.isDone());
+            Thread.sleep(1050); // Account-wide rate limiting also applies across rooms.
+            sendMessage(outside, otherRoom.getId(), java.util.UUID.randomUUID().toString(), "independent room");
+            assertTrue(nextFrame(outside).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(outside).contains("CHAT_ACK"));
+        } finally {
+            service.leave(owner, memberRepository.findById(firstId).orElseThrow().getAuthSessionId(), room.getId(),
+                    firstId);
+            service.leave(owner, memberRepository.findById(secondId).orElseThrow().getAuthSessionId(), room.getId(),
+                    secondId);
+            service.leave(owner, memberRepository.findById(outsideId).orElseThrow().getAuthSessionId(),
+                    otherRoom.getId(), outsideId);
+            for (SocketProbe socket : new SocketProbe[]{first, second, outside}) {
+                if (socket != null) {
+                    socket.socket.abort();
+                }
+            }
+        }
+    }
+
+    private Long createSessionMembership(Long userId, Long roomId) {
+        // B4 will provide REST creation; B3 validates counting with explicit B2-compatible fixtures.
+        String sid = java.util.UUID.randomUUID().toString();
+        jdbcTemplate.update("INSERT INTO chat_room_members (user_id,room_id,auth_session_id) VALUES (?,?,?)",
+                userId, roomId, sid);
+        return jdbcTemplate.queryForObject("SELECT id FROM chat_room_members WHERE auth_session_id=?", Long.class, sid);
+    }
+
+    @Test
+    void concurrentDifferentSessionsCreateDistinctMembershipsWithoutExceedingAccountCapacity() throws Exception {
+        Long owner = createUser("device-concurrent");
+        Long outsider = createUser("device-outsider");
+        ChatRoom room = roomFor("41135");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity=1 WHERE id=?", room.getId());
+        String firstSid = sid(owner);
+        String secondSid = java.util.UUID.randomUUID().toString();
+        String location = issueToken(owner, room.getRegion());
+        var results = runConcurrently(
+                () -> service.join(owner, firstSid, room.getId(), location),
+                () -> service.join(owner, secondSid, room.getId(), location),
+                () -> service.join(owner, firstSid, room.getId(), location));
+        assertEquals(2L, results.stream().map(result -> result.membership().membershipId()).distinct().count());
+        assertEquals(2L, results.stream().filter(ChatRoomJoinResult::created).count());
+        assertEquals(2L, memberRepository.countByChatRoom_IdAndDeletedAtIsNull(room.getId()));
+        assertEquals("full", joinOutcome(outsider, room.getId(), issueToken(outsider, room.getRegion())));
+        assertEquals(1L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_room_members"
+                + " WHERE auth_session_id=? AND deleted_at IS NULL", Long.class, firstSid));
+    }
+
+    @Test
+    void differentSessionCanJoinAnotherRegionWithoutEndingTheOriginalParticipation() {
+        Long owner = createUser("device-regions");
+        ChatRoom first = roomFor("41135");
+        ChatRoom second = roomFor("11680");
+        Long firstMembership = service.join(owner, sid(owner), first.getId(), issueToken(owner, first.getRegion()))
+                .membership().membershipId();
+        String otherSid = java.util.UUID.randomUUID().toString();
+        Long secondMembership = service.join(owner, otherSid, second.getId(), issueToken(owner, second.getRegion()))
+                .membership().membershipId();
+        assertTrue(!firstMembership.equals(secondMembership));
+        assertEquals(2, memberRepository.findAllByUser_IdAndDeletedAtIsNull(owner).size());
+        assertTrue(memberRepository.findById(firstMembership).orElseThrow().isActive());
+        assertEquals(otherSid, memberRepository.findById(secondMembership).orElseThrow().getAuthSessionId());
+    }
+
+    @Test
+    void legacyMembershipRemainsUnclaimedAndCannotBeUsedByANewSession() {
+        Long owner = createUser("device-legacy");
+        ChatRoom room = roomFor("41135");
+        jdbcTemplate.update("INSERT INTO chat_room_members (user_id,room_id) VALUES (?,?)", owner, room.getId());
+        Long legacy = jdbcTemplate.queryForObject("SELECT id FROM chat_room_members WHERE user_id=?", Long.class,
+                owner);
+        Long current = service.join(owner, sid(owner), room.getId(), issueToken(owner, room.getRegion()))
+                .membership().membershipId();
+        assertTrue(!legacy.equals(current));
+        assertEquals(null, memberRepository.findById(legacy).orElseThrow().getAuthSessionId());
+        assertTrue(memberRepository.findById(legacy).orElseThrow().isActive());
+        assertEquals(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND, org.junit.jupiter.api.Assertions.assertThrows(
+                ChatRoomException.class, () -> service.connect(owner, sid(owner), room.getId(), legacy, "legacy"))
+                .getErrorCode());
+        assertTrue(memberRepository.findById(current).orElseThrow().isActive());
+    }
+
+    @Test
+    void realHttpAndSocketsBindParticipationToSignedSessionAndRejectCrossDeviceLeave() throws Exception {
+        Long owner = createUser("device-http");
+        ChatRoom room = roomFor("41135");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity=1 WHERE id=?", room.getId());
+        var user = users.findById(owner).orElseThrow();
+        String firstToken = jwt.createAccessToken(user, sid(owner));
+        String otherSid = java.util.UUID.randomUUID().toString();
+        String secondToken = jwt.createAccessToken(user, otherSid);
+        String path = "/api/v1/chat-rooms/" + room.getId() + "/members";
+        String location = issueToken(owner, room.getRegion());
+        assertEquals(401, membershipHttp("POST", path, jwt.createAccessToken(user), location).statusCode());
+        assertEquals(401, membershipHttp("POST", path, jwt.createAccessToken(user, "invalid"), location).statusCode());
+        var firstJoin = membershipHttp("POST", path, firstToken, location);
+        assertEquals(201, firstJoin.statusCode());
+        var secondJoin = membershipHttp("POST", path, secondToken, location);
+        assertEquals(201, secondJoin.statusCode());
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        Long firstId = mapper.readTree(firstJoin.body()).path("data").path("membership_id").longValue();
+        Long secondId = mapper.readTree(secondJoin.body()).path("data").path("membership_id").longValue();
+        var retry = membershipHttp("POST", path, firstToken, location);
+        assertEquals(200, retry.statusCode());
+        assertEquals(firstId.longValue(), mapper.readTree(retry.body()).path("data").path("membership_id").longValue());
+        assertTrue(!firstId.equals(secondId));
+        assertEquals(sid(owner), memberRepository.findById(firstId).orElseThrow().getAuthSessionId());
+        assertEquals(otherSid, memberRepository.findById(secondId).orElseThrow().getAuthSessionId());
+        SocketProbe first = connectSocket(owner, room.getId(), firstId, firstToken);
+        SocketProbe second = connectSocket(owner, room.getId(), secondId, secondToken);
+        SocketProbe spoofed = new SocketProbe();
+        try {
+            spoofed.socket = java.net.http.HttpClient.newHttpClient().newWebSocketBuilder()
+                    .header("Origin", "http://localhost:5174").subprotocols("v12.stomp")
+                    .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), spoofed)
+                    .get(5, TimeUnit.SECONDS);
+            spoofed.socket.sendText("CONNECT\naccept-version:1.2\nAuthorization:Bearer " + secondToken
+                    + "\nroom_id:" + room.getId() + "\nmembership_id:" + firstId + "\n\n\u0000", true).join();
+            String rejected = spoofed.frames.poll(5, TimeUnit.SECONDS);
+            assertTrue(rejected != null && rejected.startsWith("ERROR"));
+            assertEquals(1, authSessions.connections(owner, otherSid).size());
+            assertEquals(403, membershipHttp("DELETE", path + "/me?membership_id=" + firstId,
+                    secondToken, null).statusCode());
+            assertTrue(memberRepository.findById(firstId).orElseThrow().isActive());
+            assertFalse(first.closed.isDone());
+            assertFalse(second.closed.isDone());
+            assertEquals(204, membershipHttp("DELETE", path + "/me?membership_id=" + firstId,
+                    firstToken, null).statusCode());
+            assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
+            assertTrue(memberRepository.findById(secondId).orElseThrow().isActive());
+            var rejoined = membershipHttp("POST", path, firstToken, location);
+            assertEquals(201, rejoined.statusCode());
+            assertTrue(firstId.longValue() != mapper.readTree(rejoined.body()).path("data")
+                    .path("membership_id").longValue());
+            assertFalse(memberRepository.findById(firstId).orElseThrow().isActive());
+            subscribeMessages(second, room.getId());
+            assertPresence(second, 1);
+            sendMessage(second, room.getId(), java.util.UUID.randomUUID().toString(), "other device remains");
+            assertTrue(nextFrame(second).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(second).contains("CHAT_ACK"));
+        } finally {
+            service.leaveAll(owner);
+            first.socket.abort();
+            second.socket.abort();
+            if (spoofed.socket != null) {
+                spoofed.socket.abort();
+            }
+        }
+    }
+
+    private java.net.http.HttpResponse<String> membershipHttp(String method, String path, String token,
+            String location) throws Exception {
+        var builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port + path))
+                .header("Authorization", "Bearer " + token).header("Origin", "http://localhost:5174");
+        if ("POST".equals(method)) {
+            builder.header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                    new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+                            java.util.Map.of("location_resolution_token", location))));
+        } else {
+            builder.DELETE();
+        }
+        return java.net.http.HttpClient.newHttpClient().send(builder.build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
     }
 
     private void assertPresence(SocketProbe probe, int count) throws Exception {
@@ -566,11 +818,16 @@ class ChatRoomEntryIntegrationTest {
     }
 
     private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId) throws Exception {
+        return connectSocket(userId, roomId, membershipId,
+                jwt.createAccessToken(users.findById(userId).orElseThrow(),
+                        memberRepository.findById(membershipId).orElseThrow().getAuthSessionId()));
+    }
+
+    private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId, String token) throws Exception {
         SocketProbe probe = new SocketProbe();
         probe.socket = java.net.http.HttpClient.newHttpClient().newWebSocketBuilder()
                 .header("Origin", "http://localhost:5174").subprotocols("v12.stomp")
                 .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), probe).get(5, TimeUnit.SECONDS);
-        String token = jwt.createAccessToken(users.findById(userId).orElseThrow());
         probe.socket.sendText("CONNECT\naccept-version:1.2\nheart-beat:0,0\nAuthorization:Bearer " + token
                 + "\nroom_id:" + roomId + "\nmembership_id:" + membershipId + "\n\n\u0000", true).join();
         assertTrue(probe.frames.poll(5, TimeUnit.SECONDS).startsWith("CONNECTED"));
@@ -621,7 +878,7 @@ class ChatRoomEntryIntegrationTest {
 
     private String joinOutcome(Long userId, Long roomId, String token) {
         try {
-            service.join(userId, roomId, token);
+            service.join(userId, sid(userId), roomId, token);
             return "joined";
         } catch (ChatRoomException exception) {
             if (exception.getErrorCode() == ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED) {

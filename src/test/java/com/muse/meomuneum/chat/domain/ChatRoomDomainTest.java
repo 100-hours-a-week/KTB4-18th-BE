@@ -43,7 +43,8 @@ class ChatRoomDomainTest {
         Region sido = Region.create("41", "경기도", RegionLevel.SIDO, null);
         Region sigungu = Region.create("41135", "성남시 분당구", RegionLevel.SIGUNGU, sido);
         LocalDateTime joinedAt = LocalDateTime.of(2026, 9, 23, 14, 0);
-        ChatRoomMember member = ChatRoomMember.join(mock(User.class), ChatRoom.create(sigungu), joinedAt);
+        ChatRoomMember member = ChatRoomMember.join(mock(User.class), ChatRoom.create(sigungu), joinedAt,
+                "550e8400-e29b-41d4-a716-446655440000");
         LocalDateTime firstLeaveTime = LocalDateTime.of(2026, 9, 23, 14, 30);
 
         member.leave(firstLeaveTime);

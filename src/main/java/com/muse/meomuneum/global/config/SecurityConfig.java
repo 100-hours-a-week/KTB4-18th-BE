@@ -4,6 +4,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -11,19 +13,18 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.filter.CorsFilter;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.context.DelegatingSecurityContextRepository;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
-import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.global.security.BearerTokenSecurityContextRepository;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
+import com.muse.meomuneum.global.security.LocalMockLoginNoStoreFilter;
 import com.muse.meomuneum.global.security.RequestOriginValidationFilter;
 import com.muse.meomuneum.global.security.SecurityErrorCode;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
@@ -44,10 +45,13 @@ public class SecurityConfig {
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             UserAuthenticationService userAuthenticationService,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests,
-            @Value("${auth.cors.allowed-origins}") String allowedOrigins)
+            @Value("${auth.cors.allowed-origins}") String allowedOrigins,
+            @Value("${auth.local-mock-login.enabled:false}") boolean localMockLoginEnabled,
+            Environment environment)
             throws Exception {
         String[] csrfIgnoredPaths = {
                 "/api/v1/auth/login",
+                "/api/v1/auth/login-queue/tickets",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
@@ -69,6 +73,7 @@ public class SecurityConfig {
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> {
+                    authorize.requestMatchers(HttpMethod.POST, "/api/v1/recommendations/images").authenticated();
                     if (allowGuests) {
                         authorize.requestMatchers(
                                 "/api/v1/recommendations",
@@ -101,25 +106,31 @@ public class SecurityConfig {
                 .addFilterBefore(
                         new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter),
                         JwtAuthenticationFilter.class);
+        if (localMockLoginEnabled && environment.acceptsProfiles(Profiles.of("local-mock & !prod"))) {
+            http.addFilterBefore(new LocalMockLoginNoStoreFilter(), CorsFilter.class);
+        }
         return http.build();
     }
 
     @Bean
-    public CsrfTokenRepository csrfTokenRepository() {
-        HttpSessionCsrfTokenRepository repository = new HttpSessionCsrfTokenRepository();
+    public CsrfTokenRepository csrfTokenRepository(
+            @Value("${auth.cookie.secure:true}") boolean secureCookie,
+            @Value("${auth.cookie.same-site:Lax}") String sameSite) {
+        CookieCsrfTokenRepository repository = new CookieCsrfTokenRepository();
         repository.setHeaderName("X-CSRF-TOKEN");
+        repository.setCookieName("XSRF-TOKEN");
+        repository.setCookiePath("/api/v1/auth");
+        repository.setCookieCustomizer(cookie -> cookie.httpOnly(true).secure(secureCookie).sameSite(sameSite));
         return repository;
     }
 
     @Bean
     public SecurityContextRepository securityContextRepository() {
-        SecurityContextRepository sessionRepository = new DelegatingSecurityContextRepository(
-                new RequestAttributeSecurityContextRepository(), new HttpSessionSecurityContextRepository());
-        return new BearerTokenSecurityContextRepository(sessionRepository);
+        return new RequestAttributeSecurityContextRepository();
     }
 
     @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public PasswordEncoder passwordEncoder(@Value("${auth.bcrypt.strength:8}") int strength) {
+        return new BCryptPasswordEncoder(strength);
     }
 }

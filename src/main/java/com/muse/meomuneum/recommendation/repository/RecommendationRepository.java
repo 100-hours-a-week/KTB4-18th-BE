@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
 import com.muse.meomuneum.recommendation.dto.TrackData;
+import com.muse.meomuneum.recommendation.dto.request.ImageRecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
@@ -41,6 +42,47 @@ public class RecommendationRepository {
         Instant completedAt = Instant.now();
         complete(id, completedAt);
         return new RecommendationResponse(id, "COMPLETED", request.conversation_key(), findItems(id), completedAt);
+    }
+
+    public long createImageSession(ImageRecommendationRequest request, Long userId, Instant now) {
+        var keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO recommendation_sessions
+                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at)
+                    VALUES (?, NULL, ?, ?, ?, NULL, 'PROCESSING', ?)
+                    """, new String[]{"id"});
+            statement.setObject(1, userId);
+            statement.setString(2, request.trigger_type());
+            statement.setString(3, request.input_type());
+            statement.setString(4, request.conversation_key());
+            statement.setTimestamp(5, Timestamp.from(now));
+            return statement;
+        }, keys);
+        Number generatedId = keys.getKey();
+        if (generatedId == null) {
+            throw new RecommendationException(500, "추천 세션의 저장 ID를 확인할 수 없습니다.");
+        }
+        return generatedId.longValue();
+    }
+
+    @Transactional
+    public RecommendationResponse completeImageSession(long id, String conversationKey, List<TrackData> tracks) {
+        for (int i = 0; i < tracks.size(); i++) {
+            TrackData track = tracks.get(i);
+            saveItem(id, saveMusic(new TrackData(track.provider(), track.externalId(), track.title(),
+                    track.artistName(), track.coverUrl(), track.previewUrl(), track.storeUrl(), null)), i + 1);
+        }
+        Instant completedAt = Instant.now();
+        complete(id, completedAt);
+        return new RecommendationResponse(id, "COMPLETED", conversationKey, findItems(id), completedAt);
+    }
+
+    public int failOrphanedImageSessions(Instant now) {
+        return jdbc.update("""
+                UPDATE recommendation_sessions SET status = 'FAILED', completed_at = ?
+                WHERE input_type = 'IMAGE' AND status = 'PROCESSING'
+                """, Timestamp.from(now));
     }
 
     public long createSession(RecommendationRequest request, String guestSessionId, Long userId, Instant now) {
@@ -108,11 +150,12 @@ public class RecommendationRepository {
 
     public SavedSession findSession(long id) {
         return jdbc.query("""
-                SELECT id, user_id, guest_session_id, status, conversation_key, completed_at
+                SELECT id, user_id, guest_session_id, status, input_type, conversation_key, completed_at
                 FROM recommendation_sessions WHERE id = ?
                 """,
                 (row, index) -> new SavedSession(row.getLong("id"), row.getObject("user_id", Long.class),
-                        row.getString("guest_session_id"), row.getString("status"), row.getString("conversation_key"),
+                        row.getString("guest_session_id"), row.getString("status"), row.getString("input_type"),
+                        row.getString("conversation_key"),
                         row.getTimestamp("completed_at") == null ? null : row.getTimestamp("completed_at").toInstant()),
                 id).stream().findFirst().orElseThrow(() -> new RecommendationException(404, "추천 결과를 찾을 수 없습니다."));
     }
@@ -169,7 +212,8 @@ public class RecommendationRepository {
         return new HistorySession(id, status, completedAt.toInstant());
     }
 
-    public record SavedSession(long id, Long userId, String guestSessionId, String status, String conversationKey,
+    public record SavedSession(long id, Long userId, String guestSessionId, String status, String inputType,
+            String conversationKey,
             Instant completedAt) {
     }
 

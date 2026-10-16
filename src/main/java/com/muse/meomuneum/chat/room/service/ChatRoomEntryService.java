@@ -3,6 +3,7 @@ package com.muse.meomuneum.chat.room.service;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -13,8 +14,9 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import com.muse.meomuneum.auth.service.ChatLogoutEvent;
+import com.muse.meomuneum.auth.application.ChatLogoutEvent;
 import com.muse.meomuneum.chat.ban.service.ChatBanStorageService;
+import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
@@ -66,10 +68,12 @@ public class ChatRoomEntryService {
         return ChatRoomResponse.from(chatRoom);
     }
 
-    public ChatRoomJoinResult join(Long userId, Long roomId, String locationResolutionToken) {
+    public ChatRoomJoinResult join(Long userId, String authSessionId, Long roomId, String locationResolutionToken) {
+        requireAuthSession(authSessionId);
         LocationResolutionClaims claims = tokenProvider.validate(locationResolutionToken, userId);
         Transition transition = presence.exclusive(() -> {
-            Transition committed = transactions.execute(status -> joinInTransaction(userId, roomId, claims));
+            Transition committed = transactions
+                    .execute(status -> joinInTransaction(userId, authSessionId, roomId, claims));
             Set<String> ended = committed.previousId() == null
                     ? Set.of()
                     : presence.remove(userId, committed.previousId());
@@ -85,11 +89,13 @@ public class ChatRoomEntryService {
         return transition.result();
     }
 
-    private Transition joinInTransaction(Long userId, Long roomId, LocationResolutionClaims claims) {
+    private Transition joinInTransaction(Long userId, String authSessionId, Long roomId,
+            LocationResolutionClaims claims) {
         User user = userRepository.findActiveByIdForUpdate(userId)
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.USER_NOT_FOUND));
         checkBan(userId);
-        ChatRoomMember active = memberRepository.findByUser_IdAndDeletedAtIsNull(userId).orElse(null);
+        ChatRoomMember active = memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(userId, authSessionId)
+                .orElse(null);
         ChatRoom target = chatRoomRepository.findAllByIdForUpdate(roomIdsToLock(active, roomId)).stream()
                 .filter(room -> room.getId().equals(roomId)).filter(ChatRoom::isActive).findFirst()
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_NOT_FOUND));
@@ -107,18 +113,20 @@ public class ChatRoomEntryService {
         }
         ChatRoomMember membership = sameRoom
                 ? active
-                : memberRepository.saveAndFlush(ChatRoomMember.join(user, target, now()));
+                : memberRepository.saveAndFlush(ChatRoomMember.join(user, target, now(), authSessionId));
         return new Transition(new ChatRoomJoinResult(ChatRoomMembershipResponse.from(membership), !sameRoom),
                 null, previousId, Set.of());
     }
 
-    public void leave(Long userId, Long roomId, Long membershipId) {
+    public void leave(Long userId, String authSessionId, Long roomId, Long membershipId) {
+        requireAuthSession(authSessionId);
         Set<String> ended = presence.exclusive(() -> {
             transactions.executeWithoutResult(status -> {
                 userRepository.findActiveByIdForUpdate(userId)
                         .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.USER_NOT_FOUND));
                 ChatRoomMember membership = memberRepository.findByIdAndUser_IdAndChatRoom_Id(
                         membershipId, userId, roomId)
+                        .filter(member -> authSessionId.equals(member.getAuthSessionId()))
                         .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND));
                 membership.leave(now());
                 memberRepository.saveAndFlush(membership);
@@ -139,25 +147,30 @@ public class ChatRoomEntryService {
 
     public void leaveAll(Long userId, int code, String reason) {
         Set<String> ended = presence.exclusive(() -> {
-            Long membershipId = transactions.execute(status -> {
+            List<Long> membershipIds = transactions.execute(status -> {
                 userRepository.findActiveByIdForUpdate(userId);
-                ChatRoomMember active = memberRepository.findByUser_IdAndDeletedAtIsNull(userId).orElse(null);
-                if (active == null) {
-                    return null;
-                }
-                active.leave(now());
-                memberRepository.saveAndFlush(active);
-                return active.getId();
+                List<ChatRoomMember> active = memberRepository.findAllByUser_IdAndDeletedAtIsNull(userId);
+                active.forEach(member -> member.leave(now()));
+                memberRepository.saveAllAndFlush(active);
+                return active.stream().map(ChatRoomMember::getId).toList();
             });
-            return membershipId == null ? Set.of() : presence.remove(userId, membershipId);
+            Set<String> sessions = new HashSet<>();
+            membershipIds.forEach(id -> sessions.addAll(presence.remove(userId, id)));
+            return Set.copyOf(sessions);
         });
         sockets.close(ended, code, reason);
     }
 
-    public void connect(Long userId, Long roomId, Long membershipId, String sessionId) {
+    public void connect(Long userId, String authSessionId, Long roomId, Long membershipId, String sessionId) {
+        requireAuthSession(authSessionId);
         presence.exclusive(() -> {
-            Integer capacity = transactions
-                    .execute(status -> authorizedMembership(userId, roomId, membershipId).getChatRoom().getCapacity());
+            Integer capacity = transactions.execute(status -> {
+                ChatRoomMember member = authorizedMembership(userId, roomId, membershipId);
+                if (!authSessionId.equals(member.getAuthSessionId())) {
+                    throw new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND);
+                }
+                return member.getChatRoom().getCapacity();
+            });
             presence.connect(userId, roomId, membershipId, capacity, sessionId);
             return null;
         });
@@ -180,6 +193,12 @@ public class ChatRoomEntryService {
         return memberRepository.findByIdAndUser_IdAndChatRoom_Id(membershipId, userId, roomId)
                 .filter(ChatRoomMember::isActive).filter(member -> member.getChatRoom().isActive())
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND));
+    }
+
+    private void requireAuthSession(String authSessionId) {
+        if (!ChatAuthSessionRegistry.isValidSessionId(authSessionId)) {
+            throw new ChatRoomException(ChatRoomErrorCode.AUTH_REQUIRED);
+        }
     }
 
     private void checkBan(Long userId) {

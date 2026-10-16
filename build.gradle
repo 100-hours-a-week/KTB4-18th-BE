@@ -1,3 +1,7 @@
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.HexFormat
+
 plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.1.1'
@@ -40,6 +44,7 @@ dependencies {
 	implementation 'io.github.vaneproject:badwordfiltering:1.0.0'
 	implementation 'com.fasterxml.jackson.core:jackson-databind'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -47,6 +52,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
+	implementation 'com.hazelcast:hazelcast:5.7.0'
 	implementation 'org.flywaydb:flyway-mysql'
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -97,6 +103,7 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20261007205453__create_chat_bans_table.sql'
 		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
 		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
+		include 'V20261016090922__add_auth_session_to_chat_memberships.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -119,6 +126,7 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20261007205453__create_chat_bans_table.sql'
 		include 'V20261010155558__release_legacy_automatic_chat_bans.sql'
 		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
+		include 'V20261016090922__add_auth_session_to_chat_memberships.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'
@@ -136,4 +144,42 @@ tasks.named('bootRun') {
 tasks.named('test') {
 	dependsOn 'prepareMusicRecordLocalMigrations'
 	dependsOn 'prepareMusicRecordSignupLocalMigrations'
+}
+
+def buildIdentityFiles = {
+	def filesByPath = [:]
+	['build.gradle', 'settings.gradle', 'gradle.properties',
+			'gradle/wrapper/gradle-wrapper.properties']
+			.findAll { file(it).isFile() }
+			.each { sourceFile -> filesByPath[project.relativePath(file(sourceFile))] = file(sourceFile) }
+	['src/main/java', 'src/main/resources', 'src/test/java'].each { sourceDir ->
+		def directory = file(sourceDir)
+		if (directory.isDirectory()) {
+			fileTree(directory).files.each { sourceFile ->
+				filesByPath[project.relativePath(sourceFile)] = sourceFile
+			}
+		}
+	}
+	filesByPath.keySet().sort().collect { filesByPath[it] }
+}
+
+def buildSourceSha256 = {
+	def digest = MessageDigest.getInstance('SHA-256')
+	buildIdentityFiles().each { sourceFile ->
+		digest.update(project.relativePath(sourceFile).getBytes(StandardCharsets.UTF_8))
+		digest.update((byte) 0)
+		digest.update(sourceFile.bytes)
+		digest.update((byte) 0)
+	}
+	HexFormat.of().formatHex(digest.digest())
+}
+
+tasks.named('bootJar') {
+	manifest {
+		attributes(
+				'Build-Git-Commit': providers.exec {
+					commandLine 'git', 'rev-parse', 'HEAD'
+				}.standardOutput.asText.get().trim(),
+				'Build-Source-SHA256': buildSourceSha256())
+	}
 }
