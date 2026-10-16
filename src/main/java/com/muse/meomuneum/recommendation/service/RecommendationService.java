@@ -187,7 +187,9 @@ public class RecommendationService {
         if (!owns(saved, guestSessionId, userId)) {
             throw new RecommendationException(403, "이 추천 결과에 접근할 수 없습니다.");
         }
-        return eventStream.connect(id);
+        boolean recoveredImageFailure = "IMAGE".equals(saved.inputType())
+                && ("FAILED".equals(saved.status()) || "TIMEOUT".equals(saved.status()));
+        return eventStream.connect(id, recoveredImageFailure);
     }
 
     private boolean owns(RecommendationRepository.SavedSession saved, String guestSessionId, Long userId) {
