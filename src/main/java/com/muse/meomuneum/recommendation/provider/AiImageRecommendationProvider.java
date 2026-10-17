@@ -185,12 +185,12 @@ public class AiImageRecommendationProvider implements ImageStreamingRecommendati
         }
         if ("status".equals(eventName) || "scene".equals(eventName)) {
             if ("status".equals(eventName)) {
-                String status = mapper.readTree(data).path("status").asString();
-                if (progress.verdict == null && "analyzing".equals(status) && !progress.analyzingSeen) {
+                String stage = mapper.readTree(data).path("stage").asString();
+                if (progress.verdict == null && "analyzing".equals(stage) && !progress.analyzingSeen) {
                     progress.analyzingSeen = true;
                     return;
                 }
-                if (Boolean.TRUE.equals(progress.verdict) && "searching".equals(status)
+                if (Boolean.TRUE.equals(progress.verdict) && "searching".equals(stage)
                         && progress.sceneSeen && progress.textSeen && !progress.searchingSeen && !progress.tracksSeen) {
                     progress.searchingSeen = true;
                     return;
