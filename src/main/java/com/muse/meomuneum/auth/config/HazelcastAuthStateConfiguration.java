@@ -3,12 +3,14 @@ package com.muse.meomuneum.auth.config;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
 import com.hazelcast.client.HazelcastClient;
 import com.hazelcast.client.config.ClientConfig;
@@ -19,13 +21,21 @@ import com.hazelcast.core.HazelcastInstance;
 @EnableConfigurationProperties(AuthStateProperties.class)
 public class HazelcastAuthStateConfiguration {
 
-    @Bean(destroyMethod = "shutdown")
-    public HazelcastInstance authHazelcastClient(
+    @Bean(destroyMethod = "close")
+    @Profile("test & !prod")
+    @ConditionalOnProperty(prefix = "auth.state.hazelcast", name = "local-auto-start", havingValue = "true")
+    LocalHazelcastMemberLifecycle localHazelcastMemberLifecycle() {
+        return new LocalHazelcastMemberLifecycle();
+    }
+
+    @Bean(name = "authHazelcastClient", destroyMethod = "shutdown")
+    public HazelcastInstance createAuthHazelcastClient(
             @Value("${auth.state.hazelcast.cluster-name:meomuneum-auth}") String clusterName,
             @Value("${auth.state.hazelcast.members}") String memberAddresses,
             @Value("${auth.state.hazelcast.invocation-timeout:1s}") Duration invocationTimeout,
             @Value("${auth.state.backend-replica-count:}") String backendReplicaCount,
-            AuthStateProperties authStateProperties) {
+            AuthStateProperties authStateProperties,
+            Optional<LocalHazelcastMemberLifecycle> localMember) {
         validateSingletonBackend(backendReplicaCount);
         validateSecurityKeys(authStateProperties);
         String[] addresses = Arrays.stream(memberAddresses.split(","))
@@ -37,13 +47,23 @@ public class HazelcastAuthStateConfiguration {
         if (invocationTimeoutSeconds < 1) {
             throw new IllegalStateException("Hazelcast client invocation timeout must be at least 1 second");
         }
+        if (clusterName == null || clusterName.isBlank()) {
+            throw new IllegalStateException("Hazelcast cluster name must not be blank");
+        }
         ClientConfig config = new ClientConfig();
         config.setClusterName(clusterName);
         config.getNetworkConfig().addAddress(addresses);
         config.setProperty("hazelcast.client.invocation.timeout.seconds",
                 Long.toString(invocationTimeoutSeconds));
         config.setProperty("hazelcast.client.statistics.enabled", "true");
-        return HazelcastClient.newHazelcastClient(config);
+        return localMember.map(member -> member.connect(config, authStateProperties))
+                .orElseGet(() -> HazelcastClient.newHazelcastClient(config));
+    }
+
+    public HazelcastInstance authHazelcastClient(String clusterName, String memberAddresses,
+            Duration invocationTimeout, String backendReplicaCount, AuthStateProperties authStateProperties) {
+        return createAuthHazelcastClient(clusterName, memberAddresses, invocationTimeout, backendReplicaCount,
+                authStateProperties, Optional.empty());
     }
 
     private void validateSingletonBackend(String configuredReplicaCount) {

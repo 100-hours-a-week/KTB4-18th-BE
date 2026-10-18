@@ -105,17 +105,18 @@ Git 브랜치 이름은 실행 설정을 바꾸지 않으므로 프로필을 명
    실제 키는 Git 제외 파일에만 보관하고 `chmod 600 .env`를 적용합니다.
    로컬 HTTP 브라우저 테스트에는 `AUTH_COOKIE_SECURE=false`를 사용합니다.
    기존 `.env.local.properties` 사용자는 파일을 바꾸지 않아도 되며, Java properties 값은 따옴표로 감싸거나 `source`하지 않습니다.
-3. 별도 터미널에서 `./gradlew hazelcastLocal --no-daemon`을 실행한 채 유지합니다.
-   이 태스크는 JDK 25로 `meomuneum-auth-local` 단일 멤버를 `127.0.0.1:15702`에 띄웁니다.
-   기존 5701 클러스터에 합류하지 않으며 Docker는 필요하지 않습니다. 멤버를 종료하면 로컬 인증 상태는 사라집니다.
-4. IntelliJ에서 이 저장소를 Gradle 프로젝트로 열고 Project SDK·Gradle JVM을 JDK 25로 선택합니다.
+3. IntelliJ에서 이 저장소를 Gradle 프로젝트로 열고 Project SDK·Gradle JVM을 JDK 25로 선택합니다.
    공유 실행 구성 `MeomuneumBackendApplication`을 선택하고 Run 버튼을 누릅니다.
    구성은 `com.muse.meomuneum.MeomuneumBackendApplication`, `meomuneum-backend.main` 모듈,
    `--spring.profiles.active=test`, `$PROJECT_DIR$` 작업 디렉토리를 사용합니다.
    gutter에서 새 구성을 만들었다면 같은 프로필과 작업 디렉토리를 지정하세요.
 
 `test`의 dotenv 자동 로딩에는 IntelliJ env 플러그인이나 별도 환경 변수 입력·셸 로딩이 필요하지 않습니다.
-프로필 `test`와 프로젝트 루트 작업 디렉토리를 유지하세요. Hazelcast 멤버는 위의 별도 터미널에서 계속 실행해야 합니다.
+프로필 `test`와 프로젝트 루트 작업 디렉토리를 유지하세요. Run 또는 `bootRun`으로 시작하면
+앱이 `127.0.0.1:15702`의 `meomuneum-auth-local` 멤버를 같은 JVM에서 자동 준비합니다.
+별도 Hazelcast 터미널이나 Docker는 필요하지 않습니다. 이미 일치하는 멤버가 있으면 client 인증 후 재사용합니다.
+앱이 만든 멤버만 앱 종료 시 함께 종료되며, 해당 멤버의 로컬 로그인·세션·큐 상태는 사라집니다.
+재사용한 외부 멤버는 종료하지 않습니다.
 기존 `.env.local.properties` import는 fallback이며, `LOCAL_ENV_PROPERTIES`에 다른 properties 파일 경로를 지정할 수도 있습니다.
 명령행·JVM·OS에 이미 설정한 값은 dotenv보다 우선하므로 `AUTH_COOKIE_SECURE`·DB·Hazelcast 주소·키 설정을 확인하세요.
 
@@ -132,8 +133,9 @@ Git 브랜치 이름은 실행 설정을 바꾸지 않으므로 프로필을 명
 | `AUTH_STATE_REPLAY_ENCRYPTION_KEY` | 필수 | 없음 | 재시도 응답 암호화용 Base64 AES 키, 디코딩 후 16·24·32바이트 |
 | `LOCATION_TOKEN_SECRET` | 실제 로컬 실행 시 필수 | 자동 테스트용 기존 fixture fallback | 위치 토큰 서명 키, JWT와 별도로 32바이트 이상 |
 | `AUTH_STATE_HAZELCAST_ENABLED` | 선택 | `true` | 실제 로그인용 Hazelcast client 활성화 |
+| `AUTH_STATE_HAZELCAST_LOCAL_AUTO_START` | 선택 | `true` | test이며 prod가 아닐 때 로컬 멤버 자동 준비, `false`는 외부 멤버 사용 |
 | `AUTH_STATE_HAZELCAST_MEMBERS` | 선택 | `127.0.0.1:15702` | 로컬 인증 상태 멤버 주소 |
-| `AUTH_STATE_HAZELCAST_CLUSTER_NAME` | 선택 | `meomuneum-auth-local` | `hazelcastLocal` 멤버와 일치할 클러스터 이름 |
+| `AUTH_STATE_HAZELCAST_CLUSTER_NAME` | 선택 | `meomuneum-auth-local` | 자동 준비 또는 외부 멤버와 일치할 클러스터 이름 |
 | `AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT` | 선택 | `1` | 로컬 클러스터의 예상 멤버 수 |
 | `AUTH_STATE_HAZELCAST_INVOCATION_TIMEOUT` | 선택 | `1s` | 인증 상태 멤버 호출 제한 시간 |
 | `AUTH_BACKEND_REPLICA_COUNT` | 필수 조건 | `1` | 현재 로컬 큐·BCrypt 제한은 백엔드 한 프로세스만 지원 |
@@ -178,9 +180,31 @@ HTTPS 환경에서는 `AUTH_COOKIE_SECURE=true`를 함께 설정하세요.
 `prod`가 활성화되면 test 설정 파일·로컬 파일 import·모든 로컬 포트 허용이 적용되지 않습니다.
 운영은 `prod`만 선택하고 운영 환경 변수와 별도 다수결 Hazelcast 멤버 구성을 사용합니다.
 로컬 기본 설정은 backend 한 프로세스·Hazelcast 한 멤버용이며 `AUTH_BACKEND_REPLICA_COUNT=1`이 필요합니다.
-기본 `./gradlew test`의 Spring context 테스트에도 별도 test DB·키·실행 중인 로컬 Hazelcast가 필요합니다.
+`./gradlew test`의 Spring context 테스트에도 별도 test DB와 키가 필요합니다.
+여러 context를 캐시하는 전체 테스트에서는 아래 외부 모드로 전용 멤버를 유지하면
+한 context 종료가 다른 context의 인증 상태를 끊는 것을 피할 수 있습니다.
 순수 설정/Origin 회귀 테스트는 외부 DB나 멤버 없이 실행할 수 있습니다.
 
+
+### 외부 멤버와 로컬 자동 준비 범위
+
+`AUTH_STATE_HAZELCAST_LOCAL_AUTO_START=false`로 자동 준비를 끄고 이미 실행 중인 멤버를 사용할 수 있습니다.
+기존 수동 실행도 유지합니다. 별도 터미널에서 `./gradlew hazelcastLocal --no-daemon`을 실행하고,
+앱은 `AUTH_STATE_HAZELCAST_LOCAL_AUTO_START=false ./gradlew bootRun --args='--spring.profiles.active=test'`로 실행합니다.
+이 수동 멤버는 기본 로컬 주소·클러스터와 큐 용량 2150을 사용하므로, 설정을 바꿨다면 외부 멤버도 일치시킵니다.
+
+자동 준비는 예상 멤버 수가 `1`이고 주소가 명시적 `127.0.0.1:<포트>` 하나일 때만 적용됩니다.
+사용자 지정 포트·클러스터 이름을 그대로 사용하며 `localhost`, IPv6, 원격 주소, 복수 주소,
+포트 생략 또는 다중 멤버 구성은 기존 외부 client 경로를 사용합니다. 이런 구성은 flag를 명시적으로 `false`로 두세요.
+자동 멤버는 지정한 loopback 포트만 사용하고 포트 증가·자동 탐색·클러스터 합류를 끕니다.
+큐 용량은 `AUTH_QUEUE_CAPACITY + AUTH_LOCAL_BCRYPT_CONCURRENCY`로 설정합니다.
+
+자동 준비 대상 포트가 사용 중이면 실제 Hazelcast client 인증을 시도합니다. 클러스터 이름이 다르거나
+다른 TCP 서비스가 점유하면 유한 시간 안에 시작 실패하며, 그 서비스를 종료하거나 다른 포트에 멤버를 만들지 않습니다.
+로컬 경로에는 연결 1초·클러스터 재시도 5초·heartbeat 3초 제한을 적용합니다.
+이 heartbeat 제한은 연결 후에도 적용되므로 로컬 JVM을 오래 일시 정지하면 인증 상태 연결이 끊겨 요청이 거부될 수 있습니다.
+기본·dev·prod 및 `test,prod`/`prod,test`에서는 flag가 true여도 자동 멤버를 만들지 않습니다.
+`AUTH_STATE_HAZELCAST_ENABLED=false`는 인증 상태 client와 자동 멤버를 모두 비활성화합니다.
 
 ### JDK 25의 Hazelcast Unsafe 경고
 

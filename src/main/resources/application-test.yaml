@@ -25,6 +25,7 @@ auth:
     backend-replica-count: ${AUTH_BACKEND_REPLICA_COUNT:1}
     hazelcast:
       enabled: ${AUTH_STATE_HAZELCAST_ENABLED:true}
+      local-auto-start: ${AUTH_STATE_HAZELCAST_LOCAL_AUTO_START:true}
       members: ${AUTH_STATE_HAZELCAST_MEMBERS:127.0.0.1:15702}
       cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-local}
     expected-hazelcast-members: ${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:1}

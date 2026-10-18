@@ -45,6 +45,7 @@ class LocalDevelopmentConfigurationTest {
         assertThat(environment.getProperty("location.token.secret"))
                 .isEqualTo("test-only-imported-location-secret-at-least-32-bytes");
         assertThat(environment.getProperty("auth.state.hazelcast.enabled", Boolean.class)).isTrue();
+        assertThat(environment.getProperty("auth.state.hazelcast.local-auto-start", Boolean.class)).isTrue();
         assertThat(environment.getProperty("auth.state.hazelcast.members")).isEqualTo("127.0.0.1:15702");
         assertThat(environment.getProperty("auth.state.hazelcast.cluster-name")).isEqualTo("meomuneum-auth-local");
         assertThat(environment.getProperty("auth.state.backend-replica-count")).isEqualTo("1");
@@ -66,6 +67,7 @@ class LocalDevelopmentConfigurationTest {
                 "TEST_DB_PASSWORD", "override-password",
                 "TEST_AUTH_JWT_SECRET", "test-only-overriding-jwt-secret-at-least-32-bytes",
                 "AUTH_COOKIE_SECURE", "true",
+                "AUTH_STATE_HAZELCAST_LOCAL_AUTO_START", "false",
                 "AUTH_STATE_HAZELCAST_MEMBERS", "127.0.0.1:5802",
                 "AUTH_CORS_LOCAL_ALL_PORTS_ENABLED", "false",
                 "SERVER_PORT", "18082"));
@@ -76,6 +78,7 @@ class LocalDevelopmentConfigurationTest {
         assertThat(environment.getProperty("auth.cookie.secure", Boolean.class)).isTrue();
         assertThat(environment.getProperty("server.servlet.session.cookie.secure", Boolean.class)).isTrue();
         assertThat(environment.getProperty("auth.state.hazelcast.members")).isEqualTo("127.0.0.1:5802");
+        assertThat(environment.getProperty("auth.state.hazelcast.local-auto-start", Boolean.class)).isFalse();
         assertThat(environment.getProperty("auth.cors.local-all-ports-enabled", Boolean.class)).isFalse();
         assertThat(environment.getProperty("server.port", Integer.class)).isEqualTo(18082);
     }
@@ -90,6 +93,7 @@ class LocalDevelopmentConfigurationTest {
         assertThat(environment.getProperty("auth.cookie.secure", Boolean.class)).isTrue();
         assertThat(environment.getProperty("server.servlet.session.cookie.secure", Boolean.class)).isTrue();
         assertThat(environment.getProperty("auth.state.hazelcast.enabled", Boolean.class)).isFalse();
+        assertThat(environment.getProperty("auth.state.hazelcast.local-auto-start")).isNull();
         assertThat(environment.getProperty("auth.state.hazelcast.cluster-name")).isEqualTo("meomuneum-auth");
         assertThat(environment.getProperty("auth.cors.local-all-ports-enabled")).isNull();
         assertThat(environment.getProperty("server.address")).isNull();
