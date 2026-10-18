@@ -14,10 +14,11 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import com.muse.meomuneum.auth.application.ChatLogoutEvent;
 import com.muse.meomuneum.chat.ban.service.ChatBanStorageService;
 import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
+import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
+import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
@@ -48,12 +49,15 @@ public class ChatRoomEntryService {
     private final TransactionTemplate transactions;
     private final ChatViewStorageService viewStorage;
     private final ChatViewLifecycle views;
+    private final ChatSessionAccessPolicy sessionAccess;
+    private final ChatAuthSessionRegistry authSessions;
 
     public ChatRoomEntryService(ChatRoomRepository chatRoomRepository, ChatRoomMemberRepository memberRepository,
             UserRepository userRepository, LocationResolutionTokenProvider tokenProvider, Clock clock,
             ChatPresenceRegistry presence,
             ChatSocketSessions sockets, ChatBanStorageService bans, PlatformTransactionManager transactionManager,
-            ChatViewStorageService viewStorage, ChatViewLifecycle views) {
+            ChatViewStorageService viewStorage, ChatViewLifecycle views,
+            ChatSessionAccessPolicy sessionAccess, ChatAuthSessionRegistry authSessions) {
         this.chatRoomRepository = chatRoomRepository;
         this.memberRepository = memberRepository;
         this.userRepository = userRepository;
@@ -64,6 +68,8 @@ public class ChatRoomEntryService {
         this.bans = bans;
         this.viewStorage = viewStorage;
         this.views = views;
+        this.sessionAccess = sessionAccess;
+        this.authSessions = authSessions;
         this.transactions = new TransactionTemplate(transactionManager);
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -79,6 +85,7 @@ public class ChatRoomEntryService {
         requireAuthSession(authSessionId);
         LocationResolutionClaims claims = tokenProvider.validateForChat(locationResolutionToken, userId, authSessionId);
         Transition transition = presence.exclusive(() -> {
+            sessionAccess.authorize(userId, authSessionId);
             Transition committed = transactions
                     .execute(status -> joinInTransaction(userId, authSessionId, roomId, claims));
             Set<String> ended = committed.previousId() == null
@@ -190,8 +197,23 @@ public class ChatRoomEntryService {
     }
 
     @EventListener
-    public void loggedOut(ChatLogoutEvent event) {
-        leaveAll(event.userId());
+    public void loggedOut(ChatSessionLogoutEvent event) {
+        requireAuthSession(event.authSessionId());
+        Set<String> ended = presence.exclusive(() -> {
+            sessionAccess.revoke(event.userId(), event.authSessionId());
+            List<Long> membershipIds = transactions.execute(status -> {
+                userRepository.findActiveByIdForUpdate(event.userId());
+                List<ChatRoomMember> members = memberRepository.findAllByUser_IdAndAuthSessionId(
+                        event.userId(), event.authSessionId());
+                members.forEach(member -> member.leave(now()));
+                memberRepository.saveAllAndFlush(members);
+                return members.stream().map(ChatRoomMember::getId).toList();
+            });
+            Set<String> sessions = new HashSet<>(authSessions.connections(event.userId(), event.authSessionId()));
+            membershipIds.forEach(id -> sessions.addAll(presence.remove(event.userId(), id)));
+            return Set.copyOf(sessions);
+        });
+        sockets.close(ended, 4100, "CHAT_LOGGED_OUT");
     }
 
     public void leaveAll(Long userId) {
@@ -217,6 +239,7 @@ public class ChatRoomEntryService {
     public void connect(Long userId, String authSessionId, Long roomId, Long membershipId, String sessionId) {
         requireAuthSession(authSessionId);
         presence.exclusive(() -> {
+            sessionAccess.authorize(userId, authSessionId);
             Integer capacity = transactions.execute(status -> {
                 ChatRoomMember member = authorizedMembership(userId, roomId, membershipId);
                 if (!authSessionId.equals(member.getAuthSessionId())) {
@@ -231,7 +254,8 @@ public class ChatRoomEntryService {
 
     public void authorizeConnection(Long userId, Long roomId, Long membershipId, String sessionId) {
         presence.exclusive(() -> transactions.execute(status -> {
-            authorizedMembership(userId, roomId, membershipId);
+            ChatRoomMember membership = authorizedMembership(userId, roomId, membershipId);
+            sessionAccess.authorize(userId, membership.getAuthSessionId());
             if (!presence.ownsConnection(userId, membershipId, sessionId)) {
                 throw new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND);
             }
