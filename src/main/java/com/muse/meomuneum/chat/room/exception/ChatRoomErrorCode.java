@@ -20,7 +20,10 @@ public enum ChatRoomErrorCode implements ErrorCode {
                                                             HttpStatus.FORBIDDEN,
                                                             "chat membership unavailable"), CHAT_VIEW_UNAVAILABLE(
                                                                     "CHAT_ROOM_403_VIEW",
-                                                                    HttpStatus.FORBIDDEN, "chat view unavailable");
+                                                                    HttpStatus.FORBIDDEN, "chat view unavailable"),
+
+    INVALID_PARTICIPATION_REQUEST("CHAT_ROOM_400_PARTICIPATION", HttpStatus.BAD_REQUEST,
+            "invalid chat participation request");
 
     private final String code;
     private final HttpStatus status;

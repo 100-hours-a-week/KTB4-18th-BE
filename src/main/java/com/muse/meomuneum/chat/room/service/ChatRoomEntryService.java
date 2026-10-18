@@ -27,6 +27,8 @@ import com.muse.meomuneum.chat.room.dto.ChatRoomResponse;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.repository.ChatRoomRepository;
+import com.muse.meomuneum.chat.view.ChatViewLifecycle;
+import com.muse.meomuneum.chat.view.ChatViewStorageService;
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.user.domain.User;
@@ -44,11 +46,14 @@ public class ChatRoomEntryService {
     private final ChatSocketSessions sockets;
     private final ChatBanStorageService bans;
     private final TransactionTemplate transactions;
+    private final ChatViewStorageService viewStorage;
+    private final ChatViewLifecycle views;
 
     public ChatRoomEntryService(ChatRoomRepository chatRoomRepository, ChatRoomMemberRepository memberRepository,
             UserRepository userRepository, LocationResolutionTokenProvider tokenProvider, Clock clock,
             ChatPresenceRegistry presence,
-            ChatSocketSessions sockets, ChatBanStorageService bans, PlatformTransactionManager transactionManager) {
+            ChatSocketSessions sockets, ChatBanStorageService bans, PlatformTransactionManager transactionManager,
+            ChatViewStorageService viewStorage, ChatViewLifecycle views) {
         this.chatRoomRepository = chatRoomRepository;
         this.memberRepository = memberRepository;
         this.userRepository = userRepository;
@@ -57,6 +62,8 @@ public class ChatRoomEntryService {
         this.presence = presence;
         this.sockets = sockets;
         this.bans = bans;
+        this.viewStorage = viewStorage;
+        this.views = views;
         this.transactions = new TransactionTemplate(transactionManager);
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -78,7 +85,8 @@ public class ChatRoomEntryService {
                     ? Set.of()
                     : presence.remove(userId, committed.previousId());
             if (committed.result() != null) {
-                presence.reserve(userId, roomId, committed.result().membership().membershipId());
+                presence.reserveTab(userId, roomId, committed.result().membership().membershipId(),
+                        committed.result().membership().viewSessionId());
             }
             return new Transition(committed.result(), committed.error(), null, ended);
         });
@@ -114,8 +122,53 @@ public class ChatRoomEntryService {
         ChatRoomMember membership = sameRoom
                 ? active
                 : memberRepository.saveAndFlush(ChatRoomMember.join(user, target, now(), authSessionId));
-        return new Transition(new ChatRoomJoinResult(ChatRoomMembershipResponse.from(membership), !sameRoom),
+        return new Transition(new ChatRoomJoinResult(ChatRoomMembershipResponse.from(membership)
+                .withView(viewStorage.create(userId, roomId, membership.getId())), !sameRoom),
                 null, previousId, Set.of());
+    }
+
+    public void leaveTab(Long userId, String authSessionId, Long roomId, Long membershipId, String viewId) {
+        requireAuthSession(authSessionId);
+        Set<String> ended = presence.exclusive(() -> {
+            transactions.executeWithoutResult(status -> ownedMembership(userId, authSessionId, roomId, membershipId));
+            ChatViewLifecycle.Departure departure = views.leave(userId, roomId, membershipId, viewId);
+            if (departure.lastView() && !presence.hasParticipation(membershipId)) {
+                transactions.executeWithoutResult(status -> {
+                    ChatRoomMember member = ownedMembership(userId, authSessionId, roomId, membershipId);
+                    member.leave(now());
+                    memberRepository.saveAndFlush(member);
+                });
+            }
+            return departure.sockets();
+        });
+        sockets.close(ended, 4100, "CHAT_LEFT");
+    }
+
+    /** Location evidence, rather than navigation, ends all tabs of the moving device. */
+    public void leaveForRegionChange(Long userId, String authSessionId, Long roomId, Long membershipId,
+            String locationToken) {
+        requireAuthSession(authSessionId);
+        LocationResolutionClaims claims = tokenProvider.validateForChat(locationToken, userId, authSessionId);
+        Set<String> ended = presence.exclusive(() -> {
+            transactions.executeWithoutResult(status -> {
+                ChatRoomMember member = ownedMembership(userId, authSessionId, roomId, membershipId);
+                if (member.getChatRoom().getRegion().getId().equals(claims.sigunguRegionId())) {
+                    throw new ChatRoomException(ChatRoomErrorCode.LOCATION_REGION_MISMATCH);
+                }
+                member.leave(now());
+                memberRepository.saveAndFlush(member);
+            });
+            return presence.remove(userId, membershipId);
+        });
+        sockets.close(ended, 4100, "CHAT_LEFT");
+    }
+
+    private ChatRoomMember ownedMembership(Long userId, String authSessionId, Long roomId, Long membershipId) {
+        userRepository.findActiveByIdForUpdate(userId)
+                .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.USER_NOT_FOUND));
+        return memberRepository.findByIdAndUser_IdAndChatRoom_Id(membershipId, userId, roomId)
+                .filter(member -> authSessionId.equals(member.getAuthSessionId()))
+                .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND));
     }
 
     public void leave(Long userId, String authSessionId, Long roomId, Long membershipId) {

@@ -40,9 +40,19 @@ public class ChatRoomController {
 
     @DeleteMapping("/chat-rooms/{roomId}/members/me")
     public ResponseEntity<Void> leave(@PathVariable Long roomId,
-            @RequestParam("membership_id") Long membershipId, Authentication authentication) {
-        chatRoomEntryService.leave((Long) authentication.getPrincipal(), authSessionId(authentication), roomId,
-                membershipId);
+            @RequestParam("membership_id") Long membershipId,
+            @RequestParam("view_session_id") String viewSessionId, Authentication authentication) {
+        chatRoomEntryService.leaveTab((Long) authentication.getPrincipal(), authSessionId(authentication), roomId,
+                membershipId, viewSessionId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/chat-rooms/{roomId}/region-departures")
+    public ResponseEntity<Void> leaveForRegionChange(@PathVariable Long roomId,
+            @RequestParam("membership_id") Long membershipId, @RequestBody ChatRoomJoinRequest request,
+            Authentication authentication) {
+        chatRoomEntryService.leaveForRegionChange((Long) authentication.getPrincipal(), authSessionId(authentication),
+                roomId, membershipId, request.locationResolutionToken());
         return ResponseEntity.noContent().build();
     }
 

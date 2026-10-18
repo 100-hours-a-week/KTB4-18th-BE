@@ -74,8 +74,9 @@ class ChatRoomControllerTest {
     void leaveRequiresTheMembershipIdentifier() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .delete("/api/v1/chat-rooms/700/members/me").param("membership_id", "900")
+                .param("view_session_id", sid(900L))
                 .principal(authentication())).andExpect(status().isNoContent());
-        org.mockito.Mockito.verify(service).leave(7L, sid(7L), 700L, 900L);
+        org.mockito.Mockito.verify(service).leaveTab(7L, sid(7L), 700L, 900L, sid(900L));
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .delete("/api/v1/chat-rooms/700/members/me")
                 .principal(authentication())).andExpect(status().isBadRequest());

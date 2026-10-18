@@ -40,6 +40,41 @@ class ChatRoomAccountCapacityTest {
     }
 
     @Test
+    void explicitLeaveKeepsOtherTabGraceAndDoesNotRenewItsDeadline() {
+        ChatPresenceRegistry registry = registry();
+        registry.reserveTab(1L, 10L, 100L, "first");
+        registry.reserveTab(1L, 10L, 100L, "second");
+        registry.connect(1L, 10L, 100L, 1, "a");
+        registry.attachTab(100L, "first", "a");
+        registry.connect(1L, 10L, 100L, 1, "b");
+        registry.attachTab(100L, "second", "b");
+        registry.disconnect("b");
+        when(clock.instant()).thenReturn(start.plusSeconds(10));
+        assertEquals(Set.of("a"), registry.removeTab(1L, 100L, "first"));
+        assertFalse(registry.ownsConnection(1L, 100L, "a"));
+        assertFalse(registry.hasCapacity(2L, 10L, 1));
+        when(clock.instant()).thenReturn(start.plusSeconds(30));
+        assertTrue(registry.hasCapacity(2L, 10L, 1));
+    }
+
+    @Test
+    void lastTabLeaveReleasesItsSeatWithoutDisconnectGraceOrRemovingOtherMemberships() {
+        ChatPresenceRegistry registry = registry();
+        registry.reserveTab(1L, 10L, 100L, "first");
+        registry.reserveTab(1L, 10L, 100L, "pending");
+        registry.reserveTab(1L, 20L, 200L, "other-device");
+        registry.connect(1L, 10L, 100L, 1, "a");
+        registry.attachTab(100L, "first", "a");
+        registry.removeTab(1L, 100L, "first");
+        assertFalse(registry.hasCapacity(2L, 10L, 1));
+        registry.removeTab(1L, 100L, "pending");
+        assertTrue(registry.hasCapacity(2L, 10L, 1));
+        assertFalse(registry.hasCapacity(2L, 20L, 1));
+        registry.disconnect("a");
+        assertTrue(registry.hasCapacity(2L, 10L, 1));
+    }
+
+    @Test
     void fullRoomAcceptsMoreMembershipsOfExistingAccountButRejectsNewAccount() {
         ChatPresenceRegistry registry = registry();
         for (long user = 1; user <= 25; user++) {

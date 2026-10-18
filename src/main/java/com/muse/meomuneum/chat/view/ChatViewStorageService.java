@@ -58,6 +58,41 @@ public class ChatViewStorageService {
         }
     }
 
+    /** Issued inside the REST join transaction; a reservation is not a reading interval. */
+    @Transactional
+    public String create(Long userId, Long roomId, Long membershipId) {
+        String viewId = UUID.randomUUID().toString();
+        LocalDateTime now = now();
+        jdbc.update("""
+                INSERT INTO chat_view_sessions (id, user_id, room_id, membership_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, viewId, userId, roomId, membershipId, now, now);
+        return viewId;
+    }
+
+    /** Ownership is checked even on repeated leave; ended views can only be closed again. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean leave(Long userId, Long roomId, Long membershipId, String viewId) {
+        validateViewId(viewId);
+        users.findActiveByIdForUpdate(userId)
+                .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.USER_NOT_FOUND));
+        Integer owned = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_view_sessions
+                WHERE id = ? AND user_id = ? AND room_id = ? AND membership_id = ?
+                """, Integer.class, viewId, userId, roomId, membershipId);
+        if (owned == null || owned != 1) {
+            throw denied();
+        }
+        closeRange(viewId, roomId, "LEFT");
+        jdbc.update("""
+                UPDATE chat_view_sessions SET ended_at = ?, updated_at = ?
+                WHERE id = ? AND ended_at IS NULL
+                """, now(), now(), viewId);
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id = ? AND ended_at IS NULL
+                """, Integer.class, membershipId) == 0;
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String subscribed(Long userId, Long roomId, Long membershipId, String viewId) {
         validateContext(userId, roomId, membershipId, viewId);
@@ -188,14 +223,18 @@ public class ChatViewStorageService {
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND));
     }
 
-    private void requireView(Long userId, Long roomId, Long membershipId, String viewId) {
+    private void validateViewId(String viewId) {
         try {
-            if (!UUID.fromString(viewId).toString().equals(viewId)) {
+            if (viewId == null || !UUID.fromString(viewId).toString().equals(viewId)) {
                 throw denied();
             }
         } catch (IllegalArgumentException invalid) {
             throw denied();
         }
+    }
+
+    private void requireView(Long userId, Long roomId, Long membershipId, String viewId) {
+        validateViewId(viewId);
         Integer count = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM chat_view_sessions
                 WHERE id = ? AND user_id = ? AND room_id = ? AND membership_id = ?
