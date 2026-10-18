@@ -299,8 +299,15 @@ class ChatRecoveryProcessIntegrationTest {
             }
         });
         assertEquals(204, request("DELETE", "/api/v1/chat-rooms/" + room + "/members/me?membership_id="
-                + owner.member(), owner.token(), null, null).statusCode());
+                + owner.member() + "&view_session_id=" + first.ready.path("view_session_id").asText(),
+                owner.token(), null, null).statusCode());
         assertTrue(List.of(200, 403).contains(racing.get(10, TimeUnit.SECONDS)));
+        assertEquals(4100, first.closed.get(10, TimeUnit.SECONDS));
+        assertFalse(device.closed.isDone());
+        assertEquals(200, query(owner, device, null, 50).statusCode());
+        assertEquals(204, request("DELETE", "/api/v1/chat-rooms/" + room + "/members/me?membership_id="
+                + owner.member() + "&view_session_id=" + device.ready.path("view_session_id").asText(),
+                owner.token(), null, null).statusCode());
         assertEquals(4100, device.closed.get(10, TimeUnit.SECONDS));
         assertEquals(403, query(owner, device, null, 50).statusCode());
         Account banned = account();
@@ -311,7 +318,7 @@ class ChatRecoveryProcessIntegrationTest {
                 banned.id());
         assertTrue(List.of(200, 403).contains(banRace.get(10, TimeUnit.SECONDS)));
         assertEquals(403, query(banned, connected, null, 50).statusCode());
-        completed.add("concurrent-departure-account-wide-close-ban-retention-own-lookup");
+        completed.add("concurrent-tab-departure-ban-retention-own-lookup");
     }
 
     private CompletableFuture<Integer> concurrentQuery(Account account, Probe probe) {
@@ -332,6 +339,12 @@ class ChatRecoveryProcessIntegrationTest {
         JsonNode proven = send(first, UUID.randomUUID().toString(), "검증 확인 기록");
         page(owner, first, null, 50);
         String view = first.ready.path("view_session_id").asText();
+        Probe exited = connect(owner, null, 0);
+        String exitedView = exited.ready.path("view_session_id").asText();
+        assertEquals(204, request("DELETE", "/api/v1/chat-rooms/" + room + "/members/me?membership_id="
+                + owner.member() + "&view_session_id=" + exitedView, owner.token(), null, null).statusCode());
+        assertEquals(4100, exited.closed.get(10, TimeUnit.SECONDS));
+        assertFalse(first.closed.isDone());
         long oldPid = server.pid();
         server.destroyForcibly();
         assertTrue(server.waitFor(10, TimeUnit.SECONDS));
@@ -340,6 +353,17 @@ class ChatRecoveryProcessIntegrationTest {
                 + "VALUES (?,?,?,'검증 확인 부재',UTC_TIMESTAMP(6))", room, owner.id(), UUID.randomUUID().toString());
         startServer();
         assertNotEquals(oldPid, server.pid());
+        assertEquals(403, query(owner, exited, null, 50).statusCode());
+        Probe endedReplay = new Probe();
+        probes.add(endedReplay);
+        endedReplay.socket = http.newWebSocketBuilder().header("Origin", "http://localhost:5174")
+                .subprotocols("v12.stomp").buildAsync(URI.create("ws://127.0.0.1:" + port + "/ws"), endedReplay)
+                .get(10, TimeUnit.SECONDS);
+        endedReplay.send("CONNECT\naccept-version:1.2\nheart-beat:0,0\nAuthorization:Bearer " + owner.token()
+                + "\nroom_id:" + room + "\nmembership_id:" + owner.member()
+                + "\nview_session_id:" + exitedView + "\n\n");
+        assertEquals(4103, endedReplay.closed.get(10, TimeUnit.SECONDS));
+        assertTrue(endedReplay.events.get("CHAT_READY").isEmpty());
         Probe resumed = connect(owner, view, 0);
         JsonNode restored = page(owner, resumed, resumed.ready.path("recovery_cursor").asText(), 50);
         assertTrue(restored.path("items").toString().contains(proven.path("client_message_id").asText()));
@@ -362,7 +386,7 @@ class ChatRecoveryProcessIntegrationTest {
         assertTrue(rejected.events.get("CHAT_READY").isEmpty());
         Probe fresh = connect(owner, null, 0);
         assertTrue(page(owner, fresh, null, 50).path("items").isEmpty());
-        completed.add("forced-jvm-restart-checkpoint-boundary-missing-record-new-view");
+        completed.add("forced-jvm-restart-checkpoint-boundary-ended-and-missing-view");
     }
 
     @Test

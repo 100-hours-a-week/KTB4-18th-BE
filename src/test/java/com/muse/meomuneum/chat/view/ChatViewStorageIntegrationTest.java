@@ -112,6 +112,29 @@ class ChatViewStorageIntegrationTest {
     }
 
     @Test
+    void explicitTabLeaveRevokesReconnectWhileAnotherDisconnectedTabRetainsItsOwnGrace() {
+        String first = connectAndSubscribe("first-tab", null);
+        String second = connectAndSubscribe("second-tab", null);
+        message("visible before disconnect");
+        presence.disconnect("second-tab");
+        clock.set(START.plusSeconds(5));
+        entry.leaveTab(userId, sid(userId), roomId, membershipId, first);
+        assertThrows(ChatRoomException.class, () -> lifecycle.authorize(userId, roomId, membershipId, first));
+        assertThrows(ChatRoomException.class, () -> storage.validateContext(userId, roomId, membershipId, first));
+        assertThrows(ChatRoomException.class,
+                () -> entry.leaveTab(userId, sid(userId), roomId, membershipId, UUID.randomUUID().toString()));
+        assertTrue(members.findById(membershipId).orElseThrow().isActive());
+        message("inside other tab grace");
+        assertEquals(second, connectAndSubscribe("second-reconnected", second));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=?", Integer.class, second));
+        entry.leaveTab(userId, sid(userId), roomId, membershipId, second);
+        assertFalse(members.findById(membershipId).orElseThrow().isActive());
+        storage.recoverAfterRestart();
+        assertThrows(ChatRoomException.class, () -> storage.validateContext(userId, roomId, membershipId, second));
+    }
+
+    @Test
     void beginsAtActualSubscriptionAndUsesIdsToDisambiguateSameMicrosecond() {
         Long before = message("before");
         entry.connect(userId, sid(userId), roomId, membershipId, "socket");
@@ -473,6 +496,7 @@ class ChatViewStorageIntegrationTest {
                 jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId)));
         process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", membershipId.toString());
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_VIEW", storage.create(userId, roomId, membershipId));
         Process running = process.start();
         if (!running.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)) {
             running.destroyForcibly();
