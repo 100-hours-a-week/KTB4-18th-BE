@@ -30,6 +30,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.config.SecurityConfig;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -46,7 +47,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @SpringBootTest(classes = ProfileImageHttpIntegrationTest.HttpConfiguration.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
-        "auth.cors.allowed-origins=http://localhost:5173"})
+        "auth.cors.allowed-origins=http://localhost:5173",
+        "management.endpoint.health.group.readiness.include=readinessState"})
 class ProfileImageHttpIntegrationTest {
 
     @TempDir
@@ -118,6 +120,11 @@ class ProfileImageHttpIntegrationTest {
         @Bean
         UserTermsAgreementService userTermsAgreementService() {
             return mock(UserTermsAgreementService.class);
+        }
+
+        @Bean
+        AuthService authService() {
+            return mock(AuthService.class);
         }
 
         @Bean

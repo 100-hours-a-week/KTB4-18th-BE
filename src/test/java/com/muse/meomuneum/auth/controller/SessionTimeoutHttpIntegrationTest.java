@@ -26,7 +26,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "auth.cookie.secure=true", "server.servlet.session.cookie.secure=true"
+})
 @ActiveProfiles("test")
 @Import(SessionTimeoutHttpIntegrationTest.SessionProbeConfiguration.class)
 class SessionTimeoutHttpIntegrationTest {

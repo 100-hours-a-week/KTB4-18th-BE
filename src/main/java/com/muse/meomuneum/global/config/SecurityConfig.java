@@ -13,13 +13,13 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.web.filter.CorsFilter;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.web.filter.CorsFilter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
@@ -104,7 +104,8 @@ public class SecurityConfig {
                         new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
-                        new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter),
+                        new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter,
+                                CorsConfig.localOriginPatterns(environment)),
                         JwtAuthenticationFilter.class);
         if (localMockLoginEnabled && environment.acceptsProfiles(Profiles.of("local-mock & !prod"))) {
             http.addFilterBefore(new LocalMockLoginNoStoreFilter(), CorsFilter.class);

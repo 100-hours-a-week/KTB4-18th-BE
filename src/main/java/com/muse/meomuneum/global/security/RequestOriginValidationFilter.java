@@ -3,30 +3,39 @@ package com.muse.meomuneum.global.security;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 public class RequestOriginValidationFilter extends OncePerRequestFilter {
 
     private static final Set<String> STATE_CHANGING_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
 
-    private final Set<String> allowedOrigins;
+    private final CorsConfiguration origins;
     private final SecurityErrorResponseWriter errorResponseWriter;
 
     public RequestOriginValidationFilter(String allowedOrigins, SecurityErrorResponseWriter errorResponseWriter) {
-        this.allowedOrigins = Arrays.stream(allowedOrigins.split(","))
+        this(allowedOrigins, errorResponseWriter, List.of());
+    }
+
+    public RequestOriginValidationFilter(String allowedOrigins, SecurityErrorResponseWriter errorResponseWriter,
+            List<String> allowedOriginPatterns) {
+        this.origins = new CorsConfiguration();
+        this.origins.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .map(origin -> normalizeOrigin(origin, false))
                 .filter(origin -> origin != null)
-                .collect(Collectors.toUnmodifiableSet());
+                .toList());
+        this.origins.setAllowedOriginPatterns(allowedOriginPatterns);
         this.errorResponseWriter = errorResponseWriter;
     }
 
@@ -42,20 +51,24 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
     }
 
     private boolean hasAllowedOrigin(HttpServletRequest request) {
-        String origin = request.getHeader("Origin");
+        Enumeration<String> originHeaders = request.getHeaders("Origin");
+        String origin = originHeaders.hasMoreElements() ? originHeaders.nextElement() : null;
+        if (originHeaders.hasMoreElements()) {
+            return false;
+        }
         if (origin != null) {
             if (origin.isBlank()) {
                 return false;
             }
             String normalizedOrigin = normalizeOrigin(origin, false);
-            return normalizedOrigin != null && allowedOrigins.contains(normalizedOrigin);
+            return normalizedOrigin != null && origins.checkOrigin(normalizedOrigin) != null;
         }
         String referer = request.getHeader("Referer");
         if (referer == null || referer.isBlank()) {
             return false;
         }
         String normalizedReferer = normalizeOrigin(referer, true);
-        return normalizedReferer != null && allowedOrigins.contains(normalizedReferer);
+        return normalizedReferer != null && origins.checkOrigin(normalizedReferer) != null;
     }
 
     private static String normalizeOrigin(String value, boolean allowPath) {
@@ -63,7 +76,9 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
             URI uri = URI.create(value);
             String scheme = uri.getScheme();
             String host = uri.getHost();
-            if (scheme == null || host == null || uri.getUserInfo() != null) {
+            String authority = uri.getRawAuthority();
+            if (scheme == null || host == null || uri.getUserInfo() != null
+                    || authority == null || authority.endsWith(":")) {
                 return null;
             }
             scheme = scheme.toLowerCase(Locale.ROOT);
@@ -75,6 +90,9 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
                 return null;
             }
             int port = uri.getPort();
+            if (port > 65535) {
+                return null;
+            }
             if (port == ("http".equals(scheme) ? 80 : 443)) {
                 port = -1;
             }

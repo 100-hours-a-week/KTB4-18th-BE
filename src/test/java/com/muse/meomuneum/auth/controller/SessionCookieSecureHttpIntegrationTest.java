@@ -13,7 +13,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "auth.cookie.secure=true", "server.servlet.session.cookie.secure=true"
+})
 @ActiveProfiles({"test", "music-record-local"})
 @EnabledIfEnvironmentVariable(named = "MUSIC_RECORD_LOCAL_TESTS", matches = "true")
 class SessionCookieSecureHttpIntegrationTest {

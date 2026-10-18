@@ -5,6 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -90,6 +94,9 @@ class ChatRoomEntryIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private Clock clock;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -308,10 +315,12 @@ class ChatRoomEntryIntegrationTest {
         String token = issueToken(userId, room.getRegion());
         Long membershipId = service.join(userId, sid(userId), room.getId(), token).membership().membershipId();
         service.connect(userId, sid(userId), room.getId(), membershipId, "session");
+        LocalDateTime createdAt = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)
+                .truncatedTo(ChronoUnit.MICROS);
         jdbcTemplate.update("""
                 INSERT INTO chat_bans (user_id, reason, created_at, expires_at)
-                VALUES (?, 'PROFANITY', UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 7 DAY))
-                """, userId);
+                VALUES (?, 'PROFANITY', ?, ?)
+                """, userId, createdAt, createdAt.plusDays(7));
         org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
                 () -> service.join(userId, sid(userId), room.getId(), token));
         org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,

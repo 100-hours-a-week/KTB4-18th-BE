@@ -47,13 +47,33 @@ GRANT ALL PRIVILEGES ON meomuneum_test.* TO 'meomuneum_test'@'localhost';
 cp .env.example .env
 ```
 
-`.env`의 비밀번호를 수정한 뒤 현재 터미널에 환경변수를 불러옵니다. **Spring Boot는 `.env`를 자동으로 읽지 않습니다.** 새 터미널에서는 다시 불러오거나 IDE 실행 설정에 환경변수를 등록하세요.
+`test` 프로필만 활성화하면 애플리케이션이 프로세스 작업 디렉토리의 `.env`와 모든 `.env.*`
+일반 파일을 자동으로 읽습니다. IntelliJ에서는 작업 디렉토리를 프로젝트 루트로 지정합니다.
+상위·하위 디렉토리는 검색하지 않으며 `prod`가 함께 활성화된 `test,prod`·`prod,test`도 읽지 않습니다.
+기본·dev·prod의 환경 변수 주입 방식과 운영 동작은 그대로입니다. dev 실행에는 기존처럼 셸에서 값을 불러옵니다.
 
 ```sh
 set -a
 . ./.env
 set +a
 ```
+
+자동 로딩은 `.env`를 먼저 읽고, 나머지 파일명을 Java `String.compareTo` 사전순 오름차순으로 읽습니다.
+같은 키는 나중 파일, 같은 파일에서는 마지막 선언이 우선합니다. 예를 들어 `.env.10` 다음 `.env.2`를
+읽으므로 두 파일의 같은 키는 `.env.2` 값이 됩니다. suffix는 프로필을 선택하지 않습니다.
+따라서 test 실행에서는 `.env.prod`도 읽습니다. 프로젝트 루트에는 해당 실행에 사용할 로컬 설정 파일만 둡니다.
+`.env.example` 및 `.example`·`.sample`·`.template`으로 끝나는 템플릿, 디렉토리와 모든 심볼릭 링크는
+대상이 루트 안/밖의 파일인지 디렉토리인지에 관계없이 제외합니다.
+
+한 줄의 `KEY=value`, 빈 줄, 줄 맨 앞에서 시작하는 `#` 주석, 따옴표 없는 값, 짝이 맞는 단일/이중 따옴표 값을 지원합니다.
+바깥 따옴표 한 겹을 제거하고 안의 공백·`#`·`=`는 보존합니다. 여러 줄 값과 `export` 선언은 지원하지 않으며,
+셸 명령·변수·명령 치환을 실행하지 않습니다. Spring `${...}` placeholder는 기존 Spring 설정 해석을 따릅니다.
+잘못된 선언·완결되지 않은 따옴표·읽기 실패는 값과 원문을 출력하지 않는 시작 오류가 됩니다.
+
+우선순위는 명령행 인자 > JVM 시스템 속성 > OS 환경 변수 > dotenv > 기존 YAML/properties fallback입니다.
+예를 들어 `SERVER_PORT`는 `server.port`에도 적용됩니다. dotenv는 JVM 전역 속성이나 OS 환경을 변경하지 않습니다.
+기존 `.env.local.properties`와 `LOCAL_ENV_PROPERTIES`가 선택한 Java properties 파일은 dotenv로 해석하지 않으며
+기존 import의 fallback으로 유지합니다. dotenv 파일이 없어도 외부 환경 변수나 기존 properties 파일로 실행할 수 있습니다.
 
 | 프로필 | 환경변수 | 기본값 |
 | --- | --- | --- |
@@ -68,9 +88,116 @@ set +a
 
 음성 전사는 `SPEECH_TRANSCRIPTION_PROVIDER`로 제공자를 선택합니다. `dev` 프로필의 기본값은
 프론트엔드 흐름 확인용 `stub`이며 `SPEECH_TRANSCRIPTION_STUB_TRANSCRIPT`의 문장을 반환합니다.
-운영 기본값은 `unavailable`이고 AI 팀의 실제 계약을 연결하기 전에는 502를 반환합니다.
+기본·prod 프로필은 AI 전사를 사용하므로 `SPEECH_TRANSCRIPTION_AI_BASE_URL`을 설정합니다.
 
 `.env`는 Git 제외 대상입니다. 실제 비밀번호를 예시 파일이나 YAML에 기록하지 마세요. 운영 환경에서는 배포 환경의 환경변수 또는 비밀값 관리 기능으로 값을 주입하고 `SPRING_PROFILES_ACTIVE=prod`를 설정합니다.
+
+## 로컬 인증 테스트와 IntelliJ 직접 실행
+
+작업 브랜치에서 실제 로그인·토큰 갱신·로그아웃을 확인할 때는 `test` 프로필을 사용합니다.
+로컬 설정은 `application-test.yaml`에 있으며 기본·dev·prod YAML은 그대로 유지합니다.
+Git 브랜치 이름은 실행 설정을 바꾸지 않으므로 프로필을 명시하세요.
+
+1. 위의 별도 테스트 DB와 계정을 준비합니다. 기존 데이터가 있는 개발·운영 DB를 사용하지 않습니다.
+2. `cp -n .env.example .env`로 로컬 설정 파일을 만들고 `TEST_DB_*`, `TEST_AUTH_JWT_SECRET`,
+   `AUTH_STATE_HMAC_KEY`, `AUTH_STATE_REPLAY_ENCRYPTION_KEY`, `LOCATION_TOKEN_SECRET`를 로컬 값으로 채웁니다.
+   JWT·HMAC·위치 키는 각각 `openssl rand -hex 32`, replay 키는 `openssl rand -base64 32`로 별도 생성할 수 있습니다.
+   실제 키는 Git 제외 파일에만 보관하고 `chmod 600 .env`를 적용합니다.
+   로컬 HTTP 브라우저 테스트에는 `AUTH_COOKIE_SECURE=false`를 사용합니다.
+   기존 `.env.local.properties` 사용자는 파일을 바꾸지 않아도 되며, Java properties 값은 따옴표로 감싸거나 `source`하지 않습니다.
+3. 별도 터미널에서 `./gradlew hazelcastLocal --no-daemon`을 실행한 채 유지합니다.
+   이 태스크는 JDK 25로 `meomuneum-auth-local` 단일 멤버를 `127.0.0.1:15702`에 띄웁니다.
+   기존 5701 클러스터에 합류하지 않으며 Docker는 필요하지 않습니다. 멤버를 종료하면 로컬 인증 상태는 사라집니다.
+4. IntelliJ에서 이 저장소를 Gradle 프로젝트로 열고 Project SDK·Gradle JVM을 JDK 25로 선택합니다.
+   공유 실행 구성 `MeomuneumBackendApplication`을 선택하고 Run 버튼을 누릅니다.
+   구성은 `com.muse.meomuneum.MeomuneumBackendApplication`, `meomuneum-backend.main` 모듈,
+   `--spring.profiles.active=test`, `$PROJECT_DIR$` 작업 디렉토리를 사용합니다.
+   gutter에서 새 구성을 만들었다면 같은 프로필과 작업 디렉토리를 지정하세요.
+
+`test`의 dotenv 자동 로딩에는 IntelliJ env 플러그인이나 별도 환경 변수 입력·셸 로딩이 필요하지 않습니다.
+프로필 `test`와 프로젝트 루트 작업 디렉토리를 유지하세요. Hazelcast 멤버는 위의 별도 터미널에서 계속 실행해야 합니다.
+기존 `.env.local.properties` import는 fallback이며, `LOCAL_ENV_PROPERTIES`에 다른 properties 파일 경로를 지정할 수도 있습니다.
+명령행·JVM·OS에 이미 설정한 값은 dotenv보다 우선하므로 `AUTH_COOKIE_SECURE`·DB·Hazelcast 주소·키 설정을 확인하세요.
+
+로컬 test 실행에 사용하는 변수는 아래와 같습니다. 기본값은 `application-test.yaml`과 기본 YAML에서
+상속하는 값이며, 예제 파일 값과 구분해 표시했습니다. 필수 비밀값은 모두 서로 다른 로컬 값으로 교체합니다.
+
+| 변수 | 필수 여부 | test 기본값 / 예제 | 역할 |
+| --- | --- | --- | --- |
+| `TEST_DB_URL` | 선택 | `jdbc:mysql://localhost:3306/meomuneum_test` | 전용 테스트 DB 접속 주소 |
+| `TEST_DB_USERNAME` | 선택 | `meomuneum_test` | 테스트 DB 접속 계정 |
+| `TEST_DB_PASSWORD` | 필수 | 없음 | 테스트 DB 비밀번호 |
+| `TEST_AUTH_JWT_SECRET` | 실제 로컬 로그인 시 필수 | 자동 테스트용 기존 fixture fallback | 로컬 JWT 서명 키, 32바이트 이상 |
+| `AUTH_STATE_HMAC_KEY` | 필수 | 없음 | 인증 상태 식별·검증용 HMAC 키, 32바이트 이상 |
+| `AUTH_STATE_REPLAY_ENCRYPTION_KEY` | 필수 | 없음 | 재시도 응답 암호화용 Base64 AES 키, 디코딩 후 16·24·32바이트 |
+| `LOCATION_TOKEN_SECRET` | 실제 로컬 실행 시 필수 | 자동 테스트용 기존 fixture fallback | 위치 토큰 서명 키, JWT와 별도로 32바이트 이상 |
+| `AUTH_STATE_HAZELCAST_ENABLED` | 선택 | `true` | 실제 로그인용 Hazelcast client 활성화 |
+| `AUTH_STATE_HAZELCAST_MEMBERS` | 선택 | `127.0.0.1:15702` | 로컬 인증 상태 멤버 주소 |
+| `AUTH_STATE_HAZELCAST_CLUSTER_NAME` | 선택 | `meomuneum-auth-local` | `hazelcastLocal` 멤버와 일치할 클러스터 이름 |
+| `AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT` | 선택 | `1` | 로컬 클러스터의 예상 멤버 수 |
+| `AUTH_STATE_HAZELCAST_INVOCATION_TIMEOUT` | 선택 | `1s` | 인증 상태 멤버 호출 제한 시간 |
+| `AUTH_BACKEND_REPLICA_COUNT` | 필수 조건 | `1` | 현재 로컬 큐·BCrypt 제한은 백엔드 한 프로세스만 지원 |
+| `AUTH_COOKIE_SECURE` | 선택 | test·legacy 예제는 `false`, 공용 `.env.example`은 `true` (HTTP 테스트 시 `false`로 수정) | HTTP 로컬 쿠키와 HTTPS 배포 쿠키의 Secure 설정 |
+| `AUTH_CORS_LOCAL_ALL_PORTS_ENABLED` | 선택 | `true` | test이면서 prod가 아닐 때 localhost·127.0.0.1의 모든 Origin 포트 허용 |
+| `AUTH_CORS_ALLOWED_ORIGINS` | 선택 | `http://localhost:5174,http://127.0.0.1:5174` | 정확한 Origin 목록, 포트 확장을 끄면 이 목록만 적용 |
+| `SERVER_ADDRESS` | 선택 | `127.0.0.1` | 로컬 수신 인터페이스, localhost로도 접속 가능 |
+| `SERVER_PORT` | 선택 | `8080` | 백엔드가 수신할 한 포트, 프론트 API/proxy 대상도 일치시킴 |
+| `LOCAL_ENV_PROPERTIES` | 선택 | `./.env.local.properties` | test에서 자동 import할 Java properties 파일 경로 |
+| `RECOMMENDATION_AI_BASE_URL` | AI 추천 제공자 사용 시 필수 | 기본값 없음, 로컬 예제 `http://localhost:8000` | test 기본 iTunes·mock 이미지에서는 AI 추천을 호출하지 않음 |
+| `SPEECH_TRANSCRIPTION_AI_BASE_URL` | AI 음성 제공자 사용 시 필수 | 기본값 없음, 로컬 예제 `http://localhost:8000` | test 기본 stub 전사에서는 AI 음성 서버를 호출하지 않음 |
+| `LOCATION_REVERSE_GEOCODING_BASE_URL` | 필수 | 기본값 없음, 예제 `https://dapi.kakao.com` | 위치 역지오코딩 클라이언트 URL |
+
+`.env.example`을 복사한 로컬 `.env`는 test에서 자동으로 읽습니다. 공용 예제의 `AUTH_COOKIE_SECURE=true`는
+HTTPS용이므로 로컬 HTTP 테스트에서는 반드시 `false`로 수정하세요. HTTPS 배포에서는 `true`를 유지합니다.
+test 전용 Hazelcast 연결·replica 수·로컬 CORS 기본값은 `application-test.yaml`에서 유지하고,
+`.env`에 필요한 로컬 값을 지정합니다. 기존 `.env.local.properties.example`은 Java properties 형식의 fallback 예제입니다.
+셸·IDE·JVM에 이미 설정한 값은 dotenv와 properties보다 우선하므로 로컬 HTTP 실행 전에 해당 쿠키 값을 확인하세요.
+
+터미널에서도 같은 설정으로 실행할 수 있습니다.
+
+```sh
+./gradlew bootRun --args='--spring.profiles.active=test'
+# 백엔드 수신 포트 변경 예시
+SERVER_PORT=8082 ./gradlew bootRun --args='--spring.profiles.active=test'
+```
+
+기본 주소는 `http://localhost:8080`과 `http://127.0.0.1:8080`입니다.
+`SERVER_PORT`를 바꾸면 프론트엔드의 API/proxy 대상 포트도 맞춥니다. 백엔드는 한 실행에 한 포트에서 수신합니다.
+프론트엔드 Origin은 test에서 HTTP/HTTPS `localhost`·`127.0.0.1`의 모든 포트를 허용하므로
+3000·5173·5174 등 프론트 포트가 달라도 CORS 목록을 수정할 필요가 없습니다.
+REST 요청의 Origin/Referer 검사와 `/ws` handshake에도 같은 로컬 허용 정책이 적용됩니다.
+로그인 queue cookie·refresh cookie·CSRF cookie를 같은 호스트에서 사용하도록 프론트와 API 주소의
+`localhost`/`127.0.0.1` 표기도 일치시키세요. 로컬 HTTP에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다.
+HTTPS Origin 허용은 백엔드에 TLS listener를 추가하지 않습니다.
+
+`AUTH_CORS_LOCAL_ALL_PORTS_ENABLED=false`를 주면 test에서도 기존 `AUTH_CORS_ALLOWED_ORIGINS`의
+정확한 Origin만 허용합니다. 다른 호스트나 `localhost.evil.example` 같은 유사 호스트는 자동 허용하지 않습니다.
+기본 바인딩은 loopback이며 LAN 접근이 필요할 때만 `SERVER_ADDRESS`를 명시적으로 변경합니다.
+HTTPS 환경에서는 `AUTH_COOKIE_SECURE=true`를 함께 설정하세요.
+
+`prod`가 활성화되면 test 설정 파일·로컬 파일 import·모든 로컬 포트 허용이 적용되지 않습니다.
+운영은 `prod`만 선택하고 운영 환경 변수와 별도 다수결 Hazelcast 멤버 구성을 사용합니다.
+로컬 기본 설정은 backend 한 프로세스·Hazelcast 한 멤버용이며 `AUTH_BACKEND_REPLICA_COUNT=1`이 필요합니다.
+기본 `./gradlew test`의 Spring context 테스트에도 별도 test DB·키·실행 중인 로컬 Hazelcast가 필요합니다.
+순수 설정/Origin 회귀 테스트는 외부 DB나 멤버 없이 실행할 수 있습니다.
+
+
+### JDK 25의 Hazelcast Unsafe 경고
+
+JDK 25에서 Hazelcast 5.7.0을 초기화하면 `sun.misc.Unsafe::arrayBaseOffset`과
+`com.hazelcast.internal.memory.impl.UnsafeUtil` 관련 경고가 출력될 수 있습니다.
+클라이언트도 사용하는 내부 `UnsafeUtil`의 초기화 과정에서 `checkUnsafeInstance`가 이 API를 호출합니다.
+호출 위치는 [Hazelcast 5.7.0 소스](https://raw.githubusercontent.com/hazelcast/hazelcast/v5.7.0/hazelcast/src/main/java/com/hazelcast/internal/memory/impl/UnsafeUtil.java)에서 확인할 수 있습니다.
+
+이 경고는 현재 메모리 오류를 감지한 결과가 아니라, 향후 제거 예정인 내부 API 사용 안내입니다.
+[Oracle JDK 25 마이그레이션 가이드](https://docs.oracle.com/en/java/javase/25/migrate/significant-changes-jdk-24.html)에 따르면
+이 API는 JDK 23에서 제거 예정으로 deprecated되었고 JDK 24부터 메모리 접근 API의 최초 호출 시 경고를 냅니다.
+현재 JDK 25.0.2와 Hazelcast 5.7.0에서는 경고가 출력되어도 정상 기동과 인증이 가능합니다.
+향후 JDK에서 API가 제거될 수 있으므로 이후 버전의 호환성은 별도로 확인해야 합니다.
+
+현재는 경고를 유지하며 IntelliJ 실행 구성과 Gradle 태스크에 경고 억제용 JVM 옵션을 추가하지 않습니다.
+향후 Redis로 인증 상태 저장소를 옮기고 Hazelcast 의존성을 제거하면 이 Hazelcast 호출원도 사라집니다.
+Redis 전환은 이번 변경에 포함하지 않습니다.
 
 ## 설치 및 개발 실행
 
@@ -82,7 +209,7 @@ set +a
 ./gradlew bootRun --args='--spring.profiles.active=dev'
 ```
 
-기본 서버 주소는 `http://localhost:8080`입니다. 아직 서비스 API가 없으므로 루트 주소가 서비스 화면을 제공하지는 않습니다. Spring Security 기본 설정으로 인증이 요구되거나 기본 로그인 화면이 표시될 수 있습니다. 별도 인증 설정 전에는 실행 로그의 기본 생성 비밀번호를 확인하세요.
+기본 서버 주소는 `http://localhost:8080`입니다. 이 애플리케이션은 REST API 서버이며 루트 주소에 웹 화면을 제공하지 않습니다. 실제 로그인 검증은 위의 로컬 test 프로필 실행 절차를 따르세요.
 
 ## 음악 기록 로컬 개발 프로필
 

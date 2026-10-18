@@ -1,0 +1,28 @@
+hazelcast:
+  cluster-name: meomuneum-auth-local
+  network:
+    port:
+      port: 15702
+      auto-increment: false
+    interfaces:
+      enabled: true
+      interfaces:
+        - 127.0.0.1
+    join:
+      auto-detection:
+        enabled: false
+      multicast:
+        enabled: false
+      tcp-ip:
+        enabled: false
+  jet:
+    enabled: false
+  properties:
+    hazelcast.socket.server.bind.any: false
+    hazelcast.operation.thread.count: 2
+    hazelcast.operation.generic.thread.count: 2
+    hazelcast.io.input.thread.count: 2
+    hazelcast.io.output.thread.count: 2
+  queue:
+    login-queue-order-v2:
+      max-size: 2150

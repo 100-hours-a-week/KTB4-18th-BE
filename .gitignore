@@ -3,6 +3,7 @@ HELP.md
 .env
 .env.*
 !.env.example
+!.env.local.properties.example
 
 # Local design and test documents are not part of feature commits.
 /docs/

@@ -5,6 +5,7 @@ import java.util.Arrays;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.env.Environment;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
@@ -17,6 +18,8 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
 import org.springframework.web.socket.handler.WebSocketHandlerDecorator;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
+import com.muse.meomuneum.global.config.CorsConfig;
+
 @Configuration
 @EnableWebSocketMessageBroker
 public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
@@ -27,18 +30,21 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final ChatSocketSessions sockets;
     private final ChatAuthSessionRegistry authSessions;
     private final String[] origins;
+    private final String[] originPatterns;
     private final ThreadPoolTaskScheduler scheduler;
 
     public ChatWebSocketConfig(ChatStompInterceptor interceptor, ChatPresenceRegistry presence,
             ChatSocketSessions sockets, ChatSubscriptionReceipts receipts, ChatMessageOutboundGuard outboundGuard,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
-            ThreadPoolTaskScheduler chatHeartbeatScheduler, ChatAuthSessionRegistry authSessions) {
+            ThreadPoolTaskScheduler chatHeartbeatScheduler, ChatAuthSessionRegistry authSessions,
+            Environment environment) {
         this.interceptor = interceptor;
         this.receipts = receipts;
         this.outboundGuard = outboundGuard;
         this.presence = presence;
         this.sockets = sockets;
         this.origins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).toArray(String[]::new);
+        this.originPatterns = CorsConfig.localOriginPatterns(environment).toArray(String[]::new);
         this.scheduler = chatHeartbeatScheduler;
         this.authSessions = authSessions;
     }
@@ -46,7 +52,7 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.setErrorHandler(new ChatStompErrorHandler());
-        registry.addEndpoint("/ws").setAllowedOrigins(origins);
+        registry.addEndpoint("/ws").setAllowedOrigins(origins).setAllowedOriginPatterns(originPatterns);
     }
 
     @Override

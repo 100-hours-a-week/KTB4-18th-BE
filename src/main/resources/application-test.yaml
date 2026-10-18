@@ -1,12 +1,33 @@
 spring:
+  config:
+    activate:
+      on-profile: "test & !prod"
+    import: optional:file:${LOCAL_ENV_PROPERTIES:./.env.local.properties}
   datasource:
     url: ${TEST_DB_URL:jdbc:mysql://localhost:3306/meomuneum_test}
     username: ${TEST_DB_USERNAME:meomuneum_test}
     password: ${TEST_DB_PASSWORD}
 
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  servlet:
+    session:
+      cookie:
+        secure: ${AUTH_COOKIE_SECURE:false}
+
 auth:
+  cookie:
+    secure: ${AUTH_COOKIE_SECURE:false}
   cors:
+    local-all-ports-enabled: ${AUTH_CORS_LOCAL_ALL_PORTS_ENABLED:true}
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5174,http://127.0.0.1:5174}
+  state:
+    backend-replica-count: ${AUTH_BACKEND_REPLICA_COUNT:1}
+    hazelcast:
+      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:true}
+      members: ${AUTH_STATE_HAZELCAST_MEMBERS:127.0.0.1:15702}
+      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-local}
+    expected-hazelcast-members: ${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:1}
   jwt:
     issuer: project-api
     audience: project-api
@@ -28,6 +49,6 @@ recommendation:
 
 location:
   token:
-    secret: test-only-location-token-secret-at-least-32-bytes
+    secret: ${LOCATION_TOKEN_SECRET:test-only-location-token-secret-at-least-32-bytes}
   reverse-geocoding:
     rest-api-key: test-only-kakao-rest-api-key

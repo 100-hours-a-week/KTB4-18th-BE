@@ -42,6 +42,7 @@ checkstyle {
 
 dependencies {
 	implementation 'io.github.vaneproject:badwordfiltering:1.0.0'
+	implementation 'io.github.cdimascio:dotenv-java:3.2.0'
 	implementation 'com.fasterxml.jackson.core:jackson-databind'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
@@ -71,6 +72,17 @@ dependencies {
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
+}
+
+tasks.register('hazelcastLocal', JavaExec) {
+	group = 'application'
+	description = 'Run the isolated loopback Hazelcast member for the test profile'
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.hazelcast.core.server.HazelcastMemberStarter'
+	javaLauncher = javaToolchains.launcherFor {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+	systemProperty 'hazelcast.config', file('config/hazelcast-auth-state-local.yaml').absolutePath
 }
 
 tasks.named('test') {
