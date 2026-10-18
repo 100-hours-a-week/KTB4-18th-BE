@@ -151,6 +151,24 @@ public class ChatViewLifecycle {
         });
     }
 
+    /** B8 history scope; reconnect/recovery authorization remains bound to its original tab. */
+    public ChatAccountReadIntervals authorizeAccount(Long userId, Long roomId, Long membershipId, String viewId) {
+        return presence.exclusive(() -> {
+            authorize(userId, roomId, membershipId, viewId);
+            Set<String> activeViews = new HashSet<>();
+            connections.forEach((socket, connection) -> {
+                if (userId.equals(connection.userId) && roomId.equals(connection.roomId)
+                        && !connection.subscriptions.isEmpty()
+                        && presence.ownsConnection(userId, connection.membershipId, socket)
+                        && !viewId.equals(connection.viewId)) {
+                    activeViews.add(connection.viewId);
+                }
+            });
+            activeViews.forEach(active -> storage.checkpoint(active, roomId));
+            return storage.authorizedAccountIntervals(userId, roomId, membershipId, viewId);
+        });
+    }
+
     @Scheduled(fixedDelay = 5000)
     public void checkpointConnections() {
         try {
