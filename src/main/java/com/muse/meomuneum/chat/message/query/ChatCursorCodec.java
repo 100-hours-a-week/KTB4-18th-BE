@@ -55,6 +55,12 @@ public class ChatCursorCodec {
                     !("history".equals(cursor.mode()) || "recovery".equals(cursor.mode()))) {
                 throw new ChatQueryException(false);
             }
+            if ("history".equals(cursor.mode())) {
+                var asOf = java.time.LocalDateTime.parse(cursor.historyAsOf());
+                if (asOf.toInstant(java.time.ZoneOffset.UTC).isAfter(clock.instant())) {
+                    throw new ChatQueryException(false);
+                }
+            }
             return cursor;
         } catch (Exception invalid) {
             // Never echo cursor contents, view identifiers or parsing exceptions.
