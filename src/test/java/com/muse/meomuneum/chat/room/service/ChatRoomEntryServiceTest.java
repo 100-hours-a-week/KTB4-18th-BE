@@ -56,7 +56,9 @@ class ChatRoomEntryServiceTest {
                 mock(com.muse.meomuneum.chat.ban.service.ChatBanStorageService.class),
                 mock(org.springframework.transaction.PlatformTransactionManager.class),
                 mock(com.muse.meomuneum.chat.view.ChatViewStorageService.class),
-                mock(com.muse.meomuneum.chat.view.ChatViewLifecycle.class));
+                mock(com.muse.meomuneum.chat.view.ChatViewLifecycle.class),
+                mock(com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy.class),
+                new com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry());
     }
 
     @Test

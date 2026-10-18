@@ -362,7 +362,7 @@ class ChatRoomEntryIntegrationTest {
     }
 
     @Test
-    void logoutEndsMembershipAndAllAccountConnections() throws Exception {
+    void logoutEndsOnlyTheAuthenticatedSessionsConnections() throws Exception {
         Long userId = createUser("logout");
         ChatRoom room = roomFor("41135");
         Long membershipId = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
@@ -370,7 +370,7 @@ class ChatRoomEntryIntegrationTest {
         SocketProbe first = connectSocket(userId, room.getId(), membershipId);
         SocketProbe second = connectSocket(userId, room.getId(), membershipId);
         try {
-            events.publishEvent(new com.muse.meomuneum.auth.application.ChatLogoutEvent(userId));
+            events.publishEvent(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
             assertTrue(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(userId, sid(userId)).isEmpty());
@@ -378,6 +378,75 @@ class ChatRoomEntryIntegrationTest {
             first.socket.abort();
             second.socket.abort();
         }
+    }
+
+    @Test
+    void sessionLogoutKeepsOtherDeviceMessagingAndRejectsOldSessionAdmission() throws Exception {
+        Long userId = createUser("logout-isolation");
+        ChatRoom room = roomFor("41135");
+        String otherSid = java.util.UUID.randomUUID().toString();
+        var first = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
+                .membership();
+        var second = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
+                .membership();
+        var other = service.join(userId, otherSid, room.getId(), issueToken(userId, room.getRegion(), otherSid))
+                .membership();
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId));
+        String otherToken = jwt.createAccessToken(users.findById(userId).orElseThrow(), otherSid);
+        SocketProbe a = connectSocket(userId, room.getId(), first.membershipId(), token, first.viewSessionId());
+        SocketProbe b = connectSocket(userId, room.getId(), second.membershipId(), token, second.viewSessionId());
+        SocketProbe device = connectSocket(userId, room.getId(), other.membershipId(), otherToken,
+                other.viewSessionId());
+        try {
+            subscribeMessages(device, room.getId());
+            var event = new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId));
+            events.publishEvent(event);
+            assertEquals(4100, a.closed.get(5, TimeUnit.SECONDS));
+            assertEquals("CHAT_LOGGED_OUT", a.closeReason);
+            assertEquals(4100, b.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(device.closed.isDone());
+            assertEquals(0, jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id = ? AND ended_at IS NULL",
+                    Integer.class, first.membershipId()));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id = ? AND ended_at IS NULL",
+                    Integer.class, other.membershipId()));
+            assertTrue(memberRepository.findById(other.membershipId()).orElseThrow().isActive());
+            assertEquals(ChatRoomErrorCode.AUTH_REQUIRED, org.junit.jupiter.api.Assertions.assertThrows(
+                    ChatRoomException.class, () -> service.join(userId, sid(userId), room.getId(),
+                            issueToken(userId, room.getRegion())))
+                    .getErrorCode());
+            events.publishEvent(event);
+            assertFalse(device.closed.isDone());
+            sendMessage(device, room.getId(), java.util.UUID.randomUUID().toString(), "other device after logout");
+            assertTrue(nextFrame(device).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(device).contains("CHAT_ACK"));
+            assertEquals(other.membershipId(), service.join(userId, otherSid, room.getId(),
+                    issueToken(userId, room.getRegion(), otherSid)).membership().membershipId());
+        } finally {
+            service.leaveAll(userId);
+            a.socket.abort();
+            b.socket.abort();
+            device.socket.abort();
+        }
+    }
+
+    @Test
+    void logoutReleasesUnconnectedReservationsAndDoesNotAffectANewLogin() {
+        Long userId = createUser("logout-reserve");
+        ChatRoom room = roomFor("41135");
+        var joined = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
+                .membership();
+        events.publishEvent(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
+        assertFalse(memberRepository.findById(joined.membershipId()).orElseThrow().isActive());
+        String newSid = java.util.UUID.randomUUID().toString();
+        var newLogin = service.join(userId, newSid, room.getId(), issueToken(userId, room.getRegion(), newSid))
+                .membership();
+        events.publishEvent(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
+        assertTrue(memberRepository.findById(newLogin.membershipId()).orElseThrow().isActive());
+        assertEquals(newLogin.membershipId(), service.join(userId, newSid, room.getId(),
+                issueToken(userId, room.getRegion(), newSid)).membership().membershipId());
+        service.leaveAll(userId);
     }
 
     @Test
