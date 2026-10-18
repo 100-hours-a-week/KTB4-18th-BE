@@ -73,6 +73,22 @@ class LocationResolutionServiceTest {
     }
 
     @Test
+    void issuesSessionBoundEvidenceAfterTheSameLocationAndMapValidation() {
+        LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 18.5);
+        String sid = "550e8400-e29b-41d4-a716-446655440000";
+        when(coordinateResolver.resolve(request.latitude(), request.longitude()))
+                .thenReturn(new ResolvedRegionCode("41", "41135"));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41", RegionLevel.SIDO)).thenReturn(Optional.of(sido));
+        when(regionRepository.findByCodeAndLevelAndActiveTrue("41135", RegionLevel.SIGUNGU))
+                .thenReturn(Optional.of(sigungu));
+        when(mapZoneCatalog.findContainingMapDot(request.latitude(), request.longitude()))
+                .thenReturn(Optional.of(new MapZoneCatalog.MapDot(101L, "DOT-001")));
+        when(tokenProvider.issueForSession(7L, sid, sido, sigungu, 101L))
+                .thenReturn(new IssuedLocationToken("session-bound", 300));
+        assertThat(service.resolve(7L, request, sid).locationResolutionToken()).isEqualTo("session-bound");
+    }
+
+    @Test
     void rejectsLowAccuracyBeforeCallingExternalResolver() {
         LocationResolveRequest request = new LocationResolveRequest(37.3595704, 127.105399, 100.1);
 

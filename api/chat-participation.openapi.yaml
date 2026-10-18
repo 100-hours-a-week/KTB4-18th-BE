@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Regional chat participation
-  version: 1.1.0
+  version: 1.2.0
   description: >-
     Single-server admission and account-per-room capacity. Membership is bound to the
     verified access JWT sub/sid. Missing or noncanonical sid requires login again.
@@ -37,7 +37,9 @@ paths:
         Creates or reuses membership for the signed JWT sid. Same sid and room return
         the existing active membership; a different sid creates independent membership.
         The authenticated sid is never read from a request field or device header.
-        Existing same-session region-transition behavior is retained; other sessions are untouched.
+        Location evidence must be issued for this same signed sid; unbound or other-session
+        evidence is rejected before changing participation. Existing same-session region-transition
+        behavior is retained; other sessions are untouched.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: room_id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -61,7 +63,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MembershipResponse' }
-        '400': { description: Invalid, expired, foreign-owner or region-mismatched location token }
+        '400': { description: Invalid, expired, unbound, foreign-owner, foreign-session or region-mismatched location token }
         '401': { description: Authentication required; membership mutation also requires canonical signed JWT sid }
         '403':
           description: Inactive user or active chat ban; ban message is chat use banned

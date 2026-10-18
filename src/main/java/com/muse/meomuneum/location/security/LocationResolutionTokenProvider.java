@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.region.domain.Region;
 import com.muse.meomuneum.location.config.LocationTokenProperties;
 import com.muse.meomuneum.location.exception.LocationErrorCode;
@@ -46,6 +47,18 @@ public class LocationResolutionTokenProvider {
     }
 
     public IssuedLocationToken issue(Long userId, Region sido, Region sigungu, Long mapDotId) {
+        return issue(userId, sido, sigungu, mapDotId, null);
+    }
+
+    public IssuedLocationToken issueForSession(Long userId, String authSessionId, Region sido, Region sigungu,
+            Long mapDotId) {
+        if (!ChatAuthSessionRegistry.isValidSessionId(authSessionId)) {
+            throw invalidToken();
+        }
+        return issue(userId, sido, sigungu, mapDotId, authSessionId);
+    }
+
+    private IssuedLocationToken issue(Long userId, Region sido, Region sigungu, Long mapDotId, String authSessionId) {
         Instant issuedAt = clock.instant();
         Instant expiresAt = issuedAt.plus(TOKEN_LIFETIME);
         JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
@@ -60,6 +73,9 @@ public class LocationResolutionTokenProvider {
                 .claim("sido_code", sido.getCode())
                 .claim("sigungu_region_id", sigungu.getId())
                 .claim("sigungu_code", sigungu.getCode());
+        if (authSessionId != null) {
+            builder.claim("sid", authSessionId);
+        }
         if (mapDotId != null) {
             builder.claim("map_dot_id", mapDotId);
         }
@@ -94,10 +110,19 @@ public class LocationResolutionTokenProvider {
                     numberClaim(claims, "sigungu_region_id"),
                     stringClaim(claims, "sigungu_code"),
                     optionalNumberClaim(claims, "map_dot_id"),
-                    claims.getExpirationTime().toInstant());
+                    claims.getExpirationTime().toInstant(), claims.getStringClaim("sid"));
         } catch (JOSEException | ParseException | IllegalArgumentException exception) {
             throw invalidToken();
         }
+    }
+
+    public LocationResolutionClaims validateForChat(String token, Long userId, String authSessionId) {
+        LocationResolutionClaims claims = validate(token, userId);
+        if (!ChatAuthSessionRegistry.isValidSessionId(authSessionId)
+                || !authSessionId.equals(claims.authSessionId())) {
+            throw invalidToken();
+        }
+        return claims;
     }
 
     private SignedJWT parseToken(String token) throws ParseException {

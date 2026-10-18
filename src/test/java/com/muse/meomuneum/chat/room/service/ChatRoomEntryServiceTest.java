@@ -133,7 +133,7 @@ class ChatRoomEntryServiceTest {
     }
 
     private void prepareJoin(User user, ChatRoom room, LocationResolutionClaims claims) {
-        when(tokenProvider.validate("loc_token", 7L)).thenReturn(claims);
+        when(tokenProvider.validateForChat("loc_token", 7L, sid(7L))).thenReturn(claims);
         when(userRepository.findActiveByIdForUpdate(7L)).thenReturn(Optional.of(user));
         when(chatRoomRepository.findAllByIdForUpdate(any())).thenReturn(java.util.List.of(room));
     }
