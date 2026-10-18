@@ -6,8 +6,10 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.muse.meomuneum.chat.room.controller.ChatRoomController;
 import com.muse.meomuneum.global.exception.ErrorCode;
@@ -36,6 +38,11 @@ public class ChatRoomExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleUnreadableRequest(HttpMessageNotReadableException exception) {
         return toErrorResponse(LocationErrorCode.INVALID_LOCATION_TOKEN);
+    }
+
+    @ExceptionHandler({MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<ApiResponse<Void>> handleInvalidParticipationRequest(Exception exception) {
+        return toErrorResponse(ChatRoomErrorCode.INVALID_PARTICIPATION_REQUEST);
     }
 
     private ResponseEntity<ApiResponse<Void>> toErrorResponse(ErrorCode errorCode) {
