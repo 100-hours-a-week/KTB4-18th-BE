@@ -1,11 +1,14 @@
 openapi: 3.0.3
 info:
   title: Regional chat participation
-  version: 1.3.0
+  version: 1.3.1
   description: >-
     Single-server admission and account-per-room capacity. Membership is bound to the
     verified access JWT sub/sid. Missing or noncanonical sid requires login again.
-    Account-wide logout remains unchanged until the separate logout work.
+    Chat consumes ChatSessionLogoutEvent(userId, authSessionId) from authentication
+    and closes only that session with WebSocket 4100 / CHAT_LOGGED_OUT.
+    Authentication must publish this event after verified session revocation before deployment.
+    The legacy user-only ChatLogoutEvent no longer terminates chat. REST shapes are unchanged.
 paths:
   /api/v1/regions/{region_id}/chat-room:
     get:
