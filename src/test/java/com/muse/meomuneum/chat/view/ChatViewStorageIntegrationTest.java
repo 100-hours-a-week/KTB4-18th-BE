@@ -506,6 +506,195 @@ class ChatViewStorageIntegrationTest {
         assertEquals(0, running.exitValue(), output);
     }
 
+    @Test
+    void accountHistorySpansTabsDevicesAndNewLoginWithoutFillingAbsence() {
+        String first = connectAndSubscribe("account-first", null);
+        Long before = message("first device");
+        clock.set(START.plusSeconds(5));
+        String secondSid = UUID.randomUUID().toString();
+        Long secondMember = accountMembership(secondSid, roomId);
+        String second = accountSubscribe("account-second", secondSid, secondMember);
+        Long overlap = message("both devices");
+        clock.set(START.plusSeconds(10));
+        entry.loggedOut(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
+        clock.set(START.plusSeconds(15));
+        Long remaining = message("second only");
+        var live = lifecycle.authorizeAccount(userId, roomId, secondMember, second);
+        assertTrue(live.permits(before, local(START)));
+        assertTrue(live.permits(overlap, local(START.plusSeconds(5))));
+        assertTrue(live.permits(remaining, local(START.plusSeconds(15))));
+        clock.set(START.plusSeconds(20));
+        entry.leaveTab(userId, secondSid, roomId, secondMember, second);
+        clock.set(START.plusSeconds(25));
+        Long absent = message("all devices absent");
+        clock.set(START.plusSeconds(30));
+        String newSid = UUID.randomUUID().toString();
+        Long newMember = accountMembership(newSid, roomId);
+        String current = accountSubscribe("account-new-login", newSid, newMember);
+        Long resumed = message("new login");
+        var result = lifecycle.authorizeAccount(userId, roomId, newMember, current);
+        assertTrue(result.permits(before, local(START)));
+        assertTrue(result.permits(remaining, local(START.plusSeconds(15))));
+        assertFalse(result.permits(absent, local(START.plusSeconds(25))));
+        assertTrue(result.permits(resumed, local(START.plusSeconds(30))));
+        assertThrows(ChatRoomException.class,
+                () -> lifecycle.authorizeAccount(userId, roomId, membershipId, first));
+        assertFalse(permits(lifecycle.authorize(userId, roomId, newMember, current), before, START));
+    }
+
+    @Test
+    void accountReadChecksOtherActiveViewsButNeverCreatesReservationIntervals() {
+        String current = connectAndSubscribe("account-current", null);
+        String deviceSid = UUID.randomUUID().toString();
+        Long device = accountMembership(deviceSid, roomId);
+        String other = accountSubscribe("account-device", deviceSid, device);
+        String reservation = storage.create(userId, roomId, device);
+        Long id = message("fresh on both devices");
+        var result = lifecycle.authorizeAccount(userId, roomId, membershipId, current);
+        assertTrue(result.permits(id, local(START)));
+        assertEquals(id, jdbc.queryForObject(
+                "SELECT verified_through_message_id FROM chat_view_intervals WHERE view_session_id = ?",
+                Long.class, other));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id = ?", Integer.class, reservation));
+        clock.set(START.plusSeconds(1));
+        jdbc.update("UPDATE chat_room_members SET deleted_at=? WHERE id=?", local(clock.instant()), device);
+        clock.set(START.plusSeconds(5));
+        message("after the other membership ended");
+        lifecycle.authorizeAccount(userId, roomId, membershipId, current);
+        assertEquals(id, jdbc.queryForObject(
+                "SELECT verified_through_message_id FROM chat_view_intervals WHERE view_session_id = ?",
+                Long.class, other));
+    }
+
+    @Test
+    void accountHistoryExcludesForeignAccountsRoomsAndInconsistentViewOwnership() {
+        String current = connectAndSubscribe("account-owner", null);
+        Long foreignBoundary = message("before owned subscription history");
+        // A known id alone cannot authorize messages before an owned view's start.
+        lifecycle.unsubscribed("account-owner", "room");
+        jdbc.update("DELETE FROM chat_view_intervals WHERE view_session_id = ?", current);
+        lifecycle.subscribed("account-owner", "room-new", topic());
+        Long otherRoom = jdbc.queryForObject("SELECT id FROM chat_rooms WHERE id <> ? LIMIT 1", Long.class, roomId);
+        Long foreignMember = accountMembership(UUID.randomUUID().toString(), otherRoom);
+        String foreignView = storage.subscribed(userId, otherRoom, foreignMember, null);
+        jdbc.update("""
+                INSERT INTO users (email,password_hash,nickname,role)
+                VALUES ('view-foreign@example.com','test-only','foreign','USER')
+                """);
+        Long foreignUser = jdbc.queryForObject("SELECT id FROM users WHERE email='view-foreign@example.com'",
+                Long.class);
+        jdbc.update("INSERT INTO chat_room_members (user_id,room_id) VALUES (?,?)", foreignUser, roomId);
+        Long foreignUserMember = jdbc.queryForObject(
+                "SELECT id FROM chat_room_members WHERE user_id=?", Long.class, foreignUser);
+        String foreignUserView = storage.subscribed(foreignUser, roomId, foreignUserMember, null);
+        // Deliberately inconsistent fixture: the referenced membership belongs to another account.
+        String inconsistent = storage.create(userId, roomId, foreignUserMember);
+        jdbc.update("""
+                INSERT INTO chat_view_intervals (view_session_id,process_id,started_at,start_after_message_id,
+                    verified_at,verified_through_message_id,ends_at,end_message_id,end_reason)
+                VALUES (?, 'fixture', ?, 0, ?, ?, ?, ?, 'LEFT')
+                """, inconsistent, local(START), local(START), foreignBoundary, local(START), foreignBoundary);
+        var result = lifecycle.authorizeAccount(userId, roomId, membershipId, current);
+        assertFalse(result.permits(foreignBoundary, local(START)));
+        assertEquals(1, result.intervals().size());
+        assertFalse(result.intervals().stream().anyMatch(range -> range.id() == jdbc.queryForObject(
+                "SELECT id FROM chat_view_intervals WHERE view_session_id=?", Long.class, foreignView)));
+        assertThrows(ChatRoomException.class,
+                () -> lifecycle.authorizeAccount(foreignUser, roomId, foreignUserMember, foreignUserView));
+    }
+
+    @Test
+    void accountHistoryKeepsExactDisconnectGraceAndRestartCheckpointBoundaries() {
+        String first = connectAndSubscribe("account-grace", null);
+        presence.disconnect("account-grace");
+        clock.set(START.plusSeconds(29));
+        Long grace = message("grace");
+        clock.set(START.plusSeconds(30));
+        Long boundary = message("exact deadline");
+        clock.set(START.plusSeconds(31));
+        String deviceSid = UUID.randomUUID().toString();
+        Long device = accountMembership(deviceSid, roomId);
+        String current = accountSubscribe("account-after-grace", deviceSid, device);
+        Long proven = message("checkpoint");
+        storage.checkpoint(current, roomId);
+        clock.set(START.plusSeconds(32));
+        Long unproven = message("unverified before restart");
+        restartedStorage();
+        presence.disconnect("account-after-grace");
+        clock.set(START.plusSeconds(100));
+        String newSid = UUID.randomUUID().toString();
+        Long newMember = accountMembership(newSid, roomId);
+        String resumed = accountSubscribe("account-after-restart", newSid, newMember);
+        var result = lifecycle.authorizeAccount(userId, roomId, newMember, resumed);
+        assertTrue(result.permits(grace, local(START.plusSeconds(29))));
+        assertFalse(result.permits(boundary, local(START.plusSeconds(30))));
+        assertTrue(result.permits(proven, local(START.plusSeconds(31))));
+        assertFalse(result.permits(unproven, local(START.plusSeconds(32))));
+        assertThrows(ChatRoomException.class,
+                () -> lifecycle.authorizeAccount(userId, roomId, membershipId, first));
+    }
+
+    @Test
+    void accountReadEnforcesRetentionAndCurrentSubscriptionBanAndDeparture() {
+        String current = connectAndSubscribe("account-retention", null);
+        Long expired = message("exact retention cutoff");
+        clock.set(START.plusNanos(1000));
+        Long retained = message("one microsecond inside retention");
+        storage.checkpoint(current, roomId);
+        clock.set(START.plusSeconds(24 * 3600));
+        var result = lifecycle.authorizeAccount(userId, roomId, membershipId, current);
+        assertFalse(result.permits(expired, local(START)));
+        assertTrue(result.permits(retained, local(START.plusNanos(1000))));
+        assertThrows(ChatRoomException.class,
+                () -> lifecycle.authorizeAccount(userId, roomId, membershipId, null));
+        jdbc.update("""
+                INSERT INTO chat_bans (user_id,banned_by_user_id,reason,created_at,expires_at)
+                VALUES (?,?,'PROFANITY',?,?)
+                """, userId, userId, local(clock.instant()), local(clock.instant().plusSeconds(3600)));
+        assertThrows(ChatRoomException.class,
+                () -> lifecycle.authorizeAccount(userId, roomId, membershipId, current));
+        jdbc.update("DELETE FROM chat_bans");
+        entry.leaveTab(userId, sid(userId), roomId, membershipId, current);
+        assertThrows(ChatRoomException.class,
+                () -> lifecycle.authorizeAccount(userId, roomId, membershipId, current));
+    }
+
+    @Test
+    void accountHistoryCapsOrphanGraceAtCommittedMembershipEnd() {
+        String old = connectAndSubscribe("account-orphan", null);
+        presence.disconnect("account-orphan");
+        clock.set(START.plusSeconds(5));
+        Long graceBeforeLeave = message("before committed leave");
+        clock.set(START.plusSeconds(10));
+        // The participation committed, but simulates a failed view-finalization transaction.
+        jdbc.update("UPDATE chat_room_members SET deleted_at=? WHERE id=?", local(clock.instant()), membershipId);
+        clock.set(START.plusSeconds(15));
+        Long forbidden = message("after committed leave inside stale grace");
+        clock.set(START.plusSeconds(20));
+        String newSid = UUID.randomUUID().toString();
+        Long newMember = accountMembership(newSid, roomId);
+        String current = accountSubscribe("account-after-orphan", newSid, newMember);
+        var result = lifecycle.authorizeAccount(userId, roomId, newMember, current);
+        assertTrue(result.permits(graceBeforeLeave, local(START.plusSeconds(5))));
+        assertFalse(result.permits(forbidden, local(START.plusSeconds(15))));
+        assertEquals(local(START.plusSeconds(30)), jdbc.queryForObject(
+                "SELECT ends_at FROM chat_view_intervals WHERE view_session_id=?", LocalDateTime.class, old));
+    }
+
+    private Long accountMembership(String authSid, Long targetRoom) {
+        jdbc.update("INSERT INTO chat_room_members (user_id,room_id,created_at,auth_session_id) VALUES (?,?,?,?)",
+                userId, targetRoom, local(clock.instant()), authSid);
+        return jdbc.queryForObject("SELECT id FROM chat_room_members WHERE user_id = ? AND auth_session_id = ?",
+                Long.class, userId, authSid);
+    }
+
+    private String accountSubscribe(String socket, String authSid, Long member) {
+        entry.connect(userId, authSid, roomId, member, socket);
+        lifecycle.connected(userId, roomId, member, socket, null);
+        return lifecycle.subscribed(socket, "room", topic());
+    }
+
     private java.net.http.HttpResponse<String> http(String path, String token, String view) throws Exception {
         var request = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:" + port + path));
         if (token != null) {

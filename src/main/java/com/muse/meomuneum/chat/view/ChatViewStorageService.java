@@ -168,9 +168,14 @@ public class ChatViewStorageService {
     public void checkpoint(String viewId, Long roomId) {
         LocalDateTime now = now();
         jdbc.update("""
-                UPDATE chat_view_intervals SET verified_at = ?, verified_through_message_id = ?
-                WHERE view_session_id = ? AND ends_at IS NULL AND process_id = ?
-                """, now, watermark(roomId), viewId, processId);
+                UPDATE chat_view_intervals i
+                JOIN chat_view_sessions v ON v.id = i.view_session_id
+                JOIN chat_room_members m ON m.id = v.membership_id
+                    AND m.user_id = v.user_id AND m.room_id = v.room_id
+                SET i.verified_at = ?, i.verified_through_message_id = ?
+                WHERE i.view_session_id = ? AND i.ends_at IS NULL AND i.process_id = ?
+                    AND v.room_id = ? AND v.ended_at IS NULL AND m.deleted_at IS NULL
+                """, now, watermark(roomId), viewId, processId, roomId);
         touch(viewId, now);
     }
 
@@ -202,6 +207,43 @@ public class ChatViewStorageService {
         int deleted = jdbc.update("DELETE FROM chat_view_intervals WHERE ends_at <= ?", cutoff);
         deleted += jdbc.update("DELETE FROM chat_view_sessions WHERE updated_at <= ?", cutoff);
         return deleted;
+    }
+
+    /** Past ended views establish history, but only a current owned view can request it. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ChatAccountReadIntervals authorizedAccountIntervals(Long userId, Long roomId,
+            Long membershipId, String viewId) {
+        validateContext(userId, roomId, membershipId, viewId);
+        if (viewId == null) {
+            throw denied();
+        }
+        checkpoint(viewId, roomId);
+        LocalDateTime asOf = now();
+        List<ChatViewInterval> ranges = jdbc.query("""
+                SELECT i.id, i.start_after_message_id, i.started_at,
+                    CASE WHEN i.ends_at IS NOT NULL AND i.end_message_id IS NULL
+                         THEN LEAST(i.ends_at, COALESCE(v.ended_at, i.ends_at),
+                                    COALESCE(m.deleted_at, i.ends_at))
+                         ELSE COALESCE(i.ends_at, i.verified_at) END AS ends_at,
+                    CASE WHEN i.ends_at IS NULL THEN i.verified_through_message_id
+                         ELSE i.end_message_id END AS end_id
+                FROM chat_view_sessions v
+                JOIN chat_room_members m ON m.id = v.membership_id
+                    AND m.user_id = v.user_id AND m.room_id = v.room_id
+                JOIN chat_view_intervals i ON i.view_session_id = v.id
+                WHERE v.user_id = ? AND v.room_id = ?
+                    AND COALESCE(i.ends_at, i.verified_at) > ? AND i.started_at <= ?
+                    AND (i.ends_at IS NOT NULL OR (
+                        (v.ended_at IS NULL OR i.verified_at <= v.ended_at)
+                        AND (m.deleted_at IS NULL OR i.verified_at <= m.deleted_at)))
+                    AND (i.end_message_id IS NULL OR i.end_reason = 'LEFT' OR (
+                        (v.ended_at IS NULL OR i.ends_at <= v.ended_at)
+                        AND (m.deleted_at IS NULL OR i.ends_at <= m.deleted_at)))
+                ORDER BY i.started_at, i.start_after_message_id, i.id
+                """, (row, index) -> new ChatViewInterval(row.getLong("id"), row.getLong("start_after_message_id"),
+                row.getTimestamp("started_at").toLocalDateTime(), row.getTimestamp("ends_at").toLocalDateTime(),
+                row.getObject("end_id", Long.class)), userId, roomId, asOf.minusHours(24), asOf);
+        return new ChatAccountReadIntervals(userId, roomId, asOf, ranges);
     }
 
     private void closeRange(String viewId, Long roomId, String reason) {
