@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
   title: Regional chat message query
-  version: 1.0.0
-  description: BE 145. Authenticated live tab view, permitted intervals and 24-hour retention are checked on every request.
+  version: 1.1.0
+  description: B9. Verified JWT sid must own the current subscribed membership/view. Account history and 24-hour retention are checked on every page.
 security: [{ bearerAuth: [] }]
 paths:
   /api/v1/chat-rooms/{room_id}/messages:
     get:
-      description: History is descending message ID; recovery is ascending. Cursor fixes the snapshot and scope. Absence messages are excluded before pagination.
+      description: History uses account-room participation union in descending ID order; recovery uses the current tab in ascending order. History cursor fixes message ID and asOf. Every page rechecks current access. Old history cursors require a new cursorless query. Absence is excluded before pagination.
       parameters:
         - { $ref: '#/components/parameters/Room' }
         - { $ref: '#/components/parameters/Membership' }
@@ -39,7 +39,7 @@ paths:
         '403': { $ref: '#/components/responses/Denied' }
   /api/v1/chat-rooms/{room_id}/messages/by-client-id/{client_message_id}:
     get:
-      description: Only the caller's stored message inside this tab's permitted intervals. Foreign, absent and expired messages all return the same 404.
+      description: Only the caller's stored message inside account-room participation intervals, with a currently subscribed owned JWT sid/view. Foreign, absent and expired messages all return the same 404.
       parameters:
         - { $ref: '#/components/parameters/Room' }
         - { $ref: '#/components/parameters/Membership' }

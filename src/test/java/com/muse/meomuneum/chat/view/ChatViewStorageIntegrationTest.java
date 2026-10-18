@@ -682,6 +682,101 @@ class ChatViewStorageIntegrationTest {
                 "SELECT ends_at FROM chat_view_intervals WHERE view_session_id=?", LocalDateTime.class, old));
     }
 
+    @Test
+    void historyHttpRestoresOldSessionMessagesWhileRecoveryKeepsCurrentTabScope() throws Exception {
+        String old = connectAndSubscribe("history-old", null);
+        Long first = message("old one");
+        Long second = message("old two");
+        clock.set(START.plusSeconds(1));
+        entry.leaveTab(userId, sid(userId), roomId, membershipId, old);
+        clock.set(START.plusSeconds(2));
+        Long absent = message("absent from every device");
+        clock.set(START.plusSeconds(3));
+        String newSid = UUID.randomUUID().toString();
+        Long currentMember = accountMembership(newSid, roomId);
+        String view = accountSubscribe("history-current", newSid, currentMember);
+        Long current = message("current");
+        String path = "/api/v1/chat-rooms/" + roomId + "/messages?membership_id=" + currentMember;
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(), newSid);
+        assertEquals(200, http(path, token, view).statusCode());
+        assertEquals(403, http(path, jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId)), view)
+                .statusCode());
+        assertEquals(401, http(path, jwt.createAccessToken(users.findById(userId).orElseThrow()), view).statusCode());
+        var page = queries.query(userId, roomId, currentMember, view, "history", null, 1);
+        assertEquals(current, page.items().getFirst().messageId());
+        clock.set(START.plusSeconds(4));
+        Long live = message("after snapshot");
+        var older = queries.query(userId, roomId, currentMember, view, "history", page.nextCursor(), 50);
+        assertEquals(List.of(second, first), older.items().stream().map(item -> item.messageId()).toList());
+        assertEquals(current.longValue(), older.snapshotMessageId());
+        assertFalse(older.items().stream().anyMatch(item -> item.messageId().equals(absent)
+                || item.messageId().equals(live)));
+        assertEquals(List.of(current, live), queries.query(userId, roomId, currentMember, view, "recovery", null, 50)
+                .items().stream().map(item -> item.messageId()).toList());
+        String clientId = jdbc.queryForObject("SELECT client_message_id FROM chat_room_messages WHERE id=?",
+                String.class, first);
+        assertEquals(first, queries.byClientId(userId, roomId, currentMember, view, clientId).messageId());
+        assertEquals(1, older.gaps().stream().filter(gap -> "ABSENCE".equals(gap.reason())).count());
+        entry.leaveTab(userId, newSid, roomId, currentMember, view);
+        assertThrows(ChatRoomException.class,
+                () -> queries.query(userId, roomId, currentMember, view, "history", page.nextCursor(), 50));
+    }
+
+    @Test
+    void accountHistoryDoesNotDuplicateOverlapsOrInventGapsInsideALongerView() {
+        String longView = connectAndSubscribe("history-long", null);
+        Long one = message("one");
+        clock.set(START.plusSeconds(2));
+        String shortView = connectAndSubscribe("history-short", null);
+        Long two = message("two");
+        clock.set(START.plusSeconds(3));
+        entry.leaveTab(userId, sid(userId), roomId, membershipId, shortView);
+        clock.set(START.plusSeconds(4));
+        String lastView = connectAndSubscribe("history-last", null);
+        Long three = message("three");
+        var page = queries.query(userId, roomId, membershipId, lastView, "history", null, 50);
+        assertEquals(List.of(three, two, one), page.items().stream().map(item -> item.messageId()).toList());
+        assertTrue(page.gaps().isEmpty());
+        var firstPage = queries.query(userId, roomId, membershipId, lastView, "history", null, 1);
+        assertThrows(com.muse.meomuneum.chat.message.query.ChatQueryException.class,
+                () -> queries.query(userId, roomId, membershipId, longView, "recovery", firstPage.nextCursor(), 50));
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "CHAT_RECOVERY_FE_DIR", matches = ".+")
+    void actualFrontendRestoresAccountHistoryWithoutLocalCache() throws Exception {
+        clock.useRealTime();
+        String old = connectAndSubscribe("history-fixture", null);
+        java.util.List<Long> expected = new java.util.ArrayList<>();
+        for (int index = 0; index < 205; index++) {
+            expected.add(message("server history " + index));
+        }
+        entry.leaveTab(userId, sid(userId), roomId, membershipId, old);
+        Long absent = message("not participated");
+        String newSid = UUID.randomUUID().toString();
+        Long currentMember = accountMembership(newSid, roomId);
+        var process = new ProcessBuilder("node", "node_modules/vitest/vitest.mjs", "run",
+                "src/features/chat-entry/services/chatAccountHistory.integration.test.ts")
+                .directory(java.nio.file.Path.of(System.getenv("CHAT_RECOVERY_FE_DIR")).toFile())
+                .redirectErrorStream(true);
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_URL", "http://127.0.0.1:" + port);
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_TOKEN",
+                jwt.createAccessToken(users.findById(userId).orElseThrow(), newSid));
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", currentMember.toString());
+        process.environment().put("CHAT_RECOVERY_INTEGRATION_VIEW", storage.create(userId, roomId, currentMember));
+        process.environment().put("CHAT_HISTORY_EXPECTED_IDS", expected.subList(5, 205).stream()
+                .map(Object::toString).collect(java.util.stream.Collectors.joining(",")));
+        process.environment().put("CHAT_HISTORY_ABSENT_ID", absent.toString());
+        Process running = process.start();
+        if (!running.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)) {
+            running.destroyForcibly();
+            throw new AssertionError("frontend account history integration timed out");
+        }
+        String output = new String(running.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(0, running.exitValue(), output);
+    }
+
     private Long accountMembership(String authSid, Long targetRoom) {
         jdbc.update("INSERT INTO chat_room_members (user_id,room_id,created_at,auth_session_id) VALUES (?,?,?,?)",
                 userId, targetRoom, local(clock.instant()), authSid);

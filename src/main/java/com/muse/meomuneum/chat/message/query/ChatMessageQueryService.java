@@ -16,8 +16,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
+import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
+import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
+import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.view.ChatViewInterval;
 import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 
@@ -25,6 +29,7 @@ import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 public class ChatMessageQueryService {
     private final ChatPresenceRegistry presence;
     private final ChatViewLifecycle views;
+    private final ChatSessionAccessPolicy sessionAccess;
     private final NamedParameterJdbcTemplate jdbc;
     private final ChatCursorCodec cursors;
     private final Clock clock;
@@ -32,9 +37,10 @@ public class ChatMessageQueryService {
 
     public ChatMessageQueryService(ChatPresenceRegistry presence, ChatViewLifecycle views,
             NamedParameterJdbcTemplate jdbc, ChatCursorCodec cursors, Clock clock,
-            PlatformTransactionManager manager) {
+            PlatformTransactionManager manager, ChatSessionAccessPolicy sessionAccess) {
         this.presence = presence;
         this.views = views;
+        this.sessionAccess = sessionAccess;
         this.jdbc = jdbc;
         this.cursors = cursors;
         this.clock = clock;
@@ -60,7 +66,10 @@ public class ChatMessageQueryService {
             String mode, String token, int size) {
         validateModeAndSize(mode, size);
         return presence.exclusive(() -> transactions.execute(status -> {
-            List<ChatViewInterval> ranges = views.authorize(userId, roomId, membershipId, viewId);
+            boolean history = "history".equals(mode);
+            List<ChatViewInterval> ranges = history
+                    ? views.authorizeAccount(userId, roomId, membershipId, viewId).intervals()
+                    : views.authorize(userId, roomId, membershipId, viewId);
             ChatQueryCursor cursor = token == null
                     ? initial(userId, roomId, membershipId, viewId, mode, snapshot(ranges), 0)
                     : cursors.decode(token);
@@ -69,6 +78,9 @@ public class ChatMessageQueryService {
                 throw new ChatQueryException(false);
             }
             MapSqlParameterSource params = parameters(roomId, ranges, cursor.snapshot());
+            if (history) {
+                params.addValue("now", LocalDateTime.parse(cursor.historyAsOf()));
+            }
             params.addValue("position", cursor.position()).addValue("limit", size + 1);
             String position = cursor.position() == 0
                     ? ""
@@ -79,7 +91,11 @@ public class ChatMessageQueryService {
             boolean hasNext = loaded.size() > size;
             List<ChatMessageResponse> items = List.copyOf(loaded.subList(0, Math.min(size, loaded.size())));
             String next = hasNext ? cursors.encode(cursor.next(items.getLast().messageId())) : null;
-            return new ChatMessagePage(items, next, hasNext, cursor.snapshot(), gaps(viewId, ranges));
+            return new ChatMessagePage(items, next, hasNext, cursor.snapshot(),
+                    history
+                            ? accountGaps(userId, roomId, ranges,
+                                    LocalDateTime.parse(cursor.historyAsOf()))
+                            : gaps(viewId, ranges));
         }));
     }
 
@@ -92,7 +108,7 @@ public class ChatMessageQueryService {
             throw new ChatQueryException(false);
         }
         return presence.exclusive(() -> transactions.execute(status -> {
-            List<ChatViewInterval> ranges = views.authorize(userId, roomId, membershipId, viewId);
+            List<ChatViewInterval> ranges = views.authorizeAccount(userId, roomId, membershipId, viewId).intervals();
             MapSqlParameterSource params = parameters(roomId, ranges, snapshot(ranges));
             params.addValue("user", userId).addValue("client", clientId.toLowerCase(java.util.Locale.ROOT));
             List<ChatMessageResponse> found = jdbc.query(select() + permitted(ranges) +
@@ -155,6 +171,56 @@ public class ChatMessageQueryService {
         return List.copyOf(result);
     }
 
+    private List<ChatMessagePage.Gap> accountGaps(Long userId, Long roomId, List<ChatViewInterval> ranges,
+            LocalDateTime asOf) {
+        List<ChatMessagePage.Gap> result = new ArrayList<>();
+        LocalDateTime cutoff = now().minusHours(24);
+        LocalDateTime created = jdbc.queryForObject(
+                "SELECT MIN(created_at) FROM chat_view_sessions WHERE user_id=:user AND room_id=:room",
+                new MapSqlParameterSource("user", userId).addValue("room", roomId), LocalDateTime.class);
+        if (created != null && !created.isAfter(cutoff)) {
+            result.add(new ChatMessagePage.Gap("RETENTION", 0, cutoff.atOffset(ZoneOffset.UTC)));
+        }
+        LocalDateTime coveredUntil = null;
+        Long coveredId = null;
+        for (ChatViewInterval range : ranges) {
+            if (range.startedAt().isAfter(asOf) || !range.endsAt().isAfter(cutoff)) {
+                continue;
+            }
+            if (coveredUntil != null && (coveredUntil.isBefore(range.startedAt())
+                    || (coveredUntil.equals(range.startedAt()) && coveredId != null
+                            && range.startAfterMessageId() > coveredId))) {
+                result.add(new ChatMessagePage.Gap("ABSENCE", range.startAfterMessageId(),
+                        range.startedAt().atOffset(ZoneOffset.UTC)));
+            }
+            if (coveredUntil == null || range.endsAt().isAfter(coveredUntil)) {
+                coveredUntil = range.endsAt();
+                coveredId = range.endMessageId();
+            } else if (range.endsAt().equals(coveredUntil) && coveredId != null) {
+                coveredId = range.endMessageId() == null ? null : Math.max(coveredId, range.endMessageId());
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    public void authorizeSession(Long userId, String sid, Long roomId, Long membershipId) {
+        if (!ChatAuthSessionRegistry.isValidSessionId(sid)) {
+            throw new ChatRoomException(
+                    ChatRoomErrorCode.AUTH_REQUIRED);
+        }
+        sessionAccess.authorize(userId, sid);
+        Integer owned = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_room_members
+                WHERE id=:member AND user_id=:user AND room_id=:room AND auth_session_id=:sid
+                    AND deleted_at IS NULL
+                """, new MapSqlParameterSource("member", membershipId).addValue("user", userId)
+                .addValue("room", roomId).addValue("sid", sid), Integer.class);
+        if (owned == null || owned != 1) {
+            throw new ChatRoomException(
+                    ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND);
+        }
+    }
+
     private long snapshot(List<ChatViewInterval> ranges) {
         return ranges.stream().map(ChatViewInterval::endMessageId).filter(java.util.Objects::nonNull)
                 .mapToLong(Long::longValue).max().orElse(0);
@@ -163,7 +229,8 @@ public class ChatMessageQueryService {
     private ChatQueryCursor initial(long userId, long roomId, long membershipId, String viewId,
             String mode, long snapshot, long position) {
         return new ChatQueryCursor(userId, roomId, membershipId, viewId, mode, snapshot, position,
-                clock.instant().plusSeconds(24 * 3600).toEpochMilli());
+                clock.instant().plusSeconds(24 * 3600).toEpochMilli(),
+                "history".equals(mode) ? now().toString() : null);
     }
 
     private void validateModeAndSize(String mode, int size) {
