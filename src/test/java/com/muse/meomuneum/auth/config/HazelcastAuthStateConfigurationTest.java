@@ -14,6 +14,8 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.env.MapPropertySource;
@@ -76,8 +78,9 @@ class HazelcastAuthStateConfigurationTest {
         LocalHazelcastMemberLifecycleTest.assertPortAvailable(port);
     }
 
-    @Test
-    void exposesOnlyExistingClientBeanAndReleasesOwnedMemberAcrossContextRestart() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test", "dev,test", "test,dev"})
+    void exposesOnlyExistingClientBeanAndReleasesOwnedMemberAcrossContextRestart(String profiles) throws Exception {
         int port = LocalHazelcastMemberLifecycleTest.freePort();
         String cluster = LocalHazelcastMemberLifecycleTest.clusterName();
         HazelcastInstance unrelated = LocalHazelcastMemberLifecycleTest.fixtureMember(
@@ -86,7 +89,7 @@ class HazelcastAuthStateConfigurationTest {
         try {
             for (int attempt = 0; attempt < 2; attempt++) {
                 AtomicReference<HazelcastInstance> client = new AtomicReference<>();
-                runner("test", cluster, port, Map.of()).run(context -> {
+                runner(profiles, cluster, port, Map.of()).run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context.getBeanNamesForType(HazelcastInstance.class))
                             .containsExactly("authHazelcastClient");
@@ -107,11 +110,12 @@ class HazelcastAuthStateConfigurationTest {
         }
     }
 
-    @Test
-    void rollsBackOwnedMemberWhenALaterBeanFailsContextRefresh() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void rollsBackOwnedMemberWhenALaterBeanFailsContextRefresh(String profiles) throws Exception {
         int port = LocalHazelcastMemberLifecycleTest.freePort();
         Set<HazelcastInstance> before = Set.copyOf(Hazelcast.getAllHazelcastInstances());
-        runner("test", LocalHazelcastMemberLifecycleTest.clusterName(), port, Map.of())
+        runner(profiles, LocalHazelcastMemberLifecycleTest.clusterName(), port, Map.of())
                 .withBean("lateFailure", Object.class, () -> {
                     throw new IllegalStateException("intentional late startup failure");
                 }, definition -> definition.setDependsOn("authHazelcastClient"))
@@ -121,13 +125,15 @@ class HazelcastAuthStateConfigurationTest {
     }
 
     @Test
-    void excludesHelperForEveryNonTestProfileAndBothProdOrdersEvenWhenFlagIsForcedTrue() throws Exception {
+    void excludesHelperOutsideLocalProfilesAndEveryProdOrderEvenWhenFlagIsForcedTrue() throws Exception {
         int port = LocalHazelcastMemberLifecycleTest.freePort();
         String cluster = LocalHazelcastMemberLifecycleTest.clusterName();
         HazelcastInstance external = LocalHazelcastMemberLifecycleTest.fixtureMember(cluster, port);
         Set<HazelcastInstance> before = Set.copyOf(Hazelcast.getAllHazelcastInstances());
         try {
-            for (String profiles : new String[]{"", "dev", "prod", "test,prod", "prod,test"}) {
+            for (String profiles : new String[]{"", "other", "prod", "dev,prod", "prod,dev", "test,prod", "prod,test",
+                    "dev,test,prod", "dev,prod,test", "prod,dev,test",
+                    "test,dev,prod", "test,prod,dev", "prod,test,dev"}) {
                 runner(profiles, cluster, port, Map.of()).run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).doesNotHaveBean(LocalHazelcastMemberLifecycle.class);
@@ -142,13 +148,14 @@ class HazelcastAuthStateConfigurationTest {
         }
     }
 
-    @Test
-    void explicitOptOutUsesExistingExternalMemberWithoutOwningIt() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void explicitOptOutUsesExistingExternalMemberWithoutOwningIt(String profiles) throws Exception {
         int port = LocalHazelcastMemberLifecycleTest.freePort();
         String cluster = LocalHazelcastMemberLifecycleTest.clusterName();
         HazelcastInstance external = LocalHazelcastMemberLifecycleTest.fixtureMember(cluster, port);
         try {
-            runner("test", cluster, port, Map.of("auth.state.hazelcast.local-auto-start", "false"))
+            runner(profiles, cluster, port, Map.of("auth.state.hazelcast.local-auto-start", "false"))
                     .run(context -> {
                         assertThat(context).hasNotFailed();
                         assertThat(context).doesNotHaveBean(LocalHazelcastMemberLifecycle.class);
@@ -164,7 +171,9 @@ class HazelcastAuthStateConfigurationTest {
     @Test
     void disabledAuthenticationStateNeverCreatesMemberOrClientInAnyProfile() throws Exception {
         int port = LocalHazelcastMemberLifecycleTest.freePort();
-        for (String profiles : new String[]{"", "dev", "prod", "test", "test,prod", "prod,test"}) {
+        for (String profiles : new String[]{"", "other", "dev", "test", "dev,test", "test,dev", "prod",
+                "dev,prod", "prod,dev", "test,prod", "prod,test", "dev,test,prod", "dev,prod,test",
+                "prod,dev,test", "test,dev,prod", "test,prod,dev", "prod,test,dev"}) {
             runner(profiles, LocalHazelcastMemberLifecycleTest.clusterName(), port,
                     Map.of("auth.state.hazelcast.enabled", "false")).run(context -> {
                         assertThat(context).hasNotFailed();

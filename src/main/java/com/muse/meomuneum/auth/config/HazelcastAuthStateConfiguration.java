@@ -22,7 +22,7 @@ import com.hazelcast.core.HazelcastInstance;
 public class HazelcastAuthStateConfiguration {
 
     @Bean(destroyMethod = "close")
-    @Profile("test & !prod")
+    @Profile("(dev | test) & !prod")
     @ConditionalOnProperty(prefix = "auth.state.hazelcast", name = "local-auto-start", havingValue = "true")
     LocalHazelcastMemberLifecycle localHazelcastMemberLifecycle() {
         return new LocalHazelcastMemberLifecycle();

@@ -38,7 +38,7 @@ public final class TestDotenvEnvironmentPostProcessor implements EnvironmentPost
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
-        if (!environment.acceptsProfiles(Profiles.of("test & !prod")) ||
+        if (!environment.acceptsProfiles(Profiles.of("(dev | test) & !prod")) ||
                 environment.getPropertySources().contains(PROPERTY_SOURCE_NAME)) {
             return;
         }
@@ -48,7 +48,7 @@ public final class TestDotenvEnvironmentPostProcessor implements EnvironmentPost
             root = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
             legacy = root.resolve(environment.getProperty("LOCAL_ENV_PROPERTIES", ".env.local.properties")).normalize();
         } catch (RuntimeException exception) {
-            throw new IllegalStateException("Cannot load test dotenv working directory");
+            throw new IllegalStateException("Cannot load local dotenv working directory");
         }
         Map<String, Object> values = new LinkedHashMap<>();
         for (Path file : discover(root, legacy)) {
@@ -72,7 +72,7 @@ public final class TestDotenvEnvironmentPostProcessor implements EnvironmentPost
                 }
             }
         } catch (IOException | DirectoryIteratorException | SecurityException exception) {
-            throw new IllegalStateException("Cannot load test dotenv working directory");
+            throw new IllegalStateException("Cannot load local dotenv working directory");
         }
         files.sort(Comparator.comparing(path -> path.getFileName().toString()));
         return files;
@@ -94,7 +94,7 @@ public final class TestDotenvEnvironmentPostProcessor implements EnvironmentPost
             }
         } catch (IOException | RuntimeException exception) {
             String filename = file.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
-            throw new IllegalStateException("Cannot load test dotenv file " + filename);
+            throw new IllegalStateException("Cannot load local dotenv file " + filename);
         }
     }
 

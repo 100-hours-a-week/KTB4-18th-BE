@@ -16,3 +16,31 @@ speech:
   transcription:
     provider: ${SPEECH_TRANSCRIPTION_PROVIDER:stub}
     stub-transcript: ${SPEECH_TRANSCRIPTION_STUB_TRANSCRIPT:비 올 때 듣기 좋은 노래를 추천해줘}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: "dev & !prod"
+    import: optional:file:${LOCAL_ENV_PROPERTIES:./.env.local.properties}
+
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  servlet:
+    session:
+      cookie:
+        secure: ${AUTH_COOKIE_SECURE:false}
+
+auth:
+  cookie:
+    secure: ${AUTH_COOKIE_SECURE:false}
+  cors:
+    local-all-ports-enabled: ${AUTH_CORS_LOCAL_ALL_PORTS_ENABLED:true}
+  state:
+    backend-replica-count: ${AUTH_BACKEND_REPLICA_COUNT:1}
+    hazelcast:
+      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:true}
+      local-auto-start: ${AUTH_STATE_HAZELCAST_LOCAL_AUTO_START:true}
+      members: ${AUTH_STATE_HAZELCAST_MEMBERS:127.0.0.1:15702}
+      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-local}
+    expected-hazelcast-members: ${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:1}

@@ -33,7 +33,7 @@ public class CorsConfig {
         return source;
     }
     public static List<String> localOriginPatterns(Environment environment) {
-        if (!environment.acceptsProfiles(Profiles.of("test & !prod"))
+        if (!environment.acceptsProfiles(Profiles.of("(dev | test) & !prod"))
                 || !environment.getProperty("auth.cors.local-all-ports-enabled", Boolean.class, false)) {
             return List.of();
         }

@@ -32,16 +32,20 @@ class LocalDevelopmentConfigurationTest {
     @TempDir
     private Path temporaryDirectory;
 
-    @Test
-    void importsTestPropertiesAndBindsLocalAuthenticationDefaults() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test", "dev,test", "test,dev"})
+    void importsPropertiesAndBindsLocalAuthenticationDefaults(String profiles) throws Exception {
         Path properties = localProperties();
-        StandardEnvironment environment = environment("test", properties, Map.of());
+        StandardEnvironment environment = environment(profiles, properties, Map.of());
+        String selected = profiles.endsWith("dev") ? "dev" : "test";
 
         assertThat(environment.getProperty("probe.imported")).isEqualTo("true");
-        assertThat(environment.getProperty("spring.datasource.url")).isEqualTo("jdbc:mysql://localhost:3306/fixture");
-        assertThat(environment.getProperty("spring.datasource.password")).isEqualTo("fixture-password");
+        assertThat(environment.getProperty("spring.datasource.url"))
+                .isEqualTo("jdbc:mysql://localhost:3306/" + selected + "_fixture");
+        assertThat(environment.getProperty("spring.datasource.password")).isEqualTo(selected + "-fixture-password");
         assertThat(environment.getProperty("auth.jwt.secret"))
-                .isEqualTo("test-only-imported-jwt-secret-at-least-32-bytes");
+                .isEqualTo((profiles.contains("test") ? "test" : "dev")
+                        + "-only-imported-jwt-secret-at-least-32-bytes");
         assertThat(environment.getProperty("location.token.secret"))
                 .isEqualTo("test-only-imported-location-secret-at-least-32-bytes");
         assertThat(environment.getProperty("auth.state.hazelcast.enabled", Boolean.class)).isTrue();
@@ -61,32 +65,47 @@ class LocalDevelopmentConfigurationTest {
         assertThat(state.expectedHazelcastMembers()).isEqualTo(1);
     }
 
-    @Test
-    void operatingSystemEnvironmentOverridesTheImportedPropertiesAndLocalDefaults() throws Exception {
-        StandardEnvironment environment = environment("test", localProperties(), Map.of(
-                "TEST_DB_PASSWORD", "override-password",
-                "TEST_AUTH_JWT_SECRET", "test-only-overriding-jwt-secret-at-least-32-bytes",
-                "AUTH_COOKIE_SECURE", "true",
-                "AUTH_STATE_HAZELCAST_LOCAL_AUTO_START", "false",
-                "AUTH_STATE_HAZELCAST_MEMBERS", "127.0.0.1:5802",
-                "AUTH_CORS_LOCAL_ALL_PORTS_ENABLED", "false",
-                "SERVER_PORT", "18082"));
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void operatingSystemEnvironmentOverridesTheImportedPropertiesAndLocalDefaults(String profile) throws Exception {
+        StandardEnvironment environment = environment(profile, localProperties(), Map.ofEntries(
+                Map.entry(profile.equals("dev") ? "DEV_DB_PASSWORD" : "TEST_DB_PASSWORD", "override-password"),
+                Map.entry(profile.equals("dev") ? "AUTH_JWT_SECRET" : "TEST_AUTH_JWT_SECRET",
+                        "local-only-overriding-jwt-secret-at-least-32-bytes"),
+                Map.entry("AUTH_COOKIE_SECURE", "true"),
+                Map.entry("AUTH_STATE_HAZELCAST_LOCAL_AUTO_START", "false"),
+                Map.entry("AUTH_STATE_HAZELCAST_ENABLED", "false"),
+                Map.entry("AUTH_STATE_HAZELCAST_MEMBERS", "127.0.0.1:5802"),
+                Map.entry("AUTH_STATE_HAZELCAST_CLUSTER_NAME", "explicit-local-cluster"),
+                Map.entry("AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT", "2"),
+                Map.entry("AUTH_BACKEND_REPLICA_COUNT", "2"),
+                Map.entry("AUTH_CORS_LOCAL_ALL_PORTS_ENABLED", "false"),
+                Map.entry("SERVER_ADDRESS", "localhost"),
+                Map.entry("SERVER_PORT", "18082")));
 
         assertThat(environment.getProperty("spring.datasource.password")).isEqualTo("override-password");
         assertThat(environment.getProperty("auth.jwt.secret"))
-                .isEqualTo("test-only-overriding-jwt-secret-at-least-32-bytes");
+                .isEqualTo("local-only-overriding-jwt-secret-at-least-32-bytes");
         assertThat(environment.getProperty("auth.cookie.secure", Boolean.class)).isTrue();
         assertThat(environment.getProperty("server.servlet.session.cookie.secure", Boolean.class)).isTrue();
         assertThat(environment.getProperty("auth.state.hazelcast.members")).isEqualTo("127.0.0.1:5802");
         assertThat(environment.getProperty("auth.state.hazelcast.local-auto-start", Boolean.class)).isFalse();
         assertThat(environment.getProperty("auth.cors.local-all-ports-enabled", Boolean.class)).isFalse();
         assertThat(environment.getProperty("server.port", Integer.class)).isEqualTo(18082);
+        assertThat(environment.getProperty("server.address")).isEqualTo("localhost");
+        assertThat(environment.getProperty("auth.state.hazelcast.enabled", Boolean.class)).isFalse();
+        assertThat(environment.getProperty("auth.state.hazelcast.cluster-name")).isEqualTo("explicit-local-cluster");
+        assertThat(environment.getProperty("auth.state.backend-replica-count")).isEqualTo("2");
+        assertThat(state(environment).expectedHazelcastMembers()).isEqualTo(2);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"prod", "test,prod", "prod,test", "dev", ""})
-    void excludesLocalFileAndTestDefaultsOutsideAnIsolatedTestProfile(String profiles) throws Exception {
-        StandardEnvironment environment = environment(profiles, localProperties(), Map.of());
+    @ValueSource(strings = {"", "other", "prod", "dev,prod", "prod,dev", "test,prod", "prod,test",
+            "dev,test,prod", "dev,prod,test", "prod,dev,test", "test,dev,prod", "test,prod,dev", "prod,test,dev"})
+    void excludesLocalImportAndDefaultsOutsideLocalProfilesWithoutProduction(String profiles) throws Exception {
+        Path malformed = temporaryDirectory.resolve("malformed.properties");
+        Files.writeString(malformed, "probe.imported=\\uZZZZ\n");
+        StandardEnvironment environment = environment(profiles, malformed, Map.of());
 
         assertThat(environment.getProperty("probe.imported")).isNull();
         assertThat(environment.getProperty("spring.config.import")).isNull();
@@ -99,13 +118,17 @@ class LocalDevelopmentConfigurationTest {
         assertThat(environment.getProperty("server.address")).isNull();
         if (profiles.contains("prod")) {
             assertThatThrownBy(() -> environment.getProperty("spring.datasource.password"))
-                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("PROD_DB_PASSWORD");
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(profiles.lastIndexOf("dev") > profiles.lastIndexOf("prod")
+                            ? "DEV_DB_PASSWORD"
+                            : "PROD_DB_PASSWORD");
         }
     }
 
-    @Test
-    void acceptsExternalVariablesWithoutALocalFileAndRetainsRequiredKeyValidation() {
-        StandardEnvironment environment = environment("test", temporaryDirectory.resolve("missing.properties"),
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void acceptsExternalVariablesWithoutALocalFileAndRetainsRequiredKeyValidation(String profile) {
+        StandardEnvironment environment = environment(profile, temporaryDirectory.resolve("missing.properties"),
                 Map.of("AUTH_STATE_HMAC_KEY", HMAC_KEY, "AUTH_STATE_REPLAY_ENCRYPTION_KEY", REPLAY_KEY));
         HazelcastAuthStateConfiguration configuration = new HazelcastAuthStateConfiguration();
 
@@ -113,7 +136,7 @@ class LocalDevelopmentConfigurationTest {
                 "1", state(environment)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("AUTH_STATE_HAZELCAST_MEMBERS");
         for (String invalidHmac : new String[]{"", "x".repeat(31)}) {
-            StandardEnvironment invalid = environment("test", temporaryDirectory.resolve("missing.properties"),
+            StandardEnvironment invalid = environment(profile, temporaryDirectory.resolve("missing.properties"),
                     Map.of("AUTH_STATE_HMAC_KEY", invalidHmac,
                             "AUTH_STATE_REPLAY_ENCRYPTION_KEY", REPLAY_KEY));
             assertThatThrownBy(() -> configuration.authHazelcastClient("unused", "", Duration.ofSeconds(1),
@@ -122,7 +145,7 @@ class LocalDevelopmentConfigurationTest {
         }
         for (String invalidReplay : new String[]{"", "invalid-base64!",
                 Base64.getEncoder().encodeToString(new byte[31])}) {
-            StandardEnvironment invalid = environment("test", temporaryDirectory.resolve("missing.properties"),
+            StandardEnvironment invalid = environment(profile, temporaryDirectory.resolve("missing.properties"),
                     Map.of("AUTH_STATE_HMAC_KEY", HMAC_KEY,
                             "AUTH_STATE_REPLAY_ENCRYPTION_KEY", invalidReplay));
             assertThatThrownBy(() -> configuration.authHazelcastClient("unused", "", Duration.ofSeconds(1),
@@ -154,12 +177,43 @@ class LocalDevelopmentConfigurationTest {
         }
     }
 
+    @Test
+    void devKeepsRequiredSecretsWithoutIntroducingFixtureFallbacks() {
+        StandardEnvironment environment = environment("dev", temporaryDirectory.resolve("missing.properties"),
+                Map.of());
+        for (String property : new String[]{"spring.datasource.password", "auth.jwt.secret", "location.token.secret"}) {
+            assertThatThrownBy(() -> environment.getProperty(property)).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(environment.getProperty("auth.state.hmac-key")).isEmpty();
+        assertThat(environment.getProperty("auth.state.replay-encryption-key")).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "dev,prod", "prod,dev", "dev,test,prod", "dev,prod,test",
+            "prod,dev,test", "test,dev,prod", "test,prod,dev", "prod,test,dev"})
+    void retainsTheOriginalDevDocumentSettingsAndMixedProfilePriority(String profiles) {
+        StandardEnvironment environment = environment(profiles, temporaryDirectory.resolve("missing.properties"),
+                Map.of("DEV_DB_PASSWORD", "dev-password", "PROD_DB_PASSWORD", "prod-password"));
+        boolean devDatabaseWins = profiles.lastIndexOf("dev") > profiles.lastIndexOf("prod");
+        assertThat(environment.getProperty("spring.datasource.password"))
+                .isEqualTo(devDatabaseWins ? "dev-password" : "prod-password");
+        assertThat(environment.getProperty("recommendation.allow-guests", Boolean.class)).isTrue();
+        assertThat(environment.getProperty("recommendation.provider")).isEqualTo("ai");
+        assertThat(environment.getProperty("auth.cors.allowed-origins"))
+                .isEqualTo("http://localhost:5174,http://127.0.0.1:5174");
+        assertThat(environment.getProperty("speech.transcription.provider"))
+                .isEqualTo(devDatabaseWins ? "stub" : "ai");
+    }
+
     private Path localProperties() throws Exception {
         Path path = temporaryDirectory.resolve("local.properties");
         Files.writeString(path, """
                 probe.imported=true
-                TEST_DB_URL=jdbc:mysql://localhost:3306/fixture
-                TEST_DB_PASSWORD=fixture-password
+                DEV_DB_URL=jdbc:mysql://localhost:3306/dev_fixture
+                DEV_DB_PASSWORD=dev-fixture-password
+                AUTH_JWT_SECRET=dev-only-imported-jwt-secret-at-least-32-bytes
+                TEST_DB_URL=jdbc:mysql://localhost:3306/test_fixture
+                TEST_DB_PASSWORD=test-fixture-password
                 TEST_AUTH_JWT_SECRET=test-only-imported-jwt-secret-at-least-32-bytes
                 LOCATION_TOKEN_SECRET=test-only-imported-location-secret-at-least-32-bytes
                 AUTH_STATE_HMAC_KEY=%s

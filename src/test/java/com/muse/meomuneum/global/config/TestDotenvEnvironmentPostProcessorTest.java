@@ -12,7 +12,6 @@ import java.util.Properties;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
@@ -57,20 +56,29 @@ class TestDotenvEnvironmentPostProcessorTest {
         System.setProperty("user.dir", originalDirectory);
     }
 
-    @Test
-    void discoversProcessorDuringRealBootAndBindsExactQuotedSecrets() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void discoversProcessorDuringRealBootAndBindsExactQuotedSecrets(String profile) throws Exception {
         write(".env", """
+                DEV_DB_PASSWORD='  dev password#=with spaces  '
                 TEST_DB_PASSWORD='  password#=with spaces  '
-                TEST_AUTH_JWT_SECRET="fixture-only-jwt-secret#=with spaces"
+                %s="%s"
                 AUTH_STATE_HMAC_KEY='%s'
                 SERVER_PORT=18091
-                """.formatted(HMAC_KEY));
+                """.formatted(profile.equals("dev") ? "AUTH_JWT_SECRET" : "TEST_AUTH_JWT_SECRET",
+                profile.equals("dev")
+                        ? "fixture-only-dev-jwt-secret#=with spaces"
+                        : "fixture-only-jwt-secret#=with spaces",
+                HMAC_KEY));
 
-        try (var context = start("test")) {
+        try (var context = start(profile)) {
             var environment = context.getEnvironment();
-            assertThat(environment.getProperty("spring.datasource.password")).isEqualTo("  password#=with spaces  ");
+            assertThat(environment.getProperty("spring.datasource.password"))
+                    .isEqualTo(profile.equals("dev") ? "  dev password#=with spaces  " : "  password#=with spaces  ");
             assertThat(Binder.get(environment).bind("auth.jwt.secret", String.class).get())
-                    .isEqualTo("fixture-only-jwt-secret#=with spaces");
+                    .isEqualTo(profile.equals("dev")
+                            ? "fixture-only-dev-jwt-secret#=with spaces"
+                            : "fixture-only-jwt-secret#=with spaces");
             assertThat(Binder.get(environment).bind("auth.state", AuthStateProperties.class).get().hmacKey())
                     .isEqualTo(HMAC_KEY);
             assertThat(environment.getProperty("server.port", Integer.class)).isEqualTo(18091);
@@ -80,8 +88,9 @@ class TestDotenvEnvironmentPostProcessorTest {
                 .isEqualTo(ConfigDataEnvironmentPostProcessor.ORDER + 1);
     }
 
-    @Test
-    void loadsAllSuffixesInStringOrderAndKeepsLastDeclarations() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void loadsAllSuffixesInStringOrderAndKeepsLastDeclarations(String profile) throws Exception {
         write(".env.z", "COLLISION=z\n");
         write(".env.2", "NUMERIC_SUFFIX_COLLISION=two\n");
         write(".env.foo", "FOO=yes\nDUPLICATE=first\nDUPLICATE=last\n");
@@ -90,7 +99,7 @@ class TestDotenvEnvironmentPostProcessorTest {
         write(".env.a", "A_SUFFIX=yes\nCOLLISION=a\n");
         write(".env", "COLLISION=base\nBASE=yes\n");
 
-        try (var context = start("test")) {
+        try (var context = start(profile)) {
             var environment = context.getEnvironment();
             assertThat(environment.getProperty("BASE")).isEqualTo("yes");
             assertThat(environment.getProperty("FOO")).isEqualTo("yes");
@@ -99,12 +108,13 @@ class TestDotenvEnvironmentPostProcessorTest {
             assertThat(environment.getProperty("COLLISION")).isEqualTo("z");
             assertThat(environment.getProperty("NUMERIC_SUFFIX_COLLISION")).isEqualTo("two");
             assertThat(environment.getProperty("DUPLICATE")).isEqualTo("last");
-            assertThat(environment.getActiveProfiles()).containsExactly("test");
+            assertThat(environment.getActiveProfiles()).containsExactly(profile);
         }
     }
 
-    @Test
-    void supportsSingleLineValuesCommentsAndLiteralCommandText() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void supportsSingleLineValuesCommentsAndLiteralCommandText(String profile) throws Exception {
         Path marker = temporaryDirectory.resolve("must-not-exist");
         write(".env", """
                 # comment
@@ -117,7 +127,7 @@ class TestDotenvEnvironmentPostProcessorTest {
                 COMMAND=$(touch %s)
                 """.formatted(marker));
 
-        var environment = process("test", Map.of(), Map.of());
+        var environment = process(profile, Map.of(), Map.of());
         assertThat(environment.getProperty("SINGLE")).isEqualTo("  p#=word  ");
         assertThat(environment.getProperty("DOUBLE")).isEqualTo("  p#=word  ");
         assertThat(environment.getProperty("PLAIN")).isEqualTo("plain value");
@@ -127,35 +137,38 @@ class TestDotenvEnvironmentPostProcessorTest {
         assertThat(marker).doesNotExist();
     }
 
-    @Test
-    void keepsCommandLineSystemAndOperatingSystemValuesAheadOfDotenv() throws Exception {
-        write(".env", "TEST_DB_PASSWORD=dotenv\nSERVER_PORT=18092\n");
-        Path legacy = write("legacy.properties", "TEST_DB_PASSWORD=legacy\n");
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void keepsCommandLineSystemAndOperatingSystemValuesAheadOfDotenv(String profile) throws Exception {
+        String databaseKey = profile.equals("dev") ? "DEV_DB_PASSWORD" : "TEST_DB_PASSWORD";
+        write(".env", databaseKey + "=dotenv\nSERVER_PORT=18092\n");
+        Path legacy = write("legacy.properties", databaseKey + "=legacy\n");
         for (Map<String, Object> operatingSystem : java.util.List.<Map<String, Object>>of(
-                Map.of(), Map.of("TEST_DB_PASSWORD", "os"))) {
-            try (var context = start("test", legacy, operatingSystem, Map.of())) {
+                Map.of(), Map.of(databaseKey, "os"))) {
+            try (var context = start(profile, legacy, operatingSystem, Map.of())) {
                 assertThat(context.getEnvironment().getProperty("spring.datasource.password"))
                         .isEqualTo(operatingSystem.isEmpty() ? "dotenv" : "os");
             }
         }
-        try (var context = start("test", legacy, Map.of("TEST_DB_PASSWORD", "os"),
-                Map.of("TEST_DB_PASSWORD", "jvm"))) {
+        try (var context = start(profile, legacy, Map.of(databaseKey, "os"),
+                Map.of(databaseKey, "jvm"))) {
             assertThat(context.getEnvironment().getProperty("spring.datasource.password")).isEqualTo("jvm");
         }
-        try (var context = start("test", legacy, Map.of("TEST_DB_PASSWORD", "os"),
-                Map.of("TEST_DB_PASSWORD", "jvm"), "--TEST_DB_PASSWORD=cli", "--server.port=18093")) {
+        try (var context = start(profile, legacy, Map.of(databaseKey, "os"),
+                Map.of(databaseKey, "jvm"), "--" + databaseKey + "=cli", "--server.port=18093")) {
             assertThat(context.getEnvironment().getProperty("spring.datasource.password")).isEqualTo("cli");
             assertThat(context.getEnvironment().getProperty("server.port", Integer.class)).isEqualTo(18093);
         }
     }
 
-    @Test
-    void usesOnlyDeclaredFileEntriesAndDoesNotMutateGlobalProperties() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void usesOnlyDeclaredFileEntriesAndDoesNotMutateGlobalProperties(String profile) throws Exception {
         write(".env", "UNIQUE_DOTENV_PROBE=fixture\n");
         Properties before = new Properties();
         before.putAll(System.getProperties());
 
-        var environment = process("test", Map.of(), Map.of());
+        var environment = process(profile, Map.of(), Map.of());
         var source = environment.getPropertySources().get("testDotenv");
         assertThat(source).isInstanceOf(SystemEnvironmentPropertySource.class);
         assertThat(((SystemEnvironmentPropertySource) source).getSource())
@@ -166,40 +179,45 @@ class TestDotenvEnvironmentPostProcessorTest {
                 .hasSize(1);
     }
 
-    @Test
-    void preservesSelectedJavaPropertiesAndSuppliesMissingFallbackValues() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void preservesSelectedJavaPropertiesAndSuppliesMissingFallbackValues(String profile) throws Exception {
+        String databaseKey = profile.equals("dev") ? "DEV_DB_PASSWORD" : "TEST_DB_PASSWORD";
         Path legacy = write(".env.custom.properties", """
-                TEST_DB_PASSWORD=legacy\\u0020password
+                %s=legacy\\u0020password
                 LEGACY_ONLY=legacy\\u0020value
-                """);
+                """.formatted(databaseKey));
         write(".env.local.properties", "unsupported dotenv legacy text\n");
-        try (var context = start("test", legacy, Map.of(), Map.of())) {
+        try (var context = start(profile, legacy, Map.of(), Map.of())) {
             assertThat(context.getEnvironment().getProperty("spring.datasource.password")).isEqualTo("legacy password");
             assertThat(context.getEnvironment().getProperty("LEGACY_ONLY")).isEqualTo("legacy value");
         }
-        write(".env", "TEST_DB_PASSWORD=dotenv\n");
-        try (var context = start("test", legacy, Map.of(), Map.of())) {
+        write(".env", databaseKey + "=dotenv\n");
+        try (var context = start(profile, legacy, Map.of(), Map.of())) {
             assertThat(context.getEnvironment().getProperty("spring.datasource.password")).isEqualTo("dotenv");
             assertThat(context.getEnvironment().getProperty("LEGACY_ONLY")).isEqualTo("legacy value");
         }
     }
 
-    @Test
-    void acceptsEmptyFilesMissingFilesAndExternalOnlyConfiguration() throws Exception {
-        try (var context = start("test")) {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void acceptsEmptyFilesMissingFilesAndExternalOnlyConfiguration(String profile) throws Exception {
+        try (var context = start(profile)) {
             assertThat(context.getEnvironment().getPropertySources().contains("testDotenv")).isFalse();
         }
         write(".env", "");
         write(".env.foo", "");
-        try (var context = start("test", missingLegacy(), Map.of("TEST_DB_PASSWORD", "external"), Map.of())) {
+        try (var context = start(profile, missingLegacy(),
+                Map.of(profile.equals("dev") ? "DEV_DB_PASSWORD" : "TEST_DB_PASSWORD", "external"), Map.of())) {
             assertThat(context.getEnvironment().getProperty("spring.datasource.password")).isEqualTo("external");
             assertThat(context.getEnvironment().getPropertySources().contains("testDotenv")).isFalse();
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"prod", "test,prod", "prod,test", "dev", ""})
-    void neverReadsMalformedDotenvOutsideExclusiveTestProfile(String profiles) throws Exception {
+    @ValueSource(strings = {"", "other", "prod", "dev,prod", "prod,dev", "test,prod", "prod,test",
+            "dev,test,prod", "dev,prod,test", "prod,dev,test", "test,dev,prod", "test,prod,dev", "prod,test,dev"})
+    void neverReadsMalformedDotenvOutsideLocalProfilesWithoutProduction(String profiles) throws Exception {
         write(".env", "invalid " + SENTINEL);
         try (var context = start(profiles)) {
             assertThat(context.getEnvironment().getPropertySources().contains("testDotenv")).isFalse();
@@ -215,16 +233,19 @@ class TestDotenvEnvironmentPostProcessorTest {
     void rejectsMalformedInputWithoutDisclosingValuesOrVendorCauses(String prefix, CapturedOutput output)
             throws Exception {
         write(".env", prefix + SENTINEL);
-        Throwable error = catchThrowable(() -> start("test"));
+        for (String profile : new String[]{"dev", "test"}) {
+            Throwable error = catchThrowable(() -> start(profile));
 
-        assertThat(error).isInstanceOf(IllegalStateException.class)
-                .hasMessage("Cannot load test dotenv file .env").hasNoCause().hasNoSuppressedExceptions();
-        assertThat(getStackTrace(error)).doesNotContain(SENTINEL, temporaryDirectory.toString());
-        assertThat(output.getAll()).doesNotContain(SENTINEL, temporaryDirectory.toString());
+            assertThat(error).isInstanceOf(IllegalStateException.class)
+                    .hasMessage("Cannot load local dotenv file .env").hasNoCause().hasNoSuppressedExceptions();
+            assertThat(getStackTrace(error)).doesNotContain(SENTINEL, temporaryDirectory.toString());
+            assertThat(output.getAll()).doesNotContain(SENTINEL, temporaryDirectory.toString());
+        }
     }
 
-    @Test
-    void excludesTemplatesDirectoriesAndEverySymlink(@TempDir Path externalDirectory) throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void excludesTemplatesDirectoriesAndEverySymlink(String profile, @TempDir Path externalDirectory) throws Exception {
         for (String name : new String[]{".env.example", ".env.foo.example", ".env.foo.sample", ".env.foo.template"}) {
             write(name, "invalid " + SENTINEL);
         }
@@ -238,29 +259,31 @@ class TestDotenvEnvironmentPostProcessorTest {
         Files.writeString(temporaryDirectory.resolve(".env.folder/.env"), "invalid nested " + SENTINEL);
         write(".env.real", "ONLY_REAL=yes\n");
 
-        try (var context = start("test")) {
+        try (var context = start(profile)) {
             assertThat(context.getEnvironment().getProperty("ONLY_REAL")).isEqualTo("yes");
             assertThat(context.getEnvironment().getProperty("UNIQUE_DOTENV_PROBE")).isNull();
         }
         assertThat(Files.readString(external)).isEqualTo("invalid " + SENTINEL);
     }
 
-    @Test
-    void reportsDiscoveryFailureWithoutPathsOrAttachedExceptions() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void reportsDiscoveryFailureWithoutPathsOrAttachedExceptions(String profile) throws Exception {
         Path file = write("regular-file", SENTINEL);
         System.setProperty("user.dir", file.toString());
-        Throwable error = catchThrowable(() -> process("test", Map.of(), Map.of()));
+        Throwable error = catchThrowable(() -> process(profile, Map.of(), Map.of()));
         assertThat(error).isInstanceOf(IllegalStateException.class)
-                .hasMessage("Cannot load test dotenv working directory").hasNoCause().hasNoSuppressedExceptions();
+                .hasMessage("Cannot load local dotenv working directory").hasNoCause().hasNoSuppressedExceptions();
         assertThat(getStackTrace(error)).doesNotContain(SENTINEL, temporaryDirectory.toString());
     }
 
-    @Test
-    void retainsPrecedenceWhenSystemEnvironmentSourceIsAbsent() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void retainsPrecedenceWhenSystemEnvironmentSourceIsAbsent(String profile) throws Exception {
         write(".env", "PROBE=dotenv\nSERVER_PORT=18094\n");
         var environment = environment(Map.of(), Map.of("PROBE", "jvm"), missingLegacy());
         environment.getPropertySources().remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
-        environment.setActiveProfiles("test");
+        environment.setActiveProfiles(profile);
         environment.getPropertySources()
                 .addLast(new MapPropertySource("Config resource fixture", Map.of("PROBE", "yaml")));
         new TestDotenvEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
@@ -270,11 +293,21 @@ class TestDotenvEnvironmentPostProcessorTest {
         var withoutSystemSources = environment(Map.of(), Map.of(), missingLegacy());
         withoutSystemSources.getPropertySources().remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
         withoutSystemSources.getPropertySources().remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
-        withoutSystemSources.setActiveProfiles("test");
+        withoutSystemSources.setActiveProfiles(profile);
         withoutSystemSources.getPropertySources().addLast(new MapPropertySource("Config resource fixture",
                 Map.of("PROBE", "yaml")));
         new TestDotenvEnvironmentPostProcessor().postProcessEnvironment(withoutSystemSources, new SpringApplication());
         assertThat(withoutSystemSources.getProperty("PROBE")).isEqualTo("dotenv");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"dev,test", "test,dev"})
+    void loadsDotenvForBothLocalProfileOrdersWithoutChangingSelectedProfiles(String profiles) throws Exception {
+        write(".env", "LOCAL_COMBINATION=loaded\nSPRING_PROFILES_ACTIVE=prod\n");
+        try (var context = start(profiles)) {
+            assertThat(context.getEnvironment().getProperty("LOCAL_COMBINATION")).isEqualTo("loaded");
+            assertThat(context.getEnvironment().getActiveProfiles()).containsExactly(profiles.split(","));
+        }
     }
 
     private Path write(String filename, String content) throws Exception {

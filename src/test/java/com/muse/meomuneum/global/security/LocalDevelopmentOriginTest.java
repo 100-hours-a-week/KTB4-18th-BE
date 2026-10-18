@@ -9,7 +9,6 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -33,22 +32,26 @@ class LocalDevelopmentOriginTest {
     @ParameterizedTest
     @MethodSource("localOrigins")
     void permitsLocalPortsInCorsAndStateChangingRequests(String origin) throws Exception {
-        MockEnvironment environment = environment("test", true);
-        CorsConfiguration cors = cors(environment);
+        for (String profile : new String[]{"dev", "test"}) {
+            MockEnvironment environment = environment(profile, true);
+            CorsConfiguration cors = cors(environment);
 
-        assertThat(cors.checkOrigin(origin)).isEqualTo(origin);
-        assertThat(cors.getAllowCredentials()).isTrue();
-        assertThat(apply(environment, origin, null).getStatus()).isEqualTo(200);
-        assertThat(apply(environment, null, origin + "/account?view=1").getStatus()).isEqualTo(200);
+            assertThat(cors.checkOrigin(origin)).isEqualTo(origin);
+            assertThat(cors.getAllowCredentials()).isTrue();
+            assertThat(apply(environment, origin, null).getStatus()).isEqualTo(200);
+            assertThat(apply(environment, null, origin + "/account?view=1").getStatus()).isEqualTo(200);
+        }
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"http://localhost.evil.example:8080", "http://evil-localhost:8080",
             "http://127.0.0.1.evil.example:8080", "https://attacker.example"})
     void rejectsUnconfiguredNonlocalHostsInCorsAndOriginValidation(String origin) throws Exception {
-        MockEnvironment environment = environment("test", true);
-        assertThat(cors(environment).checkOrigin(origin)).isNull();
-        assertThat(apply(environment, origin, "http://localhost:3000/login").getStatus()).isEqualTo(403);
+        for (String profile : new String[]{"dev", "test"}) {
+            MockEnvironment environment = environment(profile, true);
+            assertThat(cors(environment).checkOrigin(origin)).isNull();
+            assertThat(apply(environment, origin, "http://localhost:3000/login").getStatus()).isEqualTo(403);
+        }
     }
 
     @ParameterizedTest
@@ -57,14 +60,18 @@ class LocalDevelopmentOriginTest {
             "http://localhost:3000, http://127.0.0.1:3000", "http://localhost:3000 http://localhost:4000",
             "http://localhost:65536", "http://localhost:", "https://127.0.0.1:"})
     void rejectsMalformedOriginWithoutRefererFallback(String origin) throws Exception {
-        assertThat(apply(environment("test", true), origin, "http://localhost:3000/login").getStatus())
-                .isEqualTo(403);
+        for (String profile : new String[]{"dev", "test"}) {
+            assertThat(apply(environment(profile, true), origin, "http://localhost:3000/login").getStatus())
+                    .isEqualTo(403);
+        }
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"http://localhost:/account", "https://127.0.0.1:/account?view=1"})
     void rejectsRefererWithAnExplicitEmptyPort(String referer) throws Exception {
-        assertThat(apply(environment("test", true), null, referer).getStatus()).isEqualTo(403);
+        for (String profile : new String[]{"dev", "test"}) {
+            assertThat(apply(environment(profile, true), null, referer).getStatus()).isEqualTo(403);
+        }
     }
 
     @ParameterizedTest
@@ -79,9 +86,10 @@ class LocalDevelopmentOriginTest {
         assertThat(chain.getRequest()).isNotNull();
     }
 
-    @Test
-    void rejectsMissingAndMultiplePhysicalOriginHeaders() throws Exception {
-        MockEnvironment environment = environment("test", true);
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void rejectsMissingAndMultiplePhysicalOriginHeaders(String profile) throws Exception {
+        MockEnvironment environment = environment(profile, true);
         assertThat(apply(environment, null, null).getStatus()).isEqualTo(403);
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/auth/login");
         request.addHeader("Origin", "http://localhost:3000");
@@ -94,8 +102,9 @@ class LocalDevelopmentOriginTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"prod", "test,prod", "prod,test", "dev", ""})
-    void ignoresExpansionFlagOutsideTestWithoutProduction(String profiles) throws Exception {
+    @ValueSource(strings = {"", "other", "prod", "dev,prod", "prod,dev", "test,prod", "prod,test",
+            "dev,test,prod", "dev,prod,test", "prod,dev,test", "test,dev,prod", "test,prod,dev", "prod,test,dev"})
+    void ignoresExpansionFlagOutsideLocalProfilesWithoutProduction(String profiles) throws Exception {
         MockEnvironment environment = environment(profiles, true);
         assertThat(CorsConfig.localOriginPatterns(environment)).isEmpty();
         assertThat(cors(environment).checkOrigin("http://localhost:3000")).isNull();
@@ -103,9 +112,10 @@ class LocalDevelopmentOriginTest {
         assertThat(apply(environment, "https://app.example", null).getStatus()).isEqualTo(200);
     }
 
-    @Test
-    void optOutAndLegacyConstructorKeepExactOriginsAndRejectWildcardConfiguration() throws Exception {
-        MockEnvironment environment = environment("test", false);
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test"})
+    void optOutAndLegacyConstructorKeepExactOriginsAndRejectWildcardConfiguration(String profile) throws Exception {
+        MockEnvironment environment = environment(profile, false);
         assertThat(CorsConfig.localOriginPatterns(environment)).isEmpty();
         assertThat(cors(environment).checkOrigin("http://localhost:3000")).isNull();
         assertThat(apply(environment, "http://localhost:3000", null).getStatus()).isEqualTo(403);
@@ -122,9 +132,15 @@ class LocalDevelopmentOriginTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"test", "prod", "test,prod", "prod,test", "dev", ""})
+    @ValueSource(strings = {"dev", "test", "dev,test", "test,dev", "", "other", "prod", "dev,prod", "prod,dev",
+            "test,prod", "prod,test", "dev,test,prod", "dev,prod,test", "prod,dev,test",
+            "test,dev,prod", "test,prod,dev", "prod,test,dev"})
     void websocketRegistrationUsesTheSameProfilePolicy(String profiles) {
         MockEnvironment environment = environment(profiles, true);
+        boolean local = !profiles.contains("prod") && (profiles.contains("dev") || profiles.contains("test"));
+        assertThat(CorsConfig.localOriginPatterns(environment)).hasSize(local ? 4 : 0);
+        assertThat(cors(environment).checkOrigin("http://localhost:3000"))
+                .isEqualTo(local ? "http://localhost:3000" : null);
         StompEndpointRegistry registry = mock(StompEndpointRegistry.class);
         StompWebSocketEndpointRegistration endpoint = mock(StompWebSocketEndpointRegistration.class);
         when(registry.addEndpoint("/ws")).thenReturn(endpoint);
