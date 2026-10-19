@@ -77,6 +77,19 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 	exclude '**/ChatRecoveryProcessIntegrationTest.class'
+	exclude '**/ChatRedisFoundationProcessTest.class'
+}
+
+// Explicit integration gate: Docker is required; a missing daemon must fail this task.
+tasks.register('chatRedisFoundationTest', Test) {
+	dependsOn 'classes'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/ChatRedisFoundationProcessTest.class'
+	systemProperty 'chat.foundation.classpath', sourceSets.test.runtimeClasspath.asPath
+	systemProperty 'user.timezone', 'UTC'
+	outputs.upToDateWhen { false }
 }
 
 // Separate JVM lifecycle tests deliberately kill only the server process they create.
