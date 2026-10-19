@@ -58,6 +58,41 @@ public class ChatViewStorageService {
         }
     }
 
+    /** Issued inside the REST join transaction; a reservation is not a reading interval. */
+    @Transactional
+    public String create(Long userId, Long roomId, Long membershipId) {
+        String viewId = UUID.randomUUID().toString();
+        LocalDateTime now = now();
+        jdbc.update("""
+                INSERT INTO chat_view_sessions (id, user_id, room_id, membership_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, viewId, userId, roomId, membershipId, now, now);
+        return viewId;
+    }
+
+    /** Ownership is checked even on repeated leave; ended views can only be closed again. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean leave(Long userId, Long roomId, Long membershipId, String viewId) {
+        validateViewId(viewId);
+        users.findActiveByIdForUpdate(userId)
+                .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.USER_NOT_FOUND));
+        Integer owned = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_view_sessions
+                WHERE id = ? AND user_id = ? AND room_id = ? AND membership_id = ?
+                """, Integer.class, viewId, userId, roomId, membershipId);
+        if (owned == null || owned != 1) {
+            throw denied();
+        }
+        closeRange(viewId, roomId, "LEFT");
+        jdbc.update("""
+                UPDATE chat_view_sessions SET ended_at = ?, updated_at = ?
+                WHERE id = ? AND ended_at IS NULL
+                """, now(), now(), viewId);
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id = ? AND ended_at IS NULL
+                """, Integer.class, membershipId) == 0;
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String subscribed(Long userId, Long roomId, Long membershipId, String viewId) {
         validateContext(userId, roomId, membershipId, viewId);
@@ -133,9 +168,14 @@ public class ChatViewStorageService {
     public void checkpoint(String viewId, Long roomId) {
         LocalDateTime now = now();
         jdbc.update("""
-                UPDATE chat_view_intervals SET verified_at = ?, verified_through_message_id = ?
-                WHERE view_session_id = ? AND ends_at IS NULL AND process_id = ?
-                """, now, watermark(roomId), viewId, processId);
+                UPDATE chat_view_intervals i
+                JOIN chat_view_sessions v ON v.id = i.view_session_id
+                JOIN chat_room_members m ON m.id = v.membership_id
+                    AND m.user_id = v.user_id AND m.room_id = v.room_id
+                SET i.verified_at = ?, i.verified_through_message_id = ?
+                WHERE i.view_session_id = ? AND i.ends_at IS NULL AND i.process_id = ?
+                    AND v.room_id = ? AND v.ended_at IS NULL AND m.deleted_at IS NULL
+                """, now, watermark(roomId), viewId, processId, roomId);
         touch(viewId, now);
     }
 
@@ -169,6 +209,43 @@ public class ChatViewStorageService {
         return deleted;
     }
 
+    /** Past ended views establish history, but only a current owned view can request it. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ChatAccountReadIntervals authorizedAccountIntervals(Long userId, Long roomId,
+            Long membershipId, String viewId) {
+        validateContext(userId, roomId, membershipId, viewId);
+        if (viewId == null) {
+            throw denied();
+        }
+        checkpoint(viewId, roomId);
+        LocalDateTime asOf = now();
+        List<ChatViewInterval> ranges = jdbc.query("""
+                SELECT i.id, i.start_after_message_id, i.started_at,
+                    CASE WHEN i.ends_at IS NOT NULL AND i.end_message_id IS NULL
+                         THEN LEAST(i.ends_at, COALESCE(v.ended_at, i.ends_at),
+                                    COALESCE(m.deleted_at, i.ends_at))
+                         ELSE COALESCE(i.ends_at, i.verified_at) END AS ends_at,
+                    CASE WHEN i.ends_at IS NULL THEN i.verified_through_message_id
+                         ELSE i.end_message_id END AS end_id
+                FROM chat_view_sessions v
+                JOIN chat_room_members m ON m.id = v.membership_id
+                    AND m.user_id = v.user_id AND m.room_id = v.room_id
+                JOIN chat_view_intervals i ON i.view_session_id = v.id
+                WHERE v.user_id = ? AND v.room_id = ?
+                    AND COALESCE(i.ends_at, i.verified_at) > ? AND i.started_at <= ?
+                    AND (i.ends_at IS NOT NULL OR (
+                        (v.ended_at IS NULL OR i.verified_at <= v.ended_at)
+                        AND (m.deleted_at IS NULL OR i.verified_at <= m.deleted_at)))
+                    AND (i.end_message_id IS NULL OR i.end_reason = 'LEFT' OR (
+                        (v.ended_at IS NULL OR i.ends_at <= v.ended_at)
+                        AND (m.deleted_at IS NULL OR i.ends_at <= m.deleted_at)))
+                ORDER BY i.started_at, i.start_after_message_id, i.id
+                """, (row, index) -> new ChatViewInterval(row.getLong("id"), row.getLong("start_after_message_id"),
+                row.getTimestamp("started_at").toLocalDateTime(), row.getTimestamp("ends_at").toLocalDateTime(),
+                row.getObject("end_id", Long.class)), userId, roomId, asOf.minusHours(24), asOf);
+        return new ChatAccountReadIntervals(userId, roomId, asOf, ranges);
+    }
+
     private void closeRange(String viewId, Long roomId, String reason) {
         LocalDateTime now = now();
         jdbc.update("""
@@ -188,14 +265,18 @@ public class ChatViewStorageService {
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND));
     }
 
-    private void requireView(Long userId, Long roomId, Long membershipId, String viewId) {
+    private void validateViewId(String viewId) {
         try {
-            if (!UUID.fromString(viewId).toString().equals(viewId)) {
+            if (viewId == null || !UUID.fromString(viewId).toString().equals(viewId)) {
                 throw denied();
             }
         } catch (IllegalArgumentException invalid) {
             throw denied();
         }
+    }
+
+    private void requireView(Long userId, Long roomId, Long membershipId, String viewId) {
+        validateViewId(viewId);
         Integer count = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM chat_view_sessions
                 WHERE id = ? AND user_id = ? AND room_id = ? AND membership_id = ?

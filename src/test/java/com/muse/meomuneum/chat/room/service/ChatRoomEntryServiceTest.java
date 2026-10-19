@@ -54,7 +54,11 @@ class ChatRoomEntryServiceTest {
                 Clock.fixed(NOW, ZoneOffset.UTC), presence,
                 mock(com.muse.meomuneum.chat.connection.ChatSocketSessions.class),
                 mock(com.muse.meomuneum.chat.ban.service.ChatBanStorageService.class),
-                mock(org.springframework.transaction.PlatformTransactionManager.class));
+                mock(org.springframework.transaction.PlatformTransactionManager.class),
+                mock(com.muse.meomuneum.chat.view.ChatViewStorageService.class),
+                mock(com.muse.meomuneum.chat.view.ChatViewLifecycle.class),
+                mock(com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy.class),
+                new com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry());
     }
 
     @Test
@@ -133,7 +137,7 @@ class ChatRoomEntryServiceTest {
     }
 
     private void prepareJoin(User user, ChatRoom room, LocationResolutionClaims claims) {
-        when(tokenProvider.validate("loc_token", 7L)).thenReturn(claims);
+        when(tokenProvider.validateForChat("loc_token", 7L, sid(7L))).thenReturn(claims);
         when(userRepository.findActiveByIdForUpdate(7L)).thenReturn(Optional.of(user));
         when(chatRoomRepository.findAllByIdForUpdate(any())).thenReturn(java.util.List.of(room));
     }

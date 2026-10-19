@@ -41,6 +41,11 @@ public class LocationResolutionService {
 
     @Transactional(readOnly = true)
     public LocationResolveResponse resolve(Long userId, LocationResolveRequest request) {
+        return resolve(userId, request, null);
+    }
+
+    @Transactional(readOnly = true)
+    public LocationResolveResponse resolve(Long userId, LocationResolveRequest request, String authSessionId) {
         request.validate();
         ResolvedRegionCode regionCode = coordinateResolver.resolve(request.latitude(), request.longitude());
         Region sido = findRegion(regionCode.sidoCode(), RegionLevel.SIDO);
@@ -50,7 +55,9 @@ public class LocationResolutionService {
                 .orElseThrow(() -> new MusicRecordException("map_dot_not_found", HttpStatus.NOT_FOUND,
                         "map dot not found"));
 
-        IssuedLocationToken token = tokenProvider.issue(userId, sido, sigungu, mapDot.mapDotId());
+        IssuedLocationToken token = authSessionId == null
+                ? tokenProvider.issue(userId, sido, sigungu, mapDot.mapDotId())
+                : tokenProvider.issueForSession(userId, authSessionId, sido, sigungu, mapDot.mapDotId());
         return new LocationResolveResponse(
                 new LocationResolveResponse.MapDotSummary(mapDot.mapDotId(), mapDot.code()),
                 new RegionSummaryPair(RegionSummary.from(sido), RegionSummary.from(sigungu)),

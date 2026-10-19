@@ -8,6 +8,11 @@ HELP.md
 /docs/
 *.md
 !/README.md
+
+# Local performance test artifacts.
+/performance/generated/
+/performance/results/
+
 .gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar

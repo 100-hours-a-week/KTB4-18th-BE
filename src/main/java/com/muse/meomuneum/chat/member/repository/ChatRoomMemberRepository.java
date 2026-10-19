@@ -21,6 +21,9 @@ public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, 
     @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
     List<ChatRoomMember> findAllByUser_IdAndDeletedAtIsNull(Long userId);
 
+    @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
+    List<ChatRoomMember> findAllByUser_IdAndAuthSessionId(Long userId, String authSessionId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             SELECT member

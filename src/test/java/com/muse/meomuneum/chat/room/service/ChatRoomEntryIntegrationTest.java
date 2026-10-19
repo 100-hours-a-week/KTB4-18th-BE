@@ -73,6 +73,9 @@ class ChatRoomEntryIntegrationTest {
     @Autowired
     private com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry authSessions;
 
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.muse.meomuneum.location.provider.RegionCoordinateResolver coordinates;
+
     @Autowired
     private ChatRoomRepository chatRoomRepository;
 
@@ -120,7 +123,8 @@ class ChatRoomEntryIntegrationTest {
         var user = users.findById(userId).orElseThrow();
         var first = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, sid));
         var refreshed = connectSocket(userId, room.getId(), joined.membershipId(), jwt.createAccessToken(user, sid));
-        Long otherMembership = service.join(userId, otherSid, room.getId(), issueToken(userId, room.getRegion()))
+        Long otherMembership = service
+                .join(userId, otherSid, room.getId(), issueToken(userId, room.getRegion(), otherSid))
                 .membership().membershipId();
         var other = connectSocket(userId, room.getId(), otherMembership, jwt.createAccessToken(user, otherSid));
         try {
@@ -358,7 +362,7 @@ class ChatRoomEntryIntegrationTest {
     }
 
     @Test
-    void logoutEndsMembershipAndAllAccountConnections() throws Exception {
+    void logoutEndsOnlyTheAuthenticatedSessionsConnections() throws Exception {
         Long userId = createUser("logout");
         ChatRoom room = roomFor("41135");
         Long membershipId = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
@@ -366,7 +370,7 @@ class ChatRoomEntryIntegrationTest {
         SocketProbe first = connectSocket(userId, room.getId(), membershipId);
         SocketProbe second = connectSocket(userId, room.getId(), membershipId);
         try {
-            events.publishEvent(new com.muse.meomuneum.auth.application.ChatLogoutEvent(userId));
+            events.publishEvent(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
             assertTrue(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(userId, sid(userId)).isEmpty());
@@ -374,6 +378,75 @@ class ChatRoomEntryIntegrationTest {
             first.socket.abort();
             second.socket.abort();
         }
+    }
+
+    @Test
+    void sessionLogoutKeepsOtherDeviceMessagingAndRejectsOldSessionAdmission() throws Exception {
+        Long userId = createUser("logout-isolation");
+        ChatRoom room = roomFor("41135");
+        String otherSid = java.util.UUID.randomUUID().toString();
+        var first = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
+                .membership();
+        var second = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
+                .membership();
+        var other = service.join(userId, otherSid, room.getId(), issueToken(userId, room.getRegion(), otherSid))
+                .membership();
+        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId));
+        String otherToken = jwt.createAccessToken(users.findById(userId).orElseThrow(), otherSid);
+        SocketProbe a = connectSocket(userId, room.getId(), first.membershipId(), token, first.viewSessionId());
+        SocketProbe b = connectSocket(userId, room.getId(), second.membershipId(), token, second.viewSessionId());
+        SocketProbe device = connectSocket(userId, room.getId(), other.membershipId(), otherToken,
+                other.viewSessionId());
+        try {
+            subscribeMessages(device, room.getId());
+            var event = new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId));
+            events.publishEvent(event);
+            assertEquals(4100, a.closed.get(5, TimeUnit.SECONDS));
+            assertEquals("CHAT_LOGGED_OUT", a.closeReason);
+            assertEquals(4100, b.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(device.closed.isDone());
+            assertEquals(0, jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id = ? AND ended_at IS NULL",
+                    Integer.class, first.membershipId()));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id = ? AND ended_at IS NULL",
+                    Integer.class, other.membershipId()));
+            assertTrue(memberRepository.findById(other.membershipId()).orElseThrow().isActive());
+            assertEquals(ChatRoomErrorCode.AUTH_REQUIRED, org.junit.jupiter.api.Assertions.assertThrows(
+                    ChatRoomException.class, () -> service.join(userId, sid(userId), room.getId(),
+                            issueToken(userId, room.getRegion())))
+                    .getErrorCode());
+            events.publishEvent(event);
+            assertFalse(device.closed.isDone());
+            sendMessage(device, room.getId(), java.util.UUID.randomUUID().toString(), "other device after logout");
+            assertTrue(nextFrame(device).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(device).contains("CHAT_ACK"));
+            assertEquals(other.membershipId(), service.join(userId, otherSid, room.getId(),
+                    issueToken(userId, room.getRegion(), otherSid)).membership().membershipId());
+        } finally {
+            service.leaveAll(userId);
+            a.socket.abort();
+            b.socket.abort();
+            device.socket.abort();
+        }
+    }
+
+    @Test
+    void logoutReleasesUnconnectedReservationsAndDoesNotAffectANewLogin() {
+        Long userId = createUser("logout-reserve");
+        ChatRoom room = roomFor("41135");
+        var joined = service.join(userId, sid(userId), room.getId(), issueToken(userId, room.getRegion()))
+                .membership();
+        events.publishEvent(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
+        assertFalse(memberRepository.findById(joined.membershipId()).orElseThrow().isActive());
+        String newSid = java.util.UUID.randomUUID().toString();
+        var newLogin = service.join(userId, newSid, room.getId(), issueToken(userId, room.getRegion(), newSid))
+                .membership();
+        events.publishEvent(new com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent(userId, sid(userId)));
+        assertTrue(memberRepository.findById(newLogin.membershipId()).orElseThrow().isActive());
+        assertEquals(newLogin.membershipId(), service.join(userId, newSid, room.getId(),
+                issueToken(userId, room.getRegion(), newSid)).membership().membershipId());
+        service.leaveAll(userId);
     }
 
     @Test
@@ -661,7 +734,7 @@ class ChatRoomEntryIntegrationTest {
         String location = issueToken(owner, room.getRegion());
         var results = runConcurrently(
                 () -> service.join(owner, firstSid, room.getId(), location),
-                () -> service.join(owner, secondSid, room.getId(), location),
+                () -> service.join(owner, secondSid, room.getId(), issueToken(owner, room.getRegion(), secondSid)),
                 () -> service.join(owner, firstSid, room.getId(), location));
         assertEquals(2L, results.stream().map(result -> result.membership().membershipId()).distinct().count());
         assertEquals(2L, results.stream().filter(ChatRoomJoinResult::created).count());
@@ -679,7 +752,8 @@ class ChatRoomEntryIntegrationTest {
         Long firstMembership = service.join(owner, sid(owner), first.getId(), issueToken(owner, first.getRegion()))
                 .membership().membershipId();
         String otherSid = java.util.UUID.randomUUID().toString();
-        Long secondMembership = service.join(owner, otherSid, second.getId(), issueToken(owner, second.getRegion()))
+        Long secondMembership = service
+                .join(owner, otherSid, second.getId(), issueToken(owner, second.getRegion(), otherSid))
                 .membership().membershipId();
         assertTrue(!firstMembership.equals(secondMembership));
         assertEquals(2, memberRepository.findAllByUser_IdAndDeletedAtIsNull(owner).size());
@@ -720,7 +794,7 @@ class ChatRoomEntryIntegrationTest {
         assertEquals(401, membershipHttp("POST", path, jwt.createAccessToken(user, "invalid"), location).statusCode());
         var firstJoin = membershipHttp("POST", path, firstToken, location);
         assertEquals(201, firstJoin.statusCode());
-        var secondJoin = membershipHttp("POST", path, secondToken, location);
+        var secondJoin = membershipHttp("POST", path, secondToken, issueToken(owner, room.getRegion(), otherSid));
         assertEquals(201, secondJoin.statusCode());
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         Long firstId = mapper.readTree(firstJoin.body()).path("data").path("membership_id").longValue();
@@ -731,7 +805,10 @@ class ChatRoomEntryIntegrationTest {
         assertTrue(!firstId.equals(secondId));
         assertEquals(sid(owner), memberRepository.findById(firstId).orElseThrow().getAuthSessionId());
         assertEquals(otherSid, memberRepository.findById(secondId).orElseThrow().getAuthSessionId());
-        SocketProbe first = connectSocket(owner, room.getId(), firstId, firstToken);
+        String viewId = mapper.readTree(firstJoin.body()).path("data").path("view_session_id").asText();
+        String retryView = mapper.readTree(retry.body()).path("data").path("view_session_id").asText();
+        service.leaveTab(owner, sid(owner), room.getId(), firstId, retryView);
+        SocketProbe first = connectSocket(owner, room.getId(), firstId, firstToken, viewId);
         SocketProbe second = connectSocket(owner, room.getId(), secondId, secondToken);
         SocketProbe spoofed = new SocketProbe();
         try {
@@ -744,13 +821,15 @@ class ChatRoomEntryIntegrationTest {
             String rejected = spoofed.frames.poll(5, TimeUnit.SECONDS);
             assertTrue(rejected != null && rejected.startsWith("ERROR"));
             assertEquals(1, authSessions.connections(owner, otherSid).size());
-            assertEquals(403, membershipHttp("DELETE", path + "/me?membership_id=" + firstId,
-                    secondToken, null).statusCode());
+            assertEquals(403,
+                    membershipHttp("DELETE", path + "/me?membership_id=" + firstId + "&view_session_id=" + viewId,
+                            secondToken, null).statusCode());
             assertTrue(memberRepository.findById(firstId).orElseThrow().isActive());
             assertFalse(first.closed.isDone());
             assertFalse(second.closed.isDone());
-            assertEquals(204, membershipHttp("DELETE", path + "/me?membership_id=" + firstId,
-                    firstToken, null).statusCode());
+            assertEquals(204,
+                    membershipHttp("DELETE", path + "/me?membership_id=" + firstId + "&view_session_id=" + viewId,
+                            firstToken, null).statusCode());
             assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
             assertTrue(memberRepository.findById(secondId).orElseThrow().isActive());
             var rejoined = membershipHttp("POST", path, firstToken, location);
@@ -773,6 +852,122 @@ class ChatRoomEntryIntegrationTest {
         }
     }
 
+    @Test
+    void tabLeaveClosesOnlyItsViewAndKeepsSameSessionAndOtherDeviceChatting() throws Exception {
+        Long owner = createUser("tab-leave");
+        ChatRoom room = roomFor("41135");
+        String location = issueToken(owner, room.getRegion());
+        var first = service.join(owner, sid(owner), room.getId(), location).membership();
+        var second = service.join(owner, sid(owner), room.getId(), location).membership();
+        String otherSid = java.util.UUID.randomUUID().toString();
+        var other = service.join(owner, otherSid, room.getId(), issueToken(owner, room.getRegion(), otherSid))
+                .membership();
+        assertEquals(first.membershipId(), second.membershipId());
+        assertFalse(first.viewSessionId().equals(second.viewSessionId()));
+        String token = jwt.createAccessToken(users.findById(owner).orElseThrow(), sid(owner));
+        String deviceToken = jwt.createAccessToken(users.findById(owner).orElseThrow(), otherSid);
+        SocketProbe tab = connectSocket(owner, room.getId(), first.membershipId(), token, first.viewSessionId());
+        SocketProbe remaining = connectSocket(owner, room.getId(), second.membershipId(), token,
+                second.viewSessionId());
+        SocketProbe device = connectSocket(owner, room.getId(), other.membershipId(), deviceToken,
+                other.viewSessionId());
+        try {
+            subscribeMessages(tab, room.getId());
+            subscribeMessages(remaining, room.getId());
+            subscribeMessages(device, room.getId());
+            assertPresence(tab, 1);
+            assertPresence(remaining, 1);
+            assertPresence(device, 1);
+            String path = "/api/v1/chat-rooms/" + room.getId() + "/members/me?membership_id="
+                    + first.membershipId();
+            assertEquals(400, membershipHttp("DELETE", path, token, null).statusCode());
+            path += "&view_session_id=" + first.viewSessionId();
+            assertEquals(403, membershipHttp("DELETE", path, deviceToken, null).statusCode());
+            assertEquals(204, membershipHttp("DELETE", path, token, null).statusCode());
+            assertEquals(4100, tab.closed.get(5, TimeUnit.SECONDS));
+            assertEquals(204, membershipHttp("DELETE", path, token, null).statusCode());
+            assertFalse(remaining.closed.isDone());
+            assertFalse(device.closed.isDone());
+            assertTrue(memberRepository.findById(first.membershipId()).orElseThrow().isActive());
+            assertEquals(null, remaining.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            sendMessage(remaining, room.getId(), java.util.UUID.randomUUID().toString(), "remaining tab");
+            assertTrue(nextFrame(remaining).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(remaining).contains("CHAT_ACK"));
+            assertTrue(nextFrame(device).contains("CHAT_MESSAGE"));
+            assertTrue(jdbcTemplate.queryForObject("SELECT ended_at IS NOT NULL FROM chat_view_sessions WHERE id=?",
+                    Boolean.class, first.viewSessionId()));
+            assertEquals("LEFT", jdbcTemplate.queryForObject(
+                    "SELECT end_reason FROM chat_view_intervals WHERE view_session_id=?", String.class,
+                    first.viewSessionId()));
+            var request = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port
+                    + "/api/v1/chat-rooms/" + room.getId() + "/messages?membership_id=" + first.membershipId()))
+                    .header("Authorization", "Bearer " + token).header("X-Chat-View-Session", first.viewSessionId())
+                    .GET().build();
+            assertEquals(403, java.net.http.HttpClient.newHttpClient().send(request,
+                    java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode());
+            service.leaveTab(owner, sid(owner), room.getId(), second.membershipId(), second.viewSessionId());
+            assertEquals(4100, remaining.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(memberRepository.findById(first.membershipId()).orElseThrow().isActive());
+            assertTrue(memberRepository.findById(other.membershipId()).orElseThrow().isActive());
+            assertFalse(device.closed.isDone());
+        } finally {
+            service.leaveAll(owner);
+            tab.socket.abort();
+            remaining.socket.abort();
+            device.socket.abort();
+        }
+    }
+
+    @Test
+    void pendingTabCleanupKeepsOtherReservationAndLastLeaveImmediatelyReleasesCapacity() {
+        Long owner = createUser("tab-pending");
+        Long outsider = createUser("tab-newcomer");
+        ChatRoom room = roomFor("41135");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity=1 WHERE id=?", room.getId());
+        var first = service.join(owner, sid(owner), room.getId(), issueToken(owner, room.getRegion())).membership();
+        var second = service.join(owner, sid(owner), room.getId(), issueToken(owner, room.getRegion())).membership();
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_view_intervals", Integer.class));
+        service.leaveTab(owner, sid(owner), room.getId(), first.membershipId(), first.viewSessionId());
+        assertEquals("full", joinOutcome(outsider, room.getId(), issueToken(outsider, room.getRegion())));
+        assertTrue(memberRepository.findById(first.membershipId()).orElseThrow().isActive());
+        service.leaveTab(owner, sid(owner), room.getId(), second.membershipId(), second.viewSessionId());
+        assertEquals("joined", joinOutcome(outsider, room.getId(), issueToken(outsider, room.getRegion())));
+        service.leaveTab(owner, sid(owner), room.getId(), first.membershipId(), first.viewSessionId());
+        assertFalse(memberRepository.findById(first.membershipId()).orElseThrow().isActive());
+    }
+
+    @Test
+    void confirmedRegionDepartureStillClosesAllTabsOfOnlyMovingSession() throws Exception {
+        Long owner = createUser("tab-region");
+        ChatRoom room = roomFor("41135");
+        ChatRoom destination = roomFor("11680");
+        var first = service.join(owner, sid(owner), room.getId(), issueToken(owner, room.getRegion())).membership();
+        var second = service.join(owner, sid(owner), room.getId(), issueToken(owner, room.getRegion())).membership();
+        String otherSid = java.util.UUID.randomUUID().toString();
+        var device = service.join(owner, otherSid, room.getId(), issueToken(owner, room.getRegion(), otherSid))
+                .membership();
+        String token = jwt.createAccessToken(users.findById(owner).orElseThrow(), sid(owner));
+        SocketProbe a = connectSocket(owner, room.getId(), first.membershipId(), token, first.viewSessionId());
+        SocketProbe b = connectSocket(owner, room.getId(), second.membershipId(), token, second.viewSessionId());
+        String path = "/api/v1/chat-rooms/" + room.getId() + "/region-departures?membership_id=" + first.membershipId();
+        try {
+            assertEquals(400, membershipHttp("POST", path, token, issueToken(owner, room.getRegion())).statusCode());
+            assertEquals(400, membershipHttp("POST", path, token,
+                    issueToken(owner, destination.getRegion(), otherSid)).statusCode());
+            assertFalse(a.closed.isDone());
+            assertFalse(b.closed.isDone());
+            assertEquals(204, membershipHttp("POST", path, token,
+                    issueToken(owner, destination.getRegion())).statusCode());
+            assertEquals(4100, a.closed.get(5, TimeUnit.SECONDS));
+            assertEquals(4100, b.closed.get(5, TimeUnit.SECONDS));
+            assertTrue(memberRepository.findById(device.membershipId()).orElseThrow().isActive());
+        } finally {
+            service.leaveAll(owner);
+            a.socket.abort();
+            b.socket.abort();
+        }
+    }
+
     private java.net.http.HttpResponse<String> membershipHttp(String method, String path, String token,
             String location) throws Exception {
         var builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port + path))
@@ -786,6 +981,150 @@ class ChatRoomEntryIntegrationTest {
         }
         return java.net.http.HttpClient.newHttpClient().send(builder.build(),
                 java.net.http.HttpResponse.BodyHandlers.ofString());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void regionTransitionEndsOnlyMovingSessionEvenWhenDestinationIsFull(boolean destinationFull) throws Exception {
+        Long owner = createUser("region-sessions");
+        ChatRoom origin = roomFor("41135");
+        ChatRoom destination = roomFor("11680");
+        jdbcTemplate.update("UPDATE chat_rooms SET capacity=1 WHERE id=?", destination.getId());
+        if (destinationFull) {
+            Long occupant = createUser("region-occupant");
+            service.join(occupant, sid(occupant), destination.getId(), issueToken(occupant, destination.getRegion()));
+        }
+        String secondSid = java.util.UUID.randomUUID().toString();
+        Long movingMembership = service.join(owner, sid(owner), origin.getId(), issueToken(owner, origin.getRegion()))
+                .membership().membershipId();
+        Long stayingMembership = service.join(owner, secondSid, origin.getId(),
+                issueToken(owner, origin.getRegion(), secondSid)).membership().membershipId();
+        var user = users.findById(owner).orElseThrow();
+        String movingToken = jwt.createAccessToken(user, sid(owner));
+        String stayingToken = jwt.createAccessToken(user, secondSid);
+        SocketProbe moving = connectSocket(owner, origin.getId(), movingMembership, movingToken);
+        SocketProbe staying = connectSocket(owner, origin.getId(), stayingMembership, stayingToken);
+        SocketProbe destinationSocket = null;
+        try {
+            subscribeMessages(staying, origin.getId());
+            assertPresence(staying, 1);
+            String path = "/api/v1/chat-rooms/" + destination.getId() + "/members";
+            String foreignEvidence = issueToken(owner, destination.getRegion(), secondSid);
+            assertEquals(400, membershipHttp("POST", path, movingToken, foreignEvidence).statusCode());
+            assertEquals(400, membershipHttp("POST", path, movingToken,
+                    issueToken(owner, origin.getRegion())).statusCode());
+            assertTrue(memberRepository.findById(movingMembership).orElseThrow().isActive());
+            assertTrue(memberRepository.findById(stayingMembership).orElseThrow().isActive());
+            assertFalse(moving.closed.isDone());
+            org.mockito.Mockito.when(coordinates.resolve(37.3595704, 127.105399)).thenReturn(
+                    new com.muse.meomuneum.location.provider.ResolvedRegionCode("11", "11680"));
+            var request = java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create("http://localhost:" + port + "/api/v1/locations/resolve"))
+                    .header("Authorization", "Bearer " + movingToken).header("Origin", "http://localhost:5174")
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            "{\"latitude\":37.3595704,\"longitude\":127.105399,\"accuracy_meters\":10}"))
+                    .build();
+            var resolved = java.net.http.HttpClient.newHttpClient().send(request,
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, resolved.statusCode());
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            String locationToken = mapper.readTree(resolved.body()).path("data").path("location_resolution_token")
+                    .asText();
+            assertEquals(sid(owner), tokenProvider.validateForChat(locationToken, owner, sid(owner)).authSessionId());
+            assertEquals(400, membershipHttp("POST", path, stayingToken, locationToken).statusCode());
+            var result = membershipHttp("POST", path, movingToken, locationToken);
+            assertEquals(destinationFull ? 409 : 201, result.statusCode());
+            assertEquals(4100, moving.closed.get(5, TimeUnit.SECONDS));
+            assertFalse(memberRepository.findById(movingMembership).orElseThrow().isActive());
+            assertTrue(memberRepository.findById(stayingMembership).orElseThrow().isActive());
+            assertFalse(staying.closed.isDone());
+            assertEquals(null, staying.presenceFrames.poll(150, TimeUnit.MILLISECONDS));
+            sendMessage(staying, origin.getId(), java.util.UUID.randomUUID().toString(), "staying device");
+            assertTrue(nextFrame(staying).contains("CHAT_MESSAGE"));
+            assertTrue(nextFrame(staying).contains("CHAT_ACK"));
+            if (!destinationFull) {
+                Long movedId = mapper.readTree(result.body()).path("data").path("membership_id").longValue();
+                destinationSocket = connectSocket(owner, destination.getId(), movedId, movingToken);
+                subscribeMessages(destinationSocket, destination.getId());
+                assertPresence(destinationSocket, 1);
+            } else {
+                assertTrue(
+                        memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(owner, sid(owner)).isEmpty());
+            }
+        } finally {
+            service.leaveAll(owner);
+            moving.socket.abort();
+            staying.socket.abort();
+            if (destinationSocket != null) {
+                destinationSocket.socket.abort();
+            }
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "CHAT_RECOVERY_FE_DIR", matches = ".+")
+    void frontendRegionClientUsesSessionBoundEvidenceAndKeepsTheOtherDeviceInPlace() throws Exception {
+        Long owner = createUser("region-frontend");
+        var user = users.findById(owner).orElseThrow();
+        ChatRoom origin = roomFor("41135");
+        ChatRoom destination = roomFor("11680");
+        org.mockito.Mockito.when(coordinates.resolve(37.3595704, 127.105399)).thenReturn(
+                new com.muse.meomuneum.location.provider.ResolvedRegionCode("41", "41135"));
+        org.mockito.Mockito.when(coordinates.resolve(37.3595705, 127.105399)).thenReturn(
+                new com.muse.meomuneum.location.provider.ResolvedRegionCode("11", "11680"));
+        var process = new ProcessBuilder("node", "node_modules/vitest/vitest.mjs", "run",
+                "src/features/chat-entry/services/chatRegionTransition.integration.test.ts")
+                .directory(java.nio.file.Path.of(System.getenv("CHAT_RECOVERY_FE_DIR")).toFile())
+                .redirectErrorStream(true);
+        process.environment().put("CHAT_REGION_URL", "http://localhost:" + port);
+        process.environment().put("CHAT_REGION_TOKEN_A", jwt.createAccessToken(user, sid(owner)));
+        process.environment().put("CHAT_REGION_TOKEN_B",
+                jwt.createAccessToken(user, java.util.UUID.randomUUID().toString()));
+        process.environment().put("CHAT_REGION_ORIGIN", origin.getRegion().getId().toString());
+        process.environment().put("CHAT_REGION_DESTINATION", destination.getRegion().getId().toString());
+        Process running = process.start();
+        try {
+            if (!running.waitFor(45, TimeUnit.SECONDS)) {
+                running.destroyForcibly();
+                throw new AssertionError("frontend region integration timed out");
+            }
+            String output = new String(running.getInputStream().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(0, running.exitValue(), output);
+            assertEquals(2, memberRepository.findAllByUser_IdAndDeletedAtIsNull(owner).size());
+        } finally {
+            service.leaveAll(owner);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "CHAT_RECOVERY_FE_DIR", matches = ".+")
+    void actualFrontendTabLeaveAndLateJoinKeepOtherTabActive() throws Exception {
+        Long owner = createUser("tab-frontend");
+        ChatRoom room = roomFor("41135");
+        var process = new ProcessBuilder("node", "node_modules/vitest/vitest.mjs", "run",
+                "src/features/chat-entry/services/chatTabLeave.integration.test.ts")
+                .directory(java.nio.file.Path.of(System.getenv("CHAT_RECOVERY_FE_DIR")).toFile())
+                .redirectErrorStream(true);
+        process.environment().put("CHAT_TAB_URL", "http://localhost:" + port);
+        process.environment().put("CHAT_TAB_TOKEN",
+                jwt.createAccessToken(users.findById(owner).orElseThrow(), sid(owner)));
+        process.environment().put("CHAT_TAB_LOCATION", issueToken(owner, room.getRegion()));
+        process.environment().put("CHAT_TAB_REGION", room.getRegion().getId().toString());
+        Process running = process.start();
+        try {
+            if (!running.waitFor(45, TimeUnit.SECONDS)) {
+                running.destroyForcibly();
+                throw new AssertionError("frontend tab leave integration timed out");
+            }
+            String output = new String(running.getInputStream().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(0, running.exitValue(), output);
+            assertEquals(0, memberRepository.findAllByUser_IdAndDeletedAtIsNull(owner).size());
+        } finally {
+            service.leaveAll(owner);
+        }
     }
 
     private void assertPresence(SocketProbe probe, int count) throws Exception {
@@ -824,12 +1163,18 @@ class ChatRoomEntryIntegrationTest {
     }
 
     private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId, String token) throws Exception {
+        return connectSocket(userId, roomId, membershipId, token, null);
+    }
+
+    private SocketProbe connectSocket(Long userId, Long roomId, Long membershipId, String token, String viewId)
+            throws Exception {
         SocketProbe probe = new SocketProbe();
         probe.socket = java.net.http.HttpClient.newHttpClient().newWebSocketBuilder()
                 .header("Origin", "http://localhost:5174").subprotocols("v12.stomp")
                 .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), probe).get(5, TimeUnit.SECONDS);
         probe.socket.sendText("CONNECT\naccept-version:1.2\nheart-beat:0,0\nAuthorization:Bearer " + token
-                + "\nroom_id:" + roomId + "\nmembership_id:" + membershipId + "\n\n\u0000", true).join();
+                + "\nroom_id:" + roomId + "\nmembership_id:" + membershipId
+                + (viewId == null ? "" : "\nview_session_id:" + viewId) + "\n\n\u0000", true).join();
         assertTrue(probe.frames.poll(5, TimeUnit.SECONDS).startsWith("CONNECTED"));
         return probe;
     }
@@ -915,11 +1260,16 @@ class ChatRoomEntryIntegrationTest {
     }
 
     private String issueToken(Long userId, Region sigungu) {
+        return issueToken(userId, sigungu, sid(userId));
+    }
+
+    private String issueToken(Long userId, Region sigungu, String authSessionId) {
         Long sigunguId = sigungu.getId();
         return new TransactionTemplate(transactionManager).execute(status -> {
             Region managedSigungu = regionRepository.findById(sigunguId).orElseThrow();
             Region sido = managedSigungu.getParent();
-            IssuedLocationToken token = tokenProvider.issue(userId, sido, managedSigungu);
+            IssuedLocationToken token = tokenProvider.issueForSession(userId, authSessionId, sido, managedSigungu,
+                    null);
             return token.value();
         });
     }

@@ -66,6 +66,65 @@ public class ChatPresenceRegistry {
         seats.put(membershipId, new Seat(userId, roomId, clock.instant().plusSeconds(30)));
     }
 
+    public synchronized void reserveTab(Long userId, Long roomId, Long membershipId, String viewId) {
+        reserve(userId, roomId, membershipId);
+        Seat seat = seats.get(membershipId);
+        seat.tabs.putIfAbsent(viewId, clock.instant().plusSeconds(30));
+        refreshExpiry(seat);
+    }
+
+    public synchronized void attachTab(Long membershipId, String viewId, String socketId) {
+        Seat seat = seats.get(membershipId);
+        if (seat == null || !seat.sessions.contains(socketId)) {
+            throw new ChatRoomException(ChatRoomErrorCode.CHAT_VIEW_UNAVAILABLE);
+        }
+        seat.socketViews.put(socketId, viewId);
+        seat.tabs.remove(viewId);
+        seat.tabs.put(viewId, null);
+        refreshExpiry(seat);
+    }
+
+    public synchronized Set<String> removeTab(Long userId, Long membershipId, String viewId) {
+        Seat seat = seats.get(membershipId);
+        if (seat == null || !seat.userId.equals(userId)) {
+            return Set.of();
+        }
+        int previousCount = connectedCount(seat.roomId);
+        Set<String> ended = new HashSet<>();
+        seat.socketViews.forEach((socket, view) -> {
+            if (viewId.equals(view)) {
+                ended.add(socket);
+            }
+        });
+        ended.forEach(socket -> {
+            seat.sessions.remove(socket);
+            seat.subscriptions.remove(socket);
+            seat.socketViews.remove(socket);
+        });
+        seat.tabs.remove(viewId);
+        if (seat.sessions.isEmpty() && seat.tabs.isEmpty()) {
+            seats.remove(membershipId);
+            transmission.ended(membershipId);
+        } else {
+            refreshExpiry(seat);
+        }
+        changed(seat.roomId, previousCount);
+        return Set.copyOf(ended);
+    }
+
+    public synchronized boolean hasParticipation(Long membershipId) {
+        return seats.containsKey(membershipId);
+    }
+
+    private void refreshExpiry(Seat seat) {
+        if (!seat.sessions.isEmpty()) {
+            seat.expiresAt = null;
+        } else if (!seat.tabs.isEmpty()) {
+            seat.expiresAt = seat.tabs.values().stream().filter(java.util.Objects::nonNull)
+                    .max(Instant::compareTo).orElse(clock.instant());
+        }
+    }
+
     public synchronized void connect(Long userId, Long roomId, Long membershipId, int capacity, String sessionId) {
         expire();
         if (!hasCapacity(userId, roomId, capacity)) {
@@ -84,9 +143,14 @@ public class ChatPresenceRegistry {
         for (Seat seat : seats.values()) {
             int previousCount = connectedCount(seat.roomId);
             seat.subscriptions.remove(sessionId);
+            String viewId = seat.socketViews.remove(sessionId);
+            if (viewId != null) {
+                seat.tabs.put(viewId, clock.instant().plusSeconds(30));
+            }
             if (seat.sessions.remove(sessionId) && seat.sessions.isEmpty()) {
                 seat.expiresAt = clock.instant().plusSeconds(30);
             }
+            refreshExpiry(seat);
             changed(seat.roomId, previousCount);
         }
     }
@@ -114,6 +178,8 @@ public class ChatPresenceRegistry {
 
     public synchronized void expire() {
         Instant now = clock.instant();
+        seats.values().forEach(seat -> seat.tabs.values()
+                .removeIf(expiry -> expiry != null && !expiry.isAfter(now)));
         seats.values().removeIf(seat -> seat.expiresAt != null && !seat.expiresAt.isAfter(now));
     }
 
@@ -184,6 +250,8 @@ public class ChatPresenceRegistry {
         private final Long roomId;
         private final Set<String> sessions = new HashSet<>();
         private final Map<String, Map<String, String>> subscriptions = new HashMap<>();
+        private final Map<String, Instant> tabs = new HashMap<>();
+        private final Map<String, String> socketViews = new HashMap<>();
         private Instant expiresAt;
 
         private Seat(Long userId, Long roomId, Instant expiresAt) {

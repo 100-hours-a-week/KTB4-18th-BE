@@ -39,6 +39,9 @@ public class ChatViewLifecycle {
                     .anyMatch(connection -> requestedViewId.equals(connection.viewId))) {
                 throw denied();
             }
+            if (requestedViewId != null) {
+                presence.attachTab(membershipId, requestedViewId, socketId);
+            }
             connections.put(socketId, new Connection(userId, roomId, membershipId, requestedViewId));
             return null;
         });
@@ -58,6 +61,7 @@ public class ChatViewLifecycle {
                 connection.viewId = storage.subscribed(connection.userId, connection.roomId,
                         connection.membershipId, connection.viewId);
             }
+            presence.attachTab(connection.membershipId, connection.viewId, socketId);
             connection.subscriptions.add(subscriptionId);
             return connection.viewId;
         });
@@ -73,6 +77,18 @@ public class ChatViewLifecycle {
             }
             return null;
         });
+    }
+
+    public Departure leave(Long userId, Long roomId, Long membershipId, String viewId) {
+        return presence.exclusive(() -> {
+            boolean lastView = storage.leave(userId, roomId, membershipId, viewId);
+            Set<String> ended = presence.removeTab(userId, membershipId, viewId);
+            ended.forEach(connections::remove);
+            return new Departure(ended, lastView);
+        });
+    }
+
+    public record Departure(Set<String> sockets, boolean lastView) {
     }
 
     @EventListener
@@ -132,6 +148,24 @@ public class ChatViewLifecycle {
                 throw denied();
             }
             return storage.authorizedIntervals(userId, roomId, membershipId, viewId);
+        });
+    }
+
+    /** B8 history scope; reconnect/recovery authorization remains bound to its original tab. */
+    public ChatAccountReadIntervals authorizeAccount(Long userId, Long roomId, Long membershipId, String viewId) {
+        return presence.exclusive(() -> {
+            authorize(userId, roomId, membershipId, viewId);
+            Set<String> activeViews = new HashSet<>();
+            connections.forEach((socket, connection) -> {
+                if (userId.equals(connection.userId) && roomId.equals(connection.roomId)
+                        && !connection.subscriptions.isEmpty()
+                        && presence.ownsConnection(userId, connection.membershipId, socket)
+                        && !viewId.equals(connection.viewId)) {
+                    activeViews.add(connection.viewId);
+                }
+            });
+            activeViews.forEach(active -> storage.checkpoint(active, roomId));
+            return storage.authorizedAccountIntervals(userId, roomId, membershipId, viewId);
         });
     }
 
