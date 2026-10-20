@@ -25,7 +25,7 @@ import com.muse.meomuneum.chat.region.domain.RegionLevel;
 @Table(name = "chat_rooms")
 public class ChatRoom {
 
-    public static final int DEFAULT_CAPACITY = 25;
+    public static final int DEFAULT_CAPACITY = 1000;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
