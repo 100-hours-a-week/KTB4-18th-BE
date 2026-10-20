@@ -77,25 +77,28 @@ class ChatRoomAccountCapacityTest {
     @Test
     void fullRoomAcceptsMoreMembershipsOfExistingAccountButRejectsNewAccount() {
         ChatPresenceRegistry registry = registry();
-        for (long user = 1; user <= 25; user++) {
-            registry.connect(user, 10L, user, 25, "socket-" + user);
+        for (long user = 1; user <= 999; user++) {
+            registry.connect(user, 10L, user, 1000, "socket-" + user);
         }
-        registry.reserve(1L, 10L, 100L);
-        registry.connect(1L, 10L, 100L, 25, "other-device");
-        registry.connect(1L, 10L, 100L, 25, "other-tab");
-        assertEquals(25, registry.connectedCount(10L));
-        assertEquals(25, changes.size());
-        assertTrue(registry.hasCapacity(1L, 10L, 25));
-        assertFalse(registry.hasCapacity(26L, 10L, 25));
+        assertTrue(registry.hasCapacity(1000L, 10L, 1000));
+        registry.connect(1000L, 10L, 1000L, 1000, "last-account");
+        registry.reserve(1L, 10L, 2000L);
+        registry.connect(1L, 10L, 2000L, 1000, "other-device");
+        registry.connect(1L, 10L, 2000L, 1000, "other-tab");
+        assertEquals(1000, registry.connectedCount(10L));
+        assertEquals(1000, changes.size());
+        assertTrue(registry.hasCapacity(1L, 10L, 1000));
+        assertFalse(registry.hasCapacity(1001L, 10L, 1000));
         ChatRoomException rejected = assertThrows(ChatRoomException.class,
-                () -> registry.connect(26L, 10L, 260L, 25, "overflow"));
+                () -> registry.connect(1001L, 10L, 1001L, 1000, "overflow"));
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, rejected.getErrorCode());
         registry.remove(1L, 1L);
-        assertEquals(25, registry.connectedCount(10L));
-        assertFalse(registry.hasCapacity(26L, 10L, 25));
-        registry.remove(1L, 100L);
-        assertTrue(registry.hasCapacity(26L, 10L, 25));
-        assertEquals(24, registry.connectedCount(10L));
+        assertEquals(1000, registry.connectedCount(10L));
+        assertFalse(registry.hasCapacity(1001L, 10L, 1000));
+        registry.remove(1L, 2000L);
+        assertTrue(registry.hasCapacity(1001L, 10L, 1000));
+        registry.connect(1001L, 10L, 1001L, 1000, "replacement");
+        assertEquals(1000, registry.connectedCount(10L));
     }
 
     @Test
@@ -203,8 +206,8 @@ class ChatRoomAccountCapacityTest {
     @Test
     void concurrentExtraMembershipsAndNewAccountsUseOnlyOneRemainingAccountSlot() throws Exception {
         ChatPresenceRegistry registry = registry();
-        for (long user = 1; user <= 24; user++) {
-            registry.connect(user, 10L, user, 25, "existing-" + user);
+        for (long user = 1; user <= 999; user++) {
+            registry.connect(user, 10L, user, 1000, "existing-" + user);
         }
         CountDownLatch startGate = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(8)) {
@@ -213,13 +216,13 @@ class ChatRoomAccountCapacityTest {
                 final long number = attempt;
                 results.add(executor.submit(() -> {
                     assertTrue(startGate.await(5, TimeUnit.SECONDS));
-                    long user = number < 20 ? 1L : number + 25;
+                    long user = number < 20 ? 1L : number + 1000;
                     return registry.exclusive(() -> {
-                        if (!registry.hasCapacity(user, 10L, 25)) {
+                        if (!registry.hasCapacity(user, 10L, 1000)) {
                             return false;
                         }
-                        registry.reserve(user, 10L, 1000 + number);
-                        registry.connect(user, 10L, 1000 + number, 25, "concurrent-" + number);
+                        registry.reserve(user, 10L, 2000 + number);
+                        registry.connect(user, 10L, 2000 + number, 1000, "concurrent-" + number);
                         return true;
                     });
                 }));
@@ -233,8 +236,8 @@ class ChatRoomAccountCapacityTest {
             }
             assertEquals(21, admitted);
         }
-        assertEquals(25, registry.connectedCount(10L));
-        assertEquals(25, changes.size());
-        assertFalse(registry.hasCapacity(999L, 10L, 25));
+        assertEquals(1000, registry.connectedCount(10L));
+        assertEquals(1000, changes.size());
+        assertFalse(registry.hasCapacity(9999L, 10L, 1000));
     }
 }
