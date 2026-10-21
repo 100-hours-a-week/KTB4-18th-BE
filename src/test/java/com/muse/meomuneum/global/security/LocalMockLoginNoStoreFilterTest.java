@@ -13,7 +13,7 @@ class LocalMockLoginNoStoreFilterTest {
 
     @Test
     void marksLoginAndCorsPreflightResponsesNoStore() throws Exception {
-        for (String method : new String[] { "POST", "OPTIONS" }) {
+        for (String method : new String[]{"POST", "OPTIONS"}) {
             MockHttpServletRequest request = new MockHttpServletRequest(method, "/api/v1/auth/local-mock-login");
             MockHttpServletResponse response = new MockHttpServletResponse();
 

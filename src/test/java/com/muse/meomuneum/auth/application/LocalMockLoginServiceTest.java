@@ -37,7 +37,8 @@ class LocalMockLoginServiceTest {
         when(jwtTokenProvider.createAccessToken(testUser)).thenReturn("local-test-access-token");
         JwtProperties jwtProperties = new JwtProperties("project-api", "project-api",
                 "development-only-secret-with-at-least-32-bytes", 3600, 1209600);
-        localMockLoginService = new LocalMockLoginService(userRepository, jwtTokenProvider, jwtProperties, TEST_USER_ID);
+        localMockLoginService = new LocalMockLoginService(userRepository, jwtTokenProvider, jwtProperties,
+                TEST_USER_ID);
     }
 
     @Test
