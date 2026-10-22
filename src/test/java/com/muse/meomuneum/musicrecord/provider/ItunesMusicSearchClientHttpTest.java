@@ -35,8 +35,8 @@ import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
+import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
-import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
 import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.sun.net.httpserver.HttpExchange;
@@ -45,7 +45,7 @@ import com.sun.net.httpserver.HttpServer;
 import tools.jackson.databind.ObjectMapper;
 
 class ItunesMusicSearchClientHttpTest {
-    private static final String TRACK_BODY = "{\"results\":[{\"trackId\":123,"
+    private static final String TRACK_BODY = "{\"results\":[{\"kind\":\"song\",\"trackId\":123,"
             + "\"trackName\":\"테스트 노래\",\"artistName\":\"테스트 가수\","
             + "\"artworkUrl100\":\"https://example.test/cover\","
             + "\"previewUrl\":\"https://example.test/preview\"}]}";
@@ -83,25 +83,6 @@ class ItunesMusicSearchClientHttpTest {
     @AfterEach
     void tearDown() {
         server.stop(0);
-    }
-
-    @Test
-    void searchSubmitsRawImmutableProviderSnapshot() {
-        setArtworkJson("\"https://example.test/cover/100x100bb.jpg\"");
-        var repository = mock(MusicRecordRepository.class);
-        var storage = mock(MusicSearchStorageService.class);
-        var service = new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("test-secret"), storage);
-        var response = service.search("테스트", "ITUNES", null, 20);
-        @SuppressWarnings("unchecked")
-        org.mockito.ArgumentCaptor<List<MusicItem>> captured = org.mockito.ArgumentCaptor
-                .forClass(List.class);
-        org.mockito.Mockito.verify(storage).store(captured.capture());
-        assertThat(captured.getValue()).isEqualTo(response.items());
-        assertThat(captured.getValue().getFirst().music_id()).isNull();
-        assertThat(captured.getValue().getFirst().album_cover_url())
-                .isEqualTo("https://example.test/cover/680x680bb.jpg");
-        assertThatThrownBy(() -> captured.getValue().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -193,7 +174,7 @@ class ItunesMusicSearchClientHttpTest {
     }
 
     @Test
-    void musicSearchAndRecommendationShareConfiguredCountryAndUrl() {
+    void musicSearchCountryIsIndependentFromRecommendationCountry() {
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/configured/search";
         new ApplicationContextRunner()
                 .withInitializer(context -> context.getBeanFactory()
@@ -202,7 +183,8 @@ class ItunesMusicSearchClientHttpTest {
                 .withBean(ItunesMusicSearchClient.class)
                 .withBean(ItunesRecommendationProvider.class)
                 .withPropertyValues("recommendation.itunes.search-url=" + url,
-                        "recommendation.itunes.country=KR", "recommendation.itunes.timeout=2s")
+                        "recommendation.itunes.country=US", "recommendation.itunes.timeout=2s",
+                        "music.search.country=KR")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     context.getBean(ItunesMusicSearchClient.class).search("테스트");
@@ -210,11 +192,13 @@ class ItunesMusicSearchClientHttpTest {
                             .recommend(new RecommendationCommand(UUID.randomUUID(), UUID.randomUUID(), "테스트"));
                 });
 
-        assertThat(configuredQueries).hasSize(2).allMatch(query -> query.contains("country=KR"));
+        assertThat(configuredQueries).hasSize(2);
+        assertThat(configuredQueries.get(0)).contains("country=KR");
+        assertThat(configuredQueries.get(1)).contains("country=US");
     }
 
     @Test
-    void musicSearchAndRecommendationRetainSharedDefaults() {
+    void musicSearchDefaultsToUsAndRecommendationRetainsUs() {
         new ApplicationContextRunner()
                 .withInitializer(context -> context.getBeanFactory()
                         .setConversionService(ApplicationConversionService.getSharedInstance()))
@@ -263,7 +247,8 @@ class ItunesMusicSearchClientHttpTest {
         MusicRecordRepository repository = mock(MusicRecordRepository.class);
         LocationResolutionTokenProvider tokens = mock(LocationResolutionTokenProvider.class);
         MusicRecordService service = new MusicRecordService(repository, client, tokens,
-                new MusicSearchCursorCodec("test-only-secret"), mock(MusicSearchStorageService.class));
+                new MusicSearchCursorCodec("test-only-secret"),
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
         when(repository.highestMusicId()).thenReturn(0L);
         when(repository.searchMusic("테스트", Long.MAX_VALUE, 0L, 21)).thenReturn(List.of());
         when(tokens.validate("location-token", 1L)).thenReturn(
@@ -288,6 +273,38 @@ class ItunesMusicSearchClientHttpTest {
                     assertThat(failure.status()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
                     assertThat(failure.publicMessage()).isEqualTo("internal server error");
                 });
+    }
+
+    @Test
+    void lookupOnlyUsesMatchingSongsAndSearchRejectsMalformedSongsAtomically() {
+        trackBody.set(TRACK_BODY.replace("123", "124"));
+        assertThat(client.lookup("123")).isEmpty();
+        trackBody.set(TRACK_BODY.replace("song", "podcast"));
+        assertThat(client.lookup("123")).isEmpty();
+        trackBody.set(TRACK_BODY.replace("song", "SoNg"));
+        assertThat(client.lookup("123")).isPresent();
+        for (String invalid : List.of(TRACK_BODY.replace("123", "0"), TRACK_BODY.replace("123", "1.25"),
+                TRACK_BODY.replace("\"trackName\":\"테스트 노래\",", ""),
+                TRACK_BODY.replace("테스트 노래", ""), TRACK_BODY.replace("테스트 가수", ""),
+                TRACK_BODY.replace("테스트 노래", "가".repeat(256)))) {
+            trackBody.set(invalid);
+            assertThatThrownBy(() -> client.search("query"))
+                    .isInstanceOfAny(MusicRecordException.class, MusicMetadataException.class);
+        }
+    }
+
+    @Test
+    void validSongResultsAreDeduplicatedAndCappedAt200() {
+        String songs = java.util.stream.IntStream.rangeClosed(1, 205)
+                .mapToObj(id -> "{\"kind\":\"song\",\"trackId\":" + id
+                        + ",\"trackName\":\"title\",\"artistName\":\"artist\"}")
+                .collect(java.util.stream.Collectors.joining(","));
+        trackBody.set("{\"results\":[" + songs + ","
+                + "{\"kind\":\"song\",\"trackId\":1,\"trackName\":\"duplicate\",\"artistName\":\"artist\"}]}");
+        var results = client.search("query");
+        assertThat(results).hasSize(200);
+        assertThat(results.stream().map(MusicItem::external_music_id).distinct()).hasSize(200);
+        assertThatThrownBy(results::clear).isInstanceOf(UnsupportedOperationException.class);
     }
 
     private void respond(HttpExchange exchange, int status, String body) throws IOException {

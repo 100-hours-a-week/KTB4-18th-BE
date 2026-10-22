@@ -23,7 +23,7 @@ public class MusicSearchCursorCodec {
     private final byte[] secret;
     private final Clock clock;
 
-    public MusicSearchCursorCodec(@Value("${auth.jwt.secret}") String secret) {
+    public MusicSearchCursorCodec(String secret) {
         this(secret, Clock.systemUTC());
     }
 
@@ -33,26 +33,20 @@ public class MusicSearchCursorCodec {
         this.clock = clock;
     }
 
-    public Instant newExpiresAt() {
-        return clock.instant().plus(CURSOR_LIFETIME);
+    public Cursor database(long lastId, long highWatermark) {
+        Instant now = clock.instant();
+        return new Cursor("DB", lastId, highWatermark, "", 0, now, now.plus(CURSOR_LIFETIME));
     }
 
-    public String encode(String query, String phase, long lastDbId, long highWatermark,
-            int externalIndex, String externalHash) {
-        return encode(query, phase, lastDbId, highWatermark, externalIndex, externalHash,
-                newExpiresAt());
-    }
-
-    public String encode(String query, String phase, long lastDbId, long highWatermark,
-            int externalIndex, String externalHash, Instant expiresAt) {
-        Instant issuedAt = expiresAt.minus(CURSOR_LIFETIME);
-        String payload = "2|" + hash(query) + "|ITUNES|" + phase + "|" + lastDbId + "|"
-                + highWatermark + "|" + externalIndex + "|" + externalHash + "|"
-                + issuedAt.getEpochSecond() + "|" + expiresAt.getEpochSecond();
+    public String encode(String query, String country, int size, Cursor cursor) {
+        String payload = "3|" + hash(query) + "|ITUNES|" + country + "|" + size + "|" + cursor.source()
+                + "|" + cursor.lastDbId() + "|" + cursor.highWatermark() + "|" + cursor.snapshotId()
+                + "|" + cursor.offset() + "|" + cursor.issuedAt().getEpochSecond()
+                + "|" + cursor.expiresAt().getEpochSecond();
         return base64(payload.getBytes(StandardCharsets.UTF_8)) + "." + base64(signature(payload));
     }
 
-    public Cursor decode(String value, String query) {
+    public Cursor decode(String value, String query, String country, int size) {
         try {
             String[] parts = value.split("\\.", -1);
             if (parts.length != 2) {
@@ -63,24 +57,29 @@ public class MusicSearchCursorCodec {
                 throw invalid();
             }
             String[] fields = payload.split("\\|", -1);
-            if (fields.length != 10 || !"2".equals(fields[0]) || !hash(query).equals(fields[1])
-                    || !"ITUNES".equals(fields[2]) || !("DB".equals(fields[3])
-                            || "ITUNES".equals(fields[3]))) {
+            if (fields.length != 12 || !"3".equals(fields[0]) || !hash(query).equals(fields[1])
+                    || !"ITUNES".equals(fields[2]) || !country.equals(fields[3])
+                    || size != Integer.parseInt(fields[4])) {
                 throw invalid();
             }
-            long lastDbId = Long.parseLong(fields[4]);
-            long highWatermark = Long.parseLong(fields[5]);
-            int externalIndex = Integer.parseInt(fields[6]);
-            Instant issuedAt = Instant.ofEpochSecond(Long.parseLong(fields[8]));
-            Instant expiresAt = Instant.ofEpochSecond(Long.parseLong(fields[9]));
-            if (lastDbId < 0 || highWatermark < 0 || externalIndex < 0 || externalIndex > 200
-                    || ("ITUNES".equals(fields[3]) && fields[7].isBlank())
-                    || ("DB".equals(fields[3]) && (externalIndex != 0 || !fields[7].isBlank()))
-                    || !issuedAt.plus(CURSOR_LIFETIME).equals(expiresAt)
-                    || issuedAt.isAfter(clock.instant()) || !expiresAt.isAfter(clock.instant())) {
+            Cursor cursor = new Cursor(fields[5], Long.parseLong(fields[6]), Long.parseLong(fields[7]),
+                    fields[8], Integer.parseInt(fields[9]), Instant.ofEpochSecond(Long.parseLong(fields[10])),
+                    Instant.ofEpochSecond(Long.parseLong(fields[11])));
+            boolean database = "DB".equals(cursor.source());
+            boolean external = "ITUNES".equals(cursor.source());
+            Duration lifetime = Duration.between(cursor.issuedAt(), cursor.expiresAt());
+            if ((!database && !external) || size < 1 || size > 20 || cursor.highWatermark() < 0
+                    || cursor.issuedAt().isAfter(clock.instant()) || lifetime.isNegative() || lifetime.isZero()
+                    || lifetime.compareTo(database ? CURSOR_LIFETIME : Duration.ofMinutes(5)) > 0
+                    || (database && (cursor.lastDbId() <= 0 || cursor.lastDbId() > cursor.highWatermark()
+                            || cursor.offset() != 0 || !cursor.snapshotId().isEmpty()
+                            || !cursor.expiresAt().isAfter(clock.instant())))
+                    || (external && (cursor.lastDbId() != 0 || cursor.highWatermark() != 0
+                            || cursor.offset() < 1 || cursor.offset() >= 200 || cursor.offset() % size != 0
+                            || !cursor.snapshotId().matches("[0-9a-f-]{36}")))) {
                 throw invalid();
             }
-            return new Cursor(fields[3], lastDbId, highWatermark, externalIndex, fields[7], expiresAt);
+            return cursor;
         } catch (MusicRecordException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -112,11 +111,13 @@ public class MusicSearchCursorCodec {
     }
 
     private MusicRecordException invalid() {
-        return new MusicRecordException("music_cursor_invalid", HttpStatus.BAD_REQUEST,
-                "search query required");
+        return new MusicRecordException("music_cursor_invalid", HttpStatus.BAD_REQUEST, "search query required");
     }
 
-    public record Cursor(String phase, long lastDbId, long highWatermark, int externalIndex,
-            String externalHash, Instant expiresAt) {
+    public record Cursor(String source, long lastDbId, long highWatermark, String snapshotId, int offset,
+            Instant issuedAt, Instant expiresAt) {
+        public Cursor advance(long lastId, int nextOffset) {
+            return new Cursor(source, lastId, highWatermark, snapshotId, nextOffset, issuedAt, expiresAt);
+        }
     }
 }

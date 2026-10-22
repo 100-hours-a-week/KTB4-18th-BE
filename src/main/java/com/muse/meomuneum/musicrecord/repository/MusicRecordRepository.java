@@ -34,16 +34,35 @@ public class MusicRecordRepository {
     }
 
     public List<MusicItem> searchMusic(String query, long beforeId, long highWatermark, int limit) {
+        String title = "LOWER(REGEXP_REPLACE(title, '[[:space:]]', '')) LIKE LOWER(?) ESCAPE '!'";
+        String artist = "LOWER(REGEXP_REPLACE(artist_name, '[[:space:]]', '')) LIKE LOWER(?) ESCAPE '!'";
+        String pair = "(" + title + " OR " + artist + ")";
+        String[] tokens = query.split(" ");
+        var arguments = new java.util.ArrayList<Object>();
+        arguments.add(beforeId);
+        arguments.add(highWatermark);
+        String compact = "%" + escapeLikeLiteral(query.replace(" ", "")) + "%";
+        arguments.add(compact);
+        arguments.add(compact);
+        StringBuilder conditions = new StringBuilder(pair).append(" OR (");
+        for (int i = 0; i < tokens.length; i++) {
+            if (i > 0) {
+                conditions.append(" AND ");
+            }
+            conditions.append(pair);
+            String pattern = "%" + escapeLikeLiteral(tokens[i]) + "%";
+            arguments.add(pattern);
+            arguments.add(pattern);
+        }
+        conditions.append(")");
+        arguments.add(limit);
         String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
                 + "preview_url, youtube_video_id FROM music WHERE provider='ITUNES' AND id<? AND id<=? "
-                + "AND (LOWER(title) LIKE LOWER(?) ESCAPE '!' "
-                + "OR LOWER(artist_name) LIKE LOWER(?) ESCAPE '!') "
-                + "ORDER BY id DESC LIMIT ?";
-        String pattern = "%" + escapeLikeLiteral(query) + "%";
+                + "AND (" + conditions + ") ORDER BY id DESC LIMIT ?";
         return jdbc.query(sql, (row, index) -> item(row.getLong("id"), row.getString("provider"),
                 row.getString("external_music_id"), row.getString("title"), row.getString("artist_name"),
                 row.getString("album_cover_url"), row.getString("preview_url"),
-                row.getString("youtube_video_id")), beforeId, highWatermark, pattern, pattern, limit);
+                row.getString("youtube_video_id")), arguments.toArray());
     }
 
     public Map<String, StoredMusic> findStoredMusicByIds(List<String> externalIds, long highWatermark,
@@ -96,6 +115,30 @@ public class MusicRecordRepository {
                 + "preview_url, youtube_video_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
                 music.album_cover_url(), music.preview_url(), music.youtube_video_id());
+    }
+
+    public MusicItem insertSelectedMusic(MusicItem music) {
+        MusicMetadataPolicy.validate(music.title(), music.artist_name());
+        var keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
+                            + "preview_url, youtube_video_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    new String[]{"id"});
+            statement.setString(1, music.provider());
+            statement.setString(2, music.external_music_id());
+            statement.setString(3, music.title());
+            statement.setString(4, music.artist_name());
+            statement.setString(5, music.album_cover_url());
+            statement.setString(6, music.preview_url());
+            statement.setString(7, music.youtube_video_id());
+            return statement;
+        }, keys);
+        if (keys.getKey() == null) {
+            throw new IllegalStateException("music id missing");
+        }
+        return item(keys.getKey().longValue(), music.provider(), music.external_music_id(), music.title(),
+                music.artist_name(), music.album_cover_url(), music.preview_url(), music.youtube_video_id());
     }
 
     public long upsertMusic(MusicItem music) {
