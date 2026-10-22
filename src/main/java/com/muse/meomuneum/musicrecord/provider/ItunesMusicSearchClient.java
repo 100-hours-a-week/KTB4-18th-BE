@@ -32,20 +32,24 @@ public class ItunesMusicSearchClient {
 
     public ItunesMusicSearchClient(ObjectMapper mapper,
             @Value("${recommendation.itunes.search-url:https://itunes.apple.com/search}") String url,
-            @Value("${recommendation.itunes.country:US}") String country,
+            @Value("${music.search.country:KR}") String country,
             @Value("${recommendation.itunes.timeout:8s}") Duration timeout) {
         this.mapper = mapper;
         this.url = url;
         this.country = country;
         this.timeout = timeout;
     }
+    public String country() {
+        return country;
+    }
+
     public List<MusicItem> search(String query) {
         return request("search", "term=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
                 + "&country=" + country + "&media=music&entity=song&limit=200");
     }
 
     public Optional<MusicItem> lookup(String trackId) {
-        if (trackId == null || !trackId.matches("[0-9]+")) {
+        if (!com.muse.meomuneum.musicrecord.dto.SongRegistrationDtos.validTrackId(trackId)) {
             return Optional.empty();
         }
         return request("lookup", "id=" + trackId + "&country=" + country + "&entity=song")
@@ -67,19 +71,30 @@ public class ItunesMusicSearchClient {
                 throw providerFailure(operation + "_invalid_body");
             }
             var items = new ArrayList<MusicItem>();
+            var seen = new java.util.HashSet<String>();
             for (JsonNode result : results) {
-                if ("lookup".equals(operation) && result.path("trackId").canConvertToLong()) {
-                    MusicMetadataPolicy.validate(result.path("trackName").asText(), result.path("artistName").asText());
+                if (!"song".equalsIgnoreCase(result.path("kind").asText())) {
+                    continue;
                 }
-                if (result.path("trackId").canConvertToLong() && !result.path("trackName").asText().isBlank()
-                        && !result.path("artistName").asText().isBlank()) {
-                    items.add(new MusicItem(null, "ITUNES", result.path("trackId").asText(),
-                            result.path("trackName").asText(), result.path("artistName").asText(),
-                            resizeArtwork(nullable(result, "artworkUrl100")), nullable(result, "previewUrl"), null,
-                            false));
+                JsonNode id = result.path("trackId");
+                if (!id.isIntegralNumber() || !id.canConvertToLong() || id.asLong() <= 0
+                        || !result.path("trackName").isTextual() || !result.path("artistName").isTextual()) {
+                    throw providerFailure(operation + "_invalid_song");
+                }
+                String title = result.path("trackName").asText();
+                String artist = result.path("artistName").asText();
+                MusicMetadataPolicy.validate(title, artist);
+                String artwork = resizeArtwork(nullable(result, "artworkUrl100"));
+                String preview = nullable(result, "previewUrl");
+                if ((artwork != null && artwork.codePointCount(0, artwork.length()) > 1000)
+                        || (preview != null && preview.codePointCount(0, preview.length()) > 1000)) {
+                    throw new com.muse.meomuneum.music.exception.MusicMetadataException("music_url_too_long");
+                }
+                if (seen.add(id.asText()) && items.size() < 200) {
+                    items.add(new MusicItem(null, "ITUNES", id.asText(), title, artist, artwork, preview, null, false));
                 }
             }
-            return items;
+            return List.copyOf(items);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw providerFailure(operation + "_interrupted");

@@ -3,9 +3,11 @@ package com.muse.meomuneum.musicrecord;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -25,27 +27,80 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.controller.MusicRecordController;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
+import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
-import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
+
+import tools.jackson.databind.ObjectMapper;
 
 class MusicRecordHttpContractTest {
     private MockMvc mvc;
     private MusicRecordRepository repository;
+    private ItunesMusicSearchClient itunes;
 
     @BeforeEach
     void setUp() {
         repository = mock(MusicRecordRepository.class);
+        itunes = mock(ItunesMusicSearchClient.class);
+        when(itunes.country()).thenReturn("KR");
         MusicRecordService service = new MusicRecordService(repository,
-                mock(ItunesMusicSearchClient.class), mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("test-only-secret"), mock(MusicSearchStorageService.class));
+                itunes, mock(LocationResolutionTokenProvider.class),
+                new MusicSearchCursorCodec("test-only-secret"),
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
         CurrentUserResolver users = mock(CurrentUserResolver.class);
         when(users.resolve(nullable(Authentication.class))).thenReturn(1L);
         mvc = MockMvcBuilders.standaloneSetup(new MusicRecordController(service, users))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
+    }
+
+    @Test
+    void externalSearchPreservesEnvelopeSnakeCaseAndStringExternalIdWithAdditiveSource() throws Exception {
+        when(itunes.search("song")).thenReturn(java.util.List.of(
+                new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem(null, "ITUNES", "123",
+                        "song", "artist", null, null, null, false)));
+        mvc.perform(get("/api/v1/music/search").param("query", "song"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("music search completed"))
+                .andExpect(jsonPath("$.data.source").value("ITUNES"))
+                .andExpect(jsonPath("$.data.items[0].music_id").isEmpty())
+                .andExpect(jsonPath("$.data.items[0].external_music_id").value("123"))
+                .andExpect(jsonPath("$.data.items[0].artist_name").value("artist"))
+                .andExpect(jsonPath("$.data.items[0].is_queueable").value(false));
+    }
+
+    @Test
+    void lostExternalSnapshotReturnsGoneEnvelopeWithoutProviderFallbackOrRepositoryActivity() throws Exception {
+        when(itunes.search("snapshot")).thenReturn(java.util.List.of(
+                new MusicItem(null, "ITUNES", "123", "first", "artist", null, null, null, false),
+                new MusicItem(null, "ITUNES", "124", "second", "artist", null, null, null, false)));
+        var first = mvc.perform(get("/api/v1/music/search").param("query", "snapshot").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.source").value("ITUNES"))
+                .andExpect(jsonPath("$.data.has_next").value(true))
+                .andExpect(jsonPath("$.data.next_cursor").isNotEmpty()).andReturn();
+        String cursor = new ObjectMapper().readTree(first.getResponse().getContentAsString())
+                .path("data").path("next_cursor").asText();
+        var restarted = new MusicRecordService(repository, itunes, mock(LocationResolutionTokenProvider.class),
+                new MusicSearchCursorCodec("test-only-secret"),
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+        var restartedMvc = MockMvcBuilders.standaloneSetup(
+                new MusicRecordController(restarted, mock(CurrentUserResolver.class)))
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
+        clearInvocations(repository, itunes);
+
+        restartedMvc.perform(get("/api/v1/music/search").param("query", "snapshot").param("size", "1")
+                .param("cursor", cursor))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.message").value("music search expired"))
+                .andExpect(jsonPath("$.data").isEmpty());
+
+        verify(itunes, never()).search(any());
+        verify(itunes, never()).lookup(any());
+        verifyNoInteractions(repository);
     }
 
     @Test

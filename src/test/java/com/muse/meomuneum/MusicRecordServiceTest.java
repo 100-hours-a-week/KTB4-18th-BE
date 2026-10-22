@@ -32,8 +32,8 @@ import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.MusicIdentity;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
+import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
-import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -42,7 +42,7 @@ class MusicRecordServiceTest {
     private LocationResolutionTokenProvider tokens;
     private ItunesMusicSearchClient itunes;
     private MusicRecordService service;
-    private MusicSearchStorageService storage;
+    private MusicSearchCandidateCache storage;
     private ObjectMapper mapper;
     private MusicRecordDetailResponse detail;
 
@@ -51,7 +51,8 @@ class MusicRecordServiceTest {
         repository = mock(MusicRecordRepository.class);
         tokens = mock(LocationResolutionTokenProvider.class);
         itunes = mock(ItunesMusicSearchClient.class);
-        storage = mock(MusicSearchStorageService.class);
+        storage = new MusicSearchCandidateCache(java.time.Clock.systemUTC());
+        when(itunes.country()).thenReturn("KR");
         service = new MusicRecordService(repository, itunes,
                 tokens, new MusicSearchCursorCodec("test-secret"), storage);
         mapper = new ObjectMapper();
@@ -61,17 +62,6 @@ class MusicRecordServiceTest {
                         new RegionPart(4L, "11440", "마포구")),
                 "홍대", "산책 중",
                 Instant.parse("2026-09-22T06:30:00Z"), null);
-    }
-
-    @Test
-    void storedLookupFailureDoesNotSubmitCollection() {
-        when(itunes.search("song")).thenReturn(List.of(new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem(
-                null, "ITUNES", "123", "song", "artist", null, null, null, false)));
-        when(repository.findStoredMusicByIds(any(), anyLong(), eq("song")))
-                .thenThrow(new IllegalStateException("lookup failed"));
-        assertThatThrownBy(() -> service.search("song", "ITUNES", null, 20))
-                .isInstanceOf(IllegalStateException.class);
-        org.mockito.Mockito.verifyNoInteractions(storage);
     }
 
     @Test
@@ -166,6 +156,28 @@ class MusicRecordServiceTest {
     }
 
     @Test
+    void legacyUnregisteredReplacementPreservesNotFoundAndProviderFailureStatuses() {
+        when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
+        when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
+        var body = mapper.readTree("{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\"456\"}}");
+        when(itunes.lookup("456")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.update(1L, 7L, body))
+                .isInstanceOfSatisfying(MusicRecordException.class, failure -> {
+                    assertThat(failure.status()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(failure.publicMessage()).isEqualTo("music not found");
+                });
+        when(itunes.lookup("456")).thenThrow(new MusicRecordException("provider", HttpStatus.BAD_GATEWAY,
+                "music provider unavailable"));
+        assertThatThrownBy(() -> service.update(1L, 7L, body))
+                .isInstanceOfSatisfying(MusicRecordException.class, failure -> {
+                    assertThat(failure.status()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                    assertThat(failure.publicMessage()).isEqualTo("music provider unavailable");
+                });
+        verify(repository, never()).upsertMusic(any());
+        verify(repository, never()).updateRecordMusic(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
     void sameMusicIsANoOpAndDoesNotCallProviderOrWriteCatalog() {
         when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
         when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
@@ -228,25 +240,12 @@ class MusicRecordServiceTest {
     }
 
     @Test
-    void searchUsesDatabaseBeforeExternalProviderAndStableCursor() {
-        var stored = new MusicItem(8L, "ITUNES", "100", "밤편지", "아이유", null, null, null, false);
-        when(repository.highestMusicId()).thenReturn(8L);
-        when(repository.searchMusic("밤", Long.MAX_VALUE, 8L, 2)).thenReturn(List.of(stored));
-
-        var result = service.search("밤", "ITUNES", null, 1);
-
-        assertThat(result.items()).containsExactly(stored);
-        assertThat(result.has_next()).isFalse();
-        assertThat(result.next_cursor()).isNull();
-        verify(itunes, never()).search("밤");
-    }
-
-    @Test
     void databaseCursorNeverSwitchesToItunesAfterSongsDisappear() {
         var first = new MusicItem(8L, "ITUNES", "100", "밤편지", "아이유", null, null, null, false);
         var second = new MusicItem(7L, "ITUNES", "101", "밤의 노래", "가수", null, null, null, false);
         when(repository.highestMusicId()).thenReturn(8L);
-        when(repository.searchMusic("밤", Long.MAX_VALUE, 8L, 2)).thenReturn(List.of(first, second));
+        when(repository.searchMusic("밤", Long.MAX_VALUE, 8L, 21))
+                .thenReturn(java.util.Collections.nCopies(21, first));
         when(repository.searchMusic("밤", 8L, 8L, 2)).thenReturn(List.of());
 
         var initial = service.search("밤", "ITUNES", null, 1);
@@ -267,43 +266,6 @@ class MusicRecordServiceTest {
         assertThatThrownBy(() -> service.search("밤", "ITUNES", null, 20))
                 .isInstanceOf(IllegalStateException.class);
         verify(itunes, never()).search("밤");
-    }
-
-    @Test
-    void storedSongWhoseMetadataDoesNotMatchKeepsItunesTextAndStoredPlaybackMetadata() {
-        var stored = new MusicItem(8L, "ITUNES", "100", "원래 제목", "저장된 가수",
-                "stored-cover", "stored-preview", "AbCdEfGh123", true);
-        var external = new MusicItem(null, "ITUNES", "100", "검색어 노래", "외부 가수",
-                "external-cover", "external-preview", null, false);
-        when(repository.highestMusicId()).thenReturn(8L);
-        when(repository.searchMusic("검색어", Long.MAX_VALUE, 8L, 21)).thenReturn(List.of());
-        when(itunes.search("검색어")).thenReturn(List.of(external));
-        when(repository.findStoredMusicByIds(List.of("100"), 8L, "검색어"))
-                .thenReturn(java.util.Map.of("100", new MusicRecordRepository.StoredMusic(stored, false)));
-
-        var result = service.search("검색어", "ITUNES", null, 20);
-
-        assertThat(result.items()).containsExactly(new MusicItem(8L, "ITUNES", "100", "검색어 노래",
-                "외부 가수", "external-cover", "stored-preview", "AbCdEfGh123", true));
-        assertThat(result.has_next()).isFalse();
-    }
-
-    @Test
-    void externalCandidateDoesNotFallBackToStaleStoredCover() {
-        var stored = new MusicItem(8L, "ITUNES", "100", "옛 제목", "옛 가수",
-                "stale-cover", null, null, false);
-        var external = new MusicItem(null, "ITUNES", "100", "새 검색어 노래", "새 가수",
-                null, "external-preview", null, false);
-        when(repository.highestMusicId()).thenReturn(8L);
-        when(repository.searchMusic("검색어", Long.MAX_VALUE, 8L, 21)).thenReturn(List.of());
-        when(itunes.search("검색어")).thenReturn(List.of(external));
-        when(repository.findStoredMusicByIds(List.of("100"), 8L, "검색어"))
-                .thenReturn(java.util.Map.of("100", new MusicRecordRepository.StoredMusic(stored, false)));
-
-        var result = service.search("검색어", "ITUNES", null, 20);
-
-        assertThat(result.items()).containsExactly(new MusicItem(8L, "ITUNES", "100",
-                "새 검색어 노래", "새 가수", null, "external-preview", null, false));
     }
 
     @Test
@@ -333,7 +295,7 @@ class MusicRecordServiceTest {
     }
 
     @Test
-    void createRefreshesExistingMusicMetadataFromProvider() {
+    void createReusesExistingMusicWithoutProviderOrCatalogWrites() {
         var location = new MusicRecordRepository.Location(3L, "dot-3", 4L, "11440", "마포구",
                 5L, "11", "서울특별시");
         var storedMusic = new MusicItem(9L, "ITUNES", "200", "DB 제목", "DB 가수",
@@ -357,9 +319,53 @@ class MusicRecordServiceTest {
                 "location-token", null, null));
 
         assertThat(created.record_id()).isEqualTo(7L);
-        verify(itunes).lookup("200");
-        verify(repository).upsertMusic(new MusicItem(9L, "ITUNES", "200", "최신 제목", "최신 가수",
-                "https://cdn.example.com/cover.jpg", "https://cdn.example.com/preview.m4a", null, false));
+        verify(itunes, never()).lookup(any());
+        verify(repository, never()).upsertMusic(any());
+    }
+
+    @Test
+    void thresholdProbeIsAlwaysTwentyOneAndExternalSnapshotIsNotMergedOrWritten() {
+        var external = new MusicItem(null, "ITUNES", "123", "external", "artist", null, null, null, false);
+        when(itunes.search("밤 편지")).thenReturn(List.of(external));
+        for (int count : List.of(0, 1, 19, 20)) {
+            when(repository.searchMusic("밤 편지", Long.MAX_VALUE, 0L, 21))
+                    .thenReturn(java.util.Collections.nCopies(count, external));
+            for (int size : List.of(1, 10, 20)) {
+                var response = service.search("  밤\u2003 편지  ", "ITUNES", null, size);
+                assertThat(response.source()).isEqualTo("ITUNES");
+                assertThat(response.items()).containsExactly(external);
+            }
+        }
+        verify(itunes, org.mockito.Mockito.times(1)).search("밤 편지");
+        verify(repository, never()).upsertMusic(any());
+        verify(repository, never()).insertSelectedMusic(any());
+        verify(repository, never()).findMusic(any(), any());
+    }
+
+    @Test
+    void registeredReplacementReusesIdWithoutProviderOrUpsert() {
+        when(repository.findRecord(1L, 7L)).thenReturn(Optional.of(detail));
+        when(repository.findRecordMusicIdentity(1L, 7L)).thenReturn(Optional.of(new MusicIdentity("ITUNES", "123")));
+        when(repository.findMusic("ITUNES", "456")).thenReturn(Optional.of(new MusicItem(12L, "ITUNES", "456",
+                "stored", "artist", null, null, null, false)));
+        when(repository.updateRecordMusic(eq(1L), eq(7L), eq(12L), any())).thenReturn(1);
+        service.update(1L, 7L, mapper.readTree("{\"music\":{\"provider\":\"ITUNES\","
+                + "\"external_music_id\":\"456\"}}"));
+        verify(itunes, never()).lookup(any());
+        verify(repository, never()).upsertMusic(any());
+        verify(repository).updateRecordMusic(eq(1L), eq(7L), eq(12L), any());
+    }
+
+    @Test
+    void searchNormalizesNfcAndRejectsUnicodeOnlyWhitespace() {
+        String decomposed = java.text.Normalizer.normalize("밤 편지", java.text.Normalizer.Form.NFD);
+        when(itunes.search("밤 편지")).thenReturn(List.of());
+        assertThat(service.search(decomposed, "ITUNES", null, 20).items()).isEmpty();
+        verify(repository).searchMusic("밤 편지", Long.MAX_VALUE, 0L, 21);
+        for (String query : List.of("\u00a0\u2003", " ", "\t\n")) {
+            assertThatThrownBy(() -> service.search(query, "ITUNES", null, 20))
+                    .hasMessage("search query required");
+        }
     }
 
     @Test
