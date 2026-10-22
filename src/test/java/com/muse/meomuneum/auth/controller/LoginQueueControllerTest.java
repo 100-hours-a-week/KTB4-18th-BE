@@ -107,6 +107,19 @@ class LoginQueueControllerTest {
     }
 
     @Test
+    void deleteWithoutQueueCookieStillExpiresCookieAndPassesNullToTheStore() throws Exception {
+        mockMvc.perform(delete("/api/v1/auth/login-queue/tickets/current"))
+                .andExpect(status().isNoContent())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("MEO_QUEUE_V2="),
+                        org.hamcrest.Matchers.containsString("Max-Age=0"),
+                        org.hamcrest.Matchers.containsString("Path=/api/v1/auth"))));
+
+        verify(store).cancelCurrentTicket(null);
+    }
+
+    @Test
     void currentStatusSerializesNullableOutcomeForEveryPublicStatus() throws Exception {
         var nullOutcomeStatuses = new HazelcastAuthStateStore.TicketStatus[]{
                 HazelcastAuthStateStore.TicketStatus.WAITING,

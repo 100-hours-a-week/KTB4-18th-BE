@@ -1072,6 +1072,16 @@ class HazelcastAuthStateStoreTest {
     }
 
     @Test
+    void cancellingWithoutCookieDoesNotChangeAnUnrelatedLiveTicket() {
+        var liveTicket = createTicket(null, UUID.randomUUID().toString());
+
+        store.cancelCurrentTicket(null);
+
+        assertThat(store.currentTicket(liveTicket.queueCookie()).status())
+                .isEqualTo(HazelcastAuthStateStore.TicketStatus.WAITING);
+    }
+
+    @Test
     void pendingCreateBacklogUsesIndependentBoundedRecoveryCursor() {
         var tickets = member.<String, HazelcastAuthStateStore.Ticket>getMap("login-queue-tickets-v2");
         var operations = member.<String, HazelcastAuthStateStore.CreateOperation>getMap(
@@ -2447,6 +2457,50 @@ class HazelcastAuthStateStoreTest {
         assertThat(store.replaceSession(activeSession, rotatedSession)).isTrue();
         Thread.sleep(1_100);
         assertThat(store.loginRecoverySession(ticket.queueCookie(), operationId).sid()).isEqualTo(sid);
+    }
+
+    @Test
+    void cancellingConsumedSuccessTicketKeepsItsActiveSessionRecoverable() {
+        store.restoreActiveTicketReservations();
+        var ticket = createTicket(null, UUID.randomUUID().toString());
+        admitReadyTicket(store.nextWaitingTicket().orElseThrow());
+        String operationId = UUID.randomUUID().toString();
+        var claim = store.claimReadyTicket(ticket.queueCookie(), operationId);
+        String sid = UUID.randomUUID().toString();
+        store.createSession(84L, sid, "initial-jti", "initial-refresh-hash", operationId,
+                "encrypted-refresh-token", Instant.now().plusSeconds(3600), store.newAbsoluteSessionExpiry());
+        store.completeTicket(claim, HazelcastAuthStateStore.LoginOutcome.SUCCESS, sid);
+        store.releaseBcryptPermit(claim.ticketId(), claim.bcryptPermitKey());
+
+        store.cancelCurrentTicket(ticket.queueCookie());
+
+        var terminal = store.currentTicket(ticket.queueCookie());
+        assertThat(terminal.status()).isEqualTo(HazelcastAuthStateStore.TicketStatus.CONSUMED);
+        assertThat(terminal.loginOutcome()).isEqualTo(HazelcastAuthStateStore.LoginOutcome.SUCCESS);
+        assertThat(store.getSession(sid).status()).isEqualTo(HazelcastAuthStateStore.SessionStatus.ACTIVE);
+        assertThat(store.loginRecoverySession(ticket.queueCookie(), operationId).sid()).isEqualTo(sid);
+    }
+
+    @Test
+    void revokedConsumedSuccessSessionCannotBeRecovered() {
+        store.restoreActiveTicketReservations();
+        var ticket = createTicket(null, UUID.randomUUID().toString());
+        admitReadyTicket(store.nextWaitingTicket().orElseThrow());
+        String operationId = UUID.randomUUID().toString();
+        var claim = store.claimReadyTicket(ticket.queueCookie(), operationId);
+        String sid = UUID.randomUUID().toString();
+        store.createSession(85L, sid, "initial-jti", "initial-refresh-hash", operationId,
+                "encrypted-refresh-token", Instant.now().plusSeconds(3600), store.newAbsoluteSessionExpiry());
+        store.completeTicket(claim, HazelcastAuthStateStore.LoginOutcome.SUCCESS, sid);
+        store.releaseBcryptPermit(claim.ticketId(), claim.bcryptPermitKey());
+
+        store.revokeSession(sid, 85L);
+
+        assertThat(store.getSession(sid).status()).isEqualTo(HazelcastAuthStateStore.SessionStatus.REVOKED);
+        assertThat(store.getSession(sid).encryptedLoginRecoveryRefreshToken()).isNull();
+        assertThatThrownBy(() -> store.loginRecoverySession(ticket.queueCookie(), operationId))
+                .isInstanceOf(AuthStateConflictException.class)
+                .hasMessage("LOGIN_RECOVERY_UNAVAILABLE");
     }
 
     @Test

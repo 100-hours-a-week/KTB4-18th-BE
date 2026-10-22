@@ -26,6 +26,7 @@ import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
+import com.muse.meomuneum.auth.exception.AuthStateConflictException;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 
@@ -111,5 +112,20 @@ class AuthControllerTest {
         mockMvc.perform(post("/api/v1/auth/logout")).andExpect(status().isNoContent());
 
         verify(authService).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
+    }
+
+    @Test
+    void revokedLoginRecoveryReturnsConflictWithoutIssuingRefreshCookie() throws Exception {
+        when(authService.recoverLogin(any(HttpServletRequest.class), any(HttpHeaders.class)))
+                .thenThrow(new AuthStateConflictException("LOGIN_RECOVERY_UNAVAILABLE"));
+
+        mockMvc.perform(post("/api/v1/auth/login/recovery"))
+                .andExpect(status().isConflict())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
+                        org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
+                .andExpect(jsonPath("$.message").value("LOGIN_RECOVERY_UNAVAILABLE"));
+
+        verify(authService).recoverLogin(any(HttpServletRequest.class), any(HttpHeaders.class));
     }
 }
