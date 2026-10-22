@@ -183,7 +183,8 @@ class ItunesMusicSearchClientHttpTest {
                 .withBean(ItunesMusicSearchClient.class)
                 .withBean(ItunesRecommendationProvider.class)
                 .withPropertyValues("recommendation.itunes.search-url=" + url,
-                        "recommendation.itunes.country=US", "recommendation.itunes.timeout=2s")
+                        "recommendation.itunes.country=US", "recommendation.itunes.timeout=2s",
+                        "music.search.country=KR")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     context.getBean(ItunesMusicSearchClient.class).search("테스트");
@@ -197,7 +198,7 @@ class ItunesMusicSearchClientHttpTest {
     }
 
     @Test
-    void musicSearchDefaultsToKrAndRecommendationRetainsUs() {
+    void musicSearchDefaultsToUsAndRecommendationRetainsUs() {
         new ApplicationContextRunner()
                 .withInitializer(context -> context.getBeanFactory()
                         .setConversionService(ApplicationConversionService.getSharedInstance()))
@@ -208,7 +209,7 @@ class ItunesMusicSearchClientHttpTest {
                     assertThat(context).hasNotFailed();
                     var music = context.getBean(ItunesMusicSearchClient.class);
                     var recommendation = context.getBean(ItunesRecommendationProvider.class);
-                    assertThat(ReflectionTestUtils.getField(music, "country")).isEqualTo("KR");
+                    assertThat(ReflectionTestUtils.getField(music, "country")).isEqualTo("US");
                     assertThat(ReflectionTestUtils.getField(recommendation, "country")).isEqualTo("US");
                     assertThat(ReflectionTestUtils.getField(music, "url"))
                             .isEqualTo("https://itunes.apple.com/search");
