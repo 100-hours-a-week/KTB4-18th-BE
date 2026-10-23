@@ -3,6 +3,7 @@ package com.muse.meomuneum.chat.redis;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
@@ -35,16 +37,34 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dockerjava.api.model.PortBinding;
 
+import io.lettuce.core.RedisCommandExecutionException;
+import io.lettuce.core.RedisException;
+import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.pubsub.RedisPubSubAdapter;
+
 @Testcontainers
 class ChatRedisFoundationProcessTest {
     private static final String PASSWORD = "foundation-test-only-password";
+    private static final String REDIS_IMAGE = System.getProperty("chat.foundation.redis-image", "redis:8.10.2");
+    private static final String CHAT_USER = "chat-foundation";
+    private static final String ACL = """
+            user default off
+            user chat-foundation on >%s ~foundation:chat:* &foundation:chat:room:* &foundation:chat:control:v1 \
+            +hello +ping +quit +client|setinfo +client|setname \
+            +get +set +del +pexpire +eval +evalsha +script|load +publish \
+            +subscribe +psubscribe +unsubscribe +punsubscribe
+            user core-foundation on >%s &foundation:chat:control:v1 \
+            +hello +ping +quit +client|setinfo +client|setname +publish
+            user probe-publisher on >%s &* +hello +ping +quit +client|setinfo +client|setname +publish
+            """.formatted(PASSWORD, PASSWORD, PASSWORD);
     @Container
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
             .withDatabaseName("chat_foundation").withUsername("foundation").withPassword(PASSWORD);
     @Container
-    private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7.2.6")
-            .withExposedPorts(6379).withCommand("redis-server", "--requirepass", PASSWORD, "--maxmemory-policy",
-                    "noeviction")
+    private static final GenericContainer<?> REDIS = new GenericContainer<>(REDIS_IMAGE)
+            .withExposedPorts(6379).withCopyToContainer(Transferable.of(ACL), "/test/users.acl")
+            .withCommand("redis-server", "--aclfile", "/test/users.acl", "--maxmemory", "384mb",
+                    "--maxmemory-policy", "noeviction", "--appendonly", "no", "--save", "")
             .withCreateContainerCmdModifier(command -> command.getHostConfig()
                     .withPortBindings(PortBinding.parse("127.0.0.1:" + redisPort() + ":6379")));
     private final ObjectMapper mapper = new ObjectMapper();
@@ -72,7 +92,7 @@ class ChatRedisFoundationProcessTest {
         await(() -> received(first, backward) == 1 && received(second, backward) == 1);
 
         var properties = new ChatRedisProperties("foundation", REDIS.getHost(), REDIS.getMappedPort(6379),
-                "", PASSWORD, false, Duration.ofSeconds(1), Duration.ofSeconds(1));
+                "probe-publisher", PASSWORD, false, Duration.ofSeconds(1), Duration.ofSeconds(1));
         try (var publisher = new ChatRedisConnection(properties)) {
             publisher.commands().sync().publish("other:chat:room:1", "wrong-environment");
             publisher.commands().sync().publish("foundation-extra:chat:room:1", "wrong-prefix");
@@ -84,25 +104,38 @@ class ChatRedisFoundationProcessTest {
         assertFalse(status(second).toString().contains("wrong-"));
         assertEquals(200, health(first, "readiness"));
         assertEquals(200, health(second, "readiness"));
+        assertTrue(status(first).path("subscriptionsReady").asBoolean());
+        assertTrue(status(second).path("subscriptionsReady").asBoolean());
 
         var invalid = new ChatRedisProperties("foundation", REDIS.getHost(), REDIS.getMappedPort(6379),
                 "", "invalid-test-password", false, Duration.ofSeconds(1), Duration.ofSeconds(1));
         var failure = assertThrows(IllegalStateException.class, () -> new ChatRedisConnection(invalid));
         assertFalse(failure.toString().contains("invalid-test-password"));
 
-        REDIS.getDockerClient().stopContainerCmd(REDIS.getContainerId()).withTimeout(1).exec();
-        await(() -> health(first, "readiness") == 503 && health(second, "readiness") == 503);
-        await(() -> disconnected(first) && disconnected(second));
-        assertEquals(200, health(first, "liveness"));
-        assertEquals(200, health(second, "liveness"));
-        REDIS.getDockerClient().startContainerCmd(REDIS.getContainerId()).exec();
-        await(() -> health(first, "readiness") == 200 && health(second, "readiness") == 200);
-        // PUBLISH's recipient count confirms that both subscriptions have actually returned, not merely PING.
-        String recovered = "recovered-" + UUID.randomUUID();
-        await(() -> publishToBoth(first, recovered));
-        await(() -> received(first, recovered) >= 1 && received(second, recovered) >= 1);
-        String finalMessage = publish(second, "control");
-        await(() -> received(first, finalMessage) == 1 && received(second, finalMessage) == 1);
+        var offlineProperties = new ChatRedisProperties("foundation", REDIS.getHost(), REDIS.getMappedPort(6379),
+                CHAT_USER, PASSWORD, false, Duration.ofSeconds(1), Duration.ofSeconds(1));
+        try (var offline = new ChatRedisConnection(offlineProperties)) {
+            REDIS.getDockerClient().stopContainerCmd(REDIS.getContainerId()).withTimeout(1).exec();
+            await(() -> health(first, "readiness") == 503 && health(second, "readiness") == 503);
+            await(() -> disconnected(first) && disconnected(second));
+            await(() -> !offline.isConnected());
+            String rejectedKey = "foundation:chat:state:{room:1}:e:2:rejected";
+            assertThrows(RedisException.class, () -> offline.commands().sync().set(rejectedKey, "must-not-replay"));
+            assertFalse(status(first).path("subscriptionsReady").asBoolean());
+            assertFalse(status(second).path("subscriptionsReady").asBoolean());
+            assertEquals(200, health(first, "liveness"));
+            assertEquals(200, health(second, "liveness"));
+            REDIS.getDockerClient().startContainerCmd(REDIS.getContainerId()).exec();
+            await(() -> health(first, "readiness") == 200 && health(second, "readiness") == 200);
+            // PUBLISH's recipient count confirms that both subscriptions have actually returned, not merely PING.
+            String recovered = "recovered-" + UUID.randomUUID();
+            await(() -> publishToBoth(first, recovered));
+            await(() -> received(first, recovered) >= 1 && received(second, recovered) >= 1);
+            String finalMessage = publish(second, "control");
+            await(() -> received(first, finalMessage) == 1 && received(second, finalMessage) == 1);
+            await(offline::isConnected);
+            assertNull(offline.commands().sync().get(rejectedKey));
+        }
 
         stop(first);
         assertFalse(first.process().isAlive());
@@ -113,7 +146,8 @@ class ChatRedisFoundationProcessTest {
                 "firstPid", first.process().pid(), "secondPid", second.process().pid(),
                 "database", "chat_foundation", "bidirectionalPubSub", true, "namespaceIsolation", true,
                 "redisRestartAndResubscribe", true, "livenessDuringRedisOutage", true,
-                "sigtermAndSurvivingProcess", true, "productClusterReady", false)));
+                "sigtermAndSurvivingProcess", true, "productClusterReady", false,
+                "redisImage", REDIS_IMAGE)));
     }
 
     private Node start(String name) throws Exception {
@@ -129,13 +163,18 @@ class ChatRedisFoundationProcessTest {
                 "--chat.message-cleanup.enabled=false", "--recommendation.ai.base-url=http://127.0.0.1:1",
                 "--speech.transcription.ai.base-url=http://127.0.0.1:1",
                 "--location.reverse-geocoding.base-url=http://127.0.0.1:1",
-                "--management.endpoint.health.group.readiness.include=readinessState,db,chatRedis",
+                "--management.endpoint.health.group.readiness.include=" +
+                        "readinessState,db,chatRedis,chatRedisSubscriptions",
                 "--server.shutdown=graceful", "--spring.lifecycle.timeout-per-shutdown-phase=5s");
-        builder.environment().putAll(Map.of("TEST_DB_URL", MYSQL.getJdbcUrl() + "?connectionTimeZone=UTC",
-                "TEST_DB_USERNAME", MYSQL.getUsername(), "TEST_DB_PASSWORD", MYSQL.getPassword(),
-                "CHAT_REDIS_ENABLED", "true", "CHAT_REDIS_ENVIRONMENT", "foundation",
-                "CHAT_REDIS_HOST", REDIS.getHost(), "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(),
-                "CHAT_REDIS_PASSWORD", PASSWORD, "CHAT_REDIS_SSL", "false"));
+        builder.environment()
+                .putAll(Map.ofEntries(Map.entry("TEST_DB_URL", MYSQL.getJdbcUrl() + "?connectionTimeZone=UTC"),
+                        Map.entry("TEST_DB_USERNAME", MYSQL.getUsername()),
+                        Map.entry("TEST_DB_PASSWORD", MYSQL.getPassword()),
+                        Map.entry("CHAT_REDIS_ENABLED", "true"), Map.entry("CHAT_REDIS_ENVIRONMENT", "foundation"),
+                        Map.entry("CHAT_REDIS_HOST", REDIS.getHost()),
+                        Map.entry("CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString()),
+                        Map.entry("CHAT_REDIS_USERNAME", CHAT_USER), Map.entry("CHAT_REDIS_PASSWORD", PASSWORD),
+                        Map.entry("CHAT_REDIS_SSL", "false")));
         builder.redirectErrorStream(true).redirectOutput(evidence.resolve(name + ".log").toFile());
         Node node = new Node(builder.start(), port);
         nodes.add(node);
@@ -243,6 +282,60 @@ class ChatRedisFoundationProcessTest {
     }
 
     private record Node(Process process, int port) {
+    }
+
+    @Test
+    void namedAclAccountsRestrictKeysChannelsAndSubscriptionReadiness() throws Exception {
+        var chatProperties = new ChatRedisProperties("foundation", REDIS.getHost(), REDIS.getMappedPort(6379),
+                CHAT_USER, PASSWORD, false, Duration.ofSeconds(1), Duration.ofSeconds(1));
+        var channels = new ChatRedisChannels(chatProperties);
+        try (var chat = new ChatRedisConnection(chatProperties)) {
+            assertFalse(chat.areSubscriptionsReady());
+            var subscription = chat.openSubscription(channels, new RedisPubSubAdapter<>() {
+            });
+            await(subscription::isReady);
+            assertTrue(chat.areSubscriptionsReady());
+            var commands = chat.commands().sync();
+            String key = channels.roomStateKey(1, 2, "presence");
+            String script = "return redis.call('SET', KEYS[1], ARGV[1])";
+            String sha = commands.scriptLoad(script);
+            assertEquals("OK", commands.evalsha(sha, ScriptOutputType.STATUS, new String[]{key}, "v2"));
+            assertEquals("v2", commands.get(key));
+            assertThrows(RedisCommandExecutionException.class, () -> commands.set("other:chat:key", "denied"));
+            assertThrows(RedisCommandExecutionException.class,
+                    () -> commands.publish("other:chat:control:v1", "denied"));
+            assertThrows(RedisCommandExecutionException.class, commands::flushall);
+            subscription.close();
+            subscription.close();
+            assertFalse(subscription.isReady());
+            assertFalse(chat.areSubscriptionsReady());
+            var health = new ChatRedisConfiguration();
+            assertEquals("UP", health.chatRedisHealthIndicator(chat).health().getStatus().getCode());
+            assertEquals("DOWN", health.chatRedisSubscriptionHealthIndicator(chat).health().getStatus().getCode());
+            var replacement = chat.openSubscription(channels, new RedisPubSubAdapter<>() {
+            });
+            await(replacement::isReady);
+            assertTrue(chat.areSubscriptionsReady());
+            chat.close();
+            assertFalse(replacement.isReady());
+            assertThrows(IllegalStateException.class, chat::commands);
+        }
+        var coreProperties = new ChatRedisProperties("foundation", REDIS.getHost(), REDIS.getMappedPort(6379),
+                "core-foundation", PASSWORD, false, Duration.ofSeconds(1), Duration.ofSeconds(1));
+        try (var core = new ChatRedisConnection(coreProperties)) {
+            assertEquals("PONG", core.commands().sync().ping());
+            core.commands().sync().publish(channels.controlChannel(), "synthetic-revocation");
+            assertThrows(RedisCommandExecutionException.class,
+                    () -> core.commands().sync().publish(channels.roomChannel(1), "denied"));
+            assertThrows(RedisCommandExecutionException.class,
+                    () -> core.commands().sync().get(channels.roomStateKey(1, 2, "presence")));
+            var failure = assertThrows(IllegalStateException.class,
+                    () -> core.openSubscription(channels, new RedisPubSubAdapter<>() {
+                    }));
+            assertFalse(failure.toString().contains(PASSWORD));
+            assertFalse(core.areSubscriptionsReady());
+            assertTrue(core.isConnected());
+        }
     }
 
     private static int redisPort() {

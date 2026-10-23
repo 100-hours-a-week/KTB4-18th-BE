@@ -78,6 +78,7 @@ tasks.named('test') {
 	useJUnitPlatform()
 	exclude '**/ChatRecoveryProcessIntegrationTest.class'
 	exclude '**/ChatRedisFoundationProcessTest.class'
+	exclude '**/ChatRedisSecurityIntegrationTest.class'
 }
 
 // Explicit integration gate: Docker is required; a missing daemon must fail this task.
@@ -87,7 +88,9 @@ tasks.register('chatRedisFoundationTest', Test) {
 	classpath = sourceSets.test.runtimeClasspath
 	useJUnitPlatform()
 	include '**/ChatRedisFoundationProcessTest.class'
+	include '**/ChatRedisSecurityIntegrationTest.class'
 	systemProperty 'chat.foundation.classpath', sourceSets.test.runtimeClasspath.asPath
+	systemProperty 'chat.foundation.redis-image', providers.gradleProperty('chatRedisImage').getOrElse('redis:8.10.2')
 	systemProperty 'user.timezone', 'UTC'
 	outputs.upToDateWhen { false }
 }

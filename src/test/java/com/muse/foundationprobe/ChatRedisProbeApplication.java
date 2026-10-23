@@ -20,9 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.muse.meomuneum.MeomuneumBackendApplication;
 import com.muse.meomuneum.chat.redis.ChatRedisChannels;
 import com.muse.meomuneum.chat.redis.ChatRedisConnection;
+import com.muse.meomuneum.chat.redis.ChatRedisSubscription;
 
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
-import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import io.micrometer.core.instrument.MeterRegistry;
 
 /** Test-classpath-only entry point. Never included in bootJar or discovered by the product component scan. */
@@ -55,7 +55,7 @@ public class ChatRedisProbeApplication {
         private final ChatRedisChannels channels;
         private final JdbcTemplate jdbc;
         private final MeterRegistry meters;
-        private final StatefulRedisPubSubConnection<String, String> subscription;
+        private final ChatRedisSubscription subscription;
         private final List<Map<String, String>> received = new CopyOnWriteArrayList<>();
 
         ProbeController(ChatRedisConnection connection, ChatRedisChannels channels, JdbcTemplate jdbc,
@@ -64,8 +64,7 @@ public class ChatRedisProbeApplication {
             this.channels = channels;
             this.jdbc = jdbc;
             this.meters = meters;
-            subscription = connection.openSubscription();
-            subscription.addListener(new RedisPubSubAdapter<>() {
+            subscription = connection.openSubscription(channels, new RedisPubSubAdapter<>() {
                 @Override
                 public void message(String channel, String message) {
                     received.add(Map.of("channel", channel, "body", message));
@@ -76,15 +75,14 @@ public class ChatRedisProbeApplication {
                     received.add(Map.of("channel", channel, "body", message));
                 }
             });
-            subscription.sync().psubscribe(channels.roomPattern());
-            subscription.sync().subscribe(channels.controlChannel());
         }
 
         @GetMapping("/status")
         Map<String, Object> status() {
             return Map.of("pid", ProcessHandle.current().pid(), "database",
                     jdbc.queryForObject("SELECT DATABASE()", String.class), "received", List.copyOf(received),
-                    "connected", meters.get("chat.redis.connected").gauge().value());
+                    "connected", meters.get("chat.redis.connected").gauge().value(),
+                    "subscriptionsReady", subscription.isReady());
         }
 
         @PostMapping("/publish")
