@@ -26,7 +26,7 @@ class ChatRoomDomainTest {
 
         ChatRoom chatRoom = ChatRoom.create(sigungu);
 
-        assertEquals(ChatRoom.DEFAULT_CAPACITY, chatRoom.getCapacity());
+        assertEquals(1000, chatRoom.getCapacity());
         assertEquals(ChatRoomStatus.ACTIVE, chatRoom.getStatus());
         assertEquals(sigungu, chatRoom.getRegion());
     }

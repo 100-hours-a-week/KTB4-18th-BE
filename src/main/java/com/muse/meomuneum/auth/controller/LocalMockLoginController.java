@@ -21,9 +21,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.muse.meomuneum.auth.application.LocalMockLoginService;
 import com.muse.meomuneum.auth.application.RefreshTokenCookieFactory;
+import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.LocalMockLoginForbiddenException;
 import com.muse.meomuneum.auth.response.AuthSuccessCode;
-import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.global.response.ApiResponse;
 
 @RestController

@@ -71,6 +71,9 @@ class ChatRoomEntryIntegrationTest {
     private ChatRoomEntryService service;
 
     @Autowired
+    private ChatRoomProvisioningService provisioning;
+
+    @Autowired
     private com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry authSessions;
 
     @org.springframework.test.context.bean.override.mockito.MockitoBean
@@ -111,6 +114,23 @@ class ChatRoomEntryIntegrationTest {
         jdbcTemplate.update("DELETE FROM chat_room_members");
         jdbcTemplate.update("DELETE FROM users WHERE email LIKE 'chat-entry-%'");
         jdbcTemplate.update("UPDATE chat_rooms SET capacity = 25, status = 'ACTIVE'");
+    }
+
+    @Test
+    void provisionsThousandSeatRoomsAndReportsCapacityWithoutChangingExistingRooms() {
+        ChatRoom existing = roomFor("41135");
+        Region parent = regionRepository.findByCodeAndActiveTrue("41").orElseThrow();
+        Region region = regionRepository.save(Region.create("capacity-provision", "신규정원시험", RegionLevel.SIGUNGU,
+                parent));
+        try {
+            assertEquals(1, provisioning.provisionMissingRooms());
+            assertEquals(1000, service.findByRegion(region.getId()).capacity());
+            assertEquals(25, service.findByRegion(existing.getRegion().getId()).capacity());
+            assertEquals(0, provisioning.provisionMissingRooms());
+        } finally {
+            chatRoomRepository.findByRegion_Id(region.getId()).ifPresent(chatRoomRepository::delete);
+            regionRepository.delete(region);
+        }
     }
 
     @Test

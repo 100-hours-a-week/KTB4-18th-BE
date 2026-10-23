@@ -102,6 +102,10 @@ recommendation:
     connect-timeout: ${RECOMMENDATION_AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${RECOMMENDATION_AI_READ_TIMEOUT:120s}
 
+music:
+  search:
+    country: ${MUSIC_SEARCH_COUNTRY:US}
+
 kakao:
   maps:
     rest-api-key: ${KAKAO_REST_API_KEY:}

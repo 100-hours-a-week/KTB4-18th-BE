@@ -52,8 +52,8 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
+import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
-import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
@@ -78,8 +78,8 @@ class MusicRecordApiDatabaseIntegrationTest {
     private MusicRecordRepository musicRepository;
     @MockitoBean
     private ItunesMusicSearchClient itunes;
-    @MockitoBean
-    private MusicSearchStorageService searchStorage;
+    @Autowired
+    private MusicSearchCandidateCache searchStorage;
     @Autowired
     private MusicRecordService musicRecordService;
     @Autowired
@@ -91,6 +91,7 @@ class MusicRecordApiDatabaseIntegrationTest {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        when(itunes.country()).thenReturn("KR");
         when(itunes.lookup(anyString())).thenAnswer(invocation -> Optional.of(
                 new MusicItem(null, "ITUNES", invocation.getArgument(0), "테스트 노래", "테스트 가수",
                         null, null, null, false)));
@@ -446,9 +447,10 @@ class MusicRecordApiDatabaseIntegrationTest {
                     + "VALUES (?,?,?,?,?)", id, "ITUNES", String.valueOf(id), query + " 노래", "가수");
         }
         ItunesMusicSearchClient itunes = mock(ItunesMusicSearchClient.class);
+        when(itunes.country()).thenReturn("KR");
         when(itunes.search(query)).thenReturn(List.of());
         MusicRecordService service = new MusicRecordService(musicRepository, itunes, locations, searchCursors,
-                mock(MusicSearchStorageService.class));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
 
         var first = service.search(query, "ITUNES", null, 20);
         assertThat(first.items()).hasSize(20);
