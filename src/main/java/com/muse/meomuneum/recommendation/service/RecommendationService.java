@@ -230,7 +230,7 @@ public class RecommendationService {
         for (RecommendationRepository.HistoryItem item : repository.findHistoryItems(ids)) {
             result.computeIfAbsent(item.recommendationId(), ignored -> new java.util.ArrayList<>())
                     .add(new RecommendationHistoryResponse.Item(item.rankNo(), item.musicId(), item.title(),
-                            item.artistName()));
+                            item.artistName(), item.albumCoverUrl(), item.previewUrl()));
         }
         result.replaceAll((id, items) -> List.copyOf(items));
         return result;
