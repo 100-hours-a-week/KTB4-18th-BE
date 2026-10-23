@@ -639,3 +639,61 @@ FE의 마스킹 ACK 호환성 변경이 선행되어야 한다. 기존 자동 �
 
 목록·예문·검사 순서·배포/복구 기준은 [탐지 정책](api/chat-moderation-policy.md),
 실제 검증 결과는 [마스킹 검증 기록](api/chat-masking-verification.md)을 참고한다.
+
+## Redis 연결·구독 기반 (P1 2단계)
+
+`feature/chat-redis-foundation`은 최신 `dev`의 지역 채팅에 Redis 연결 기반을 추가한다.
+제품 메시지의 서버 간 전달, 공유 정원·참여 상태, Core 인증 연동과 Chat 앱 분리는 후속 작업이다.
+현재 제품의 정원·연결 권한은 여전히 로컬 상태에 의존하므로 이 단계만으로 여러 서버를 운영하지 않는다.
+MySQL을 최종 원장으로 두고 Redis를 투영·캐시·이벤트 전달에 사용하는 계약을 따른다.
+
+| 환경 변수 | 기본값 / 의미 |
+| --- | --- |
+| `CHAT_REDIS_ENABLED` | `false`; 비활성일 때 연결과 전용 health bean을 생성하지 않음 |
+| `CHAT_REDIS_ENVIRONMENT` | 활성화 시 필수 환경 namespace |
+| `CHAT_REDIS_HOST`, `CHAT_REDIS_PORT` | `localhost`, `6379` |
+| `CHAT_REDIS_USERNAME`, `CHAT_REDIS_PASSWORD` | `default`, 활성화 시 비밀번호 필수; 앱별 명명 ACL 권장 |
+| `CHAT_REDIS_SSL` | `true`; 인증서·호스트명 검증, 자동 평문 전환 없음 |
+| `CHAT_REDIS_SSL_CA_CERTIFICATE` | 선택 PEM CA 파일 경로; 지정 시 TLS 필수 |
+| `CHAT_REDIS_CONNECT_TIMEOUT`, `CHAT_REDIS_COMMAND_TIMEOUT` | 각각 `1s` |
+| `CHAT_REDIS_REQUEST_QUEUE_SIZE` | `1024`; 허용 범위 1~65536 |
+
+운영 비밀값은 배포 환경에서 주입한다. `.env.example`을 Spring이 자동으로 읽지는 않는다.
+EC2 Docker Redis의 TLS 제공 여부는 클라우드 팀과 확인해야 한다. 사설 CA는 신뢰 파일로 제공하고
+인증서 검증을 우회하지 않는다. 운영 Core/Chat ACL 계정 분리와 Core 네트워크 허용도 별도 조치가 필요하다.
+
+명령 연결과 Pub/Sub 연결을 분리한다. `chatRedis` health와 `chat.redis.connected` 지표는 명령 연결,
+`chatRedisSubscriptions`와 `chat.redis.subscriptions.ready`는 실제 구독 ACK 준비 상태다.
+구독이 없거나 끊기면 구독 health는 DOWN이며 재접속 후 방·제어 구독 ACK를 모두 받아야 UP이다.
+기존 제품 readiness group에 이 항목을 자동 추가하지 않는다. 후속 relay가 관리 구독을 생성하고
+복구·배포 계약과 함께 readiness에 연결해야 한다. 사용자 연결 정리·전송 중단도 후속 작업이다.
+
+환경별 채널은 `<env>:chat:room:*`, `<env>:chat:control:v1`이다.
+Redis ACL의 `PSUBSCRIBE`는 실제 패턴과 같은 채널 권한을 요구하므로 두 패턴을 명시한다.
+Chat은 방·제어 발행/구독과 제한된 키·Lua 권한, Core는 제어 발행만 허용하는 분리를 검증한다.
+상태 키 생성기는 `<env>:chat:state:{room:<id>}:e:<epoch>:<component>` 형식만 제공한다.
+epoch 발급·원자 상태 전이·복구 알고리즘은 아직 구현하지 않았다.
+
+끊긴 연결의 신규 명령은 즉시 거절하고 명령 큐와 대기 시간을 제한한다.
+이미 전송된 명령의 성공 여부나 Pub/Sub 유실까지 보장하지 않으므로 후속 제품 로직에는
+멱등 처리와 MySQL 기반 복구가 필요하다. 종료 시 관리 구독·명령 연결·클라이언트를 정리한다.
+
+```sh
+./gradlew test --tests '*ChatRedisConfigurationTest' --no-daemon
+./gradlew chatRedisFoundationTest --no-daemon
+```
+
+명시적 통합 task는 Docker가 필요하며 기본 Redis 이미지는 `redis:8.10.2`다.
+`-PchatRedisImage=redis:<version>`으로 검증 이미지를 바꿀 수 있다.
+격리 MySQL 9.7.0·Redis와 실제 두 JVM으로 합성 이벤트 양방향 전달, 환경 격리,
+Redis 중단·재구독·정상 종료를 확인한다. 명명 ACL·Lua·권한 거부,
+합성 TLS의 CA 신뢰·호스트명 검증과 `noeviction` 메모리 초과 후 복구도 시험한다.
+테스트용 probe·인증서·비밀번호는 제품 JAR 및 운영 환경에 주입하지 않는다.
+이 검증은 실제 제품의 다중 서버 REST/STOMP나 운영 TLS·부하·배포 검증을 뜻하지 않는다.
+Redis 기반만 되돌릴 때는 활성화를 해제한다. 이번 단계에는 DB migration이 없다.
+
+2026-10-23 검증에서 Redis 전용 4개 전부, 채팅 회귀 201개 중 197개가 통과했다
+(채팅 조건부 제외 4개, 실패 0개). Spotless·Checkstyle main/test·bootJar도 통과했다.
+전체 테스트는 738개 중 705통과·10실패·23조건부 제외다. 실패 10개는 프로필 이미지 테스트의
+`AuthService` 구성 누락, 약관·동시 가입 테스트이며 변경 전 `dev` 7406ba5에서도 동일하게 재현했다.
+격리 검증 기록은 `build/redis-foundation-reintegration/summary.json`에 보존한다.
