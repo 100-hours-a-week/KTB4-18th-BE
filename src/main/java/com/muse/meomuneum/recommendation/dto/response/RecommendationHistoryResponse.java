@@ -9,6 +9,14 @@ public record RecommendationHistoryResponse(List<Group> groups, String next_curs
     public record Recommendation(long recommendation_id, String status, List<Item> items) {
     }
 
-    public record Item(int rank_no, long music_id, String title, String artist_name) {
+    public record Item(int rank_no, long music_id, String title, String artist_name, String album_cover_url,
+            String preview_url) {
+        public Item(int rankNo, long musicId, String title, String artistName, String albumCoverUrl) {
+            this(rankNo, musicId, title, artistName, albumCoverUrl, null);
+        }
+
+        public Item(int rankNo, long musicId, String title, String artistName) {
+            this(rankNo, musicId, title, artistName, null, null);
+        }
     }
 }

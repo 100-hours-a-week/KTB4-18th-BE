@@ -199,12 +199,13 @@ public class RecommendationRepository {
             return List.of();
         }
         String markers = String.join(",", Collections.nCopies(sessionIds.size(), "?"));
-        String sql = "SELECT i.recommendation_session_id, i.rank_no, m.id, m.title, m.artist_name "
-                + "FROM recommendation_items i JOIN music m ON m.id = i.music_id "
+        String sql = "SELECT i.recommendation_session_id, i.rank_no, m.id, m.title, m.artist_name, "
+                + "m.album_cover_url, m.preview_url FROM recommendation_items i JOIN music m ON m.id = i.music_id "
                 + "WHERE i.recommendation_session_id IN (" + markers + ") "
                 + "ORDER BY i.recommendation_session_id DESC, i.rank_no ASC";
         return jdbc.query(sql, (row, index) -> new HistoryItem(row.getLong("recommendation_session_id"),
-                row.getInt("rank_no"), row.getLong("id"), row.getString("title"), row.getString("artist_name")),
+                row.getInt("rank_no"), row.getLong("id"), row.getString("title"), row.getString("artist_name"),
+                row.getString("album_cover_url"), row.getString("preview_url")),
                 sessionIds.toArray());
     }
 
@@ -220,6 +221,15 @@ public class RecommendationRepository {
     public record HistorySession(long id, String status, Instant completedAt) {
     }
 
-    public record HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName) {
+    public record HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName,
+            String albumCoverUrl, String previewUrl) {
+        public HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName,
+                String albumCoverUrl) {
+            this(recommendationId, rankNo, musicId, title, artistName, albumCoverUrl, null);
+        }
+
+        public HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName) {
+            this(recommendationId, rankNo, musicId, title, artistName, null, null);
+        }
     }
 }
