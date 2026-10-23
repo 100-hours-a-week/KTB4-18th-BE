@@ -22,6 +22,10 @@ public class ChatRedisConfiguration {
         registries.orderedStream().forEach(registry -> Gauge.builder("chat.redis.connected", connection,
                 value -> value.isConnected() ? 1 : 0).description("Chat Redis command connection state")
                 .register(registry));
+        registries.orderedStream().forEach(registry -> Gauge.builder("chat.redis.subscriptions.ready", connection,
+                value -> value.areSubscriptionsReady() ? 1 : 0)
+                .description("All managed Chat Redis subscriptions acknowledged")
+                .register(registry));
         return connection;
     }
 
@@ -39,5 +43,10 @@ public class ChatRedisConfiguration {
                 return Health.down().build();
             }
         };
+    }
+
+    @Bean("chatRedisSubscriptions")
+    public HealthIndicator chatRedisSubscriptionHealthIndicator(ChatRedisConnection connection) {
+        return () -> connection.areSubscriptionsReady() ? Health.up().build() : Health.down().build();
     }
 }
