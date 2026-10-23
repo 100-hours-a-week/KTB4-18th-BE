@@ -1,0 +1,101 @@
+openapi: 3.1.0
+info:
+  title: 마이페이지 챗봇 추천 이력 조회 계약
+  version: 1.0.0
+paths:
+  /api/v1/users/me/recommendations:
+    get:
+      summary: 로그인 사용자의 챗봇 추천 이력 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+          description: 이전 응답의 next_cursor
+        - in: query
+          name: size
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 20
+      responses:
+        '200':
+          description: 완료된 추천 이력 페이지
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/RecommendationHistory'
+        '401':
+          description: Bearer 인증 필요
+components:
+  schemas:
+    RecommendationHistory:
+      type: object
+      required: [groups, next_cursor, has_next]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationHistoryGroup'
+        next_cursor:
+          type: [string, 'null']
+        has_next:
+          type: boolean
+    RecommendationHistoryGroup:
+      type: object
+      required: [date, recommendations]
+      properties:
+        date:
+          type: string
+          format: date
+        recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationHistoryEntry'
+    RecommendationHistoryEntry:
+      type: object
+      required: [recommendation_id, status, items]
+      properties:
+        recommendation_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationHistoryItem'
+    RecommendationHistoryItem:
+      type: object
+      required: [rank_no, music_id, title, artist_name, album_cover_url, preview_url]
+      properties:
+        rank_no:
+          type: integer
+        music_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        artist_name:
+          type: string
+        album_cover_url:
+          type: [string, 'null']
+          format: uri
+        preview_url:
+          type: [string, 'null']
+          format: uri
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
