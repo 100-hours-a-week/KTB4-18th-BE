@@ -7,11 +7,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.muse.meomuneum.chat.ban.service.ChatBanStorageService;
@@ -196,10 +197,12 @@ public class ChatRoomEntryService {
         sockets.close(ended, 4100, "CHAT_LEFT");
     }
 
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void loggedOut(ChatSessionLogoutEvent event) {
         requireAuthSession(event.authSessionId());
-        Set<String> ended = presence.exclusive(() -> {
+        Set<String> ended = new HashSet<>(authSessions.connections(event.userId(), event.authSessionId()));
+        sockets.close(ended, 4100, "CHAT_LOGGED_OUT");
+        ended.addAll(presence.exclusive(() -> {
             sessionAccess.revoke(event.userId(), event.authSessionId());
             List<Long> membershipIds = transactions.execute(status -> {
                 userRepository.findActiveByIdForUpdate(event.userId());
@@ -209,10 +212,10 @@ public class ChatRoomEntryService {
                 memberRepository.saveAllAndFlush(members);
                 return members.stream().map(ChatRoomMember::getId).toList();
             });
-            Set<String> sessions = new HashSet<>(authSessions.connections(event.userId(), event.authSessionId()));
+            Set<String> sessions = new HashSet<>();
             membershipIds.forEach(id -> sessions.addAll(presence.remove(event.userId(), id)));
             return Set.copyOf(sessions);
-        });
+        }));
         sockets.close(ended, 4100, "CHAT_LOGGED_OUT");
     }
 

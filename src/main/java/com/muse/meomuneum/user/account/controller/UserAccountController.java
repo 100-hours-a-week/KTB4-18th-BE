@@ -18,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -105,6 +106,7 @@ public class UserAccountController {
     }
 
     @PatchMapping("/password")
+    @Transactional
     public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
             Authentication authentication,
             HttpServletRequest servletRequest) {
@@ -123,9 +125,14 @@ public class UserAccountController {
     }
 
     @DeleteMapping
+    @Transactional
     public ResponseEntity<Void> withdraw(@Valid @RequestBody WithdrawRequest request, Authentication authentication,
             HttpServletRequest servletRequest) {
-        userAccountService.withdraw(userId(authentication), request.password());
+        Long userId = userId(authentication);
+        userAccountService.withdraw(userId, request.password());
+        if (authService != null) {
+            authService.revokeAllSessions(userId, "WITHDRAWAL");
+        }
         if (servletRequest.getSession(false) != null) {
             servletRequest.getSession(false).invalidate();
         }

@@ -7,10 +7,12 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,6 +24,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -303,6 +308,28 @@ class HazelcastAuthStateStoreTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void logoutCleanupTombstonePreventsDelayedQueueCreateFromResurrectingTicket() throws Exception {
+        store.restoreActiveTicketReservations();
+        String operationId = UUID.randomUUID().toString();
+        String ticketId = hmac("ticket:" + operationId);
+
+        store.cancelTicketById(ticketId);
+
+        assertThatThrownBy(() -> store.createOrReuseTicket(null, operationId))
+                .isInstanceOf(AuthStateConflictException.class)
+                .hasMessage("QUEUE_TICKET_CANCELLED");
+        assertThat(member.<String, HazelcastAuthStateStore.Ticket>getMap("login-queue-tickets-v2")
+                .get(ticketId)).isNull();
+        assertThat(store.activeTicketCount()).isZero();
+    }
+
+    private String hmac(String value) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(properties.hmacKey().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
     }
 
     @Test

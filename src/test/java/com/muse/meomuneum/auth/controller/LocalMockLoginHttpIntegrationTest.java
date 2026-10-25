@@ -25,6 +25,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.application.LocalMockLoginService;
 import com.muse.meomuneum.auth.application.RefreshTokenCookieFactory;
 import com.muse.meomuneum.auth.exception.LocalMockLoginExceptionHandler;
@@ -46,6 +47,9 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 @Import({SecurityConfig.class, CorsConfig.class, LocalMockLoginExceptionHandler.class,
         LocalMockLoginHttpIntegrationTest.LocalTestConfiguration.class})
 class LocalMockLoginHttpIntegrationTest {
+
+    @MockitoBean
+    private AuthFlowService authFlowService;
 
     @Autowired
     private MockMvc mockMvc;

@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -18,6 +19,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
@@ -36,11 +38,13 @@ public class ChatStompInterceptor implements ChannelInterceptor {
     private final ChatMessageDeliveryService delivery;
     private final ChatViewLifecycle views;
     private final ChatAuthSessionRegistry authSessions;
+    private final AuthFlowService authFlowService;
     private final Map<String, Identity> identities = new ConcurrentHashMap<>();
 
+    @Autowired
     public ChatStompInterceptor(JwtTokenProvider tokens, ChatRoomEntryService entry, Clock clock,
             ChatSocketSessions sockets, ChatMessageDeliveryService delivery, ChatViewLifecycle views,
-            ChatAuthSessionRegistry authSessions) {
+            ChatAuthSessionRegistry authSessions, AuthFlowService authFlowService) {
         this.tokens = tokens;
         this.entry = entry;
         this.clock = clock;
@@ -48,6 +52,13 @@ public class ChatStompInterceptor implements ChannelInterceptor {
         this.delivery = delivery;
         this.views = views;
         this.authSessions = authSessions;
+        this.authFlowService = authFlowService;
+    }
+
+    public ChatStompInterceptor(JwtTokenProvider tokens, ChatRoomEntryService entry, Clock clock,
+            ChatSocketSessions sockets, ChatMessageDeliveryService delivery, ChatViewLifecycle views,
+            ChatAuthSessionRegistry authSessions) {
+        this(tokens, entry, clock, sockets, delivery, views, authSessions, null);
     }
 
     @Override
@@ -57,6 +68,17 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             return message;
         }
         Map<String, Object> attributes = headers.getSessionAttributes();
+        if (attributes != null && headers.getCommand() != StompCommand.CONNECT && authFlowService != null) {
+            Identity existing = (Identity) attributes.get("chat.identity");
+            if (existing != null) {
+                try {
+                    authFlowService.assertActiveSession(existing.userId(), existing.authSessionId());
+                } catch (RuntimeException revokedOrUnavailable) {
+                    sockets.close(Set.of(headers.getSessionId()), 4102, "AUTH_REQUIRED");
+                    return null;
+                }
+            }
+        }
         if (headers.getCommand() == StompCommand.SEND) {
             Identity sender = attributes == null ? null : (Identity) attributes.get("chat.identity");
             if (sender == null || !sender.expiresAt().isAfter(clock.instant())) {
@@ -88,6 +110,9 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                 throw new IllegalArgumentException("AUTH_REQUIRED");
             }
             TokenClaims claims = tokens.parseAccessToken(authorization.substring(7));
+            if (authFlowService != null) {
+                authFlowService.assertActiveSession(claims.userId(), claims.sessionId());
+            }
             ChatAuthSessionRegistry.Context authContext = authSessions.resolve(claims, requestedAuthSession);
             Long roomId = positiveId(headers.getFirstNativeHeader("room_id"));
             Long membershipId = positiveId(headers.getFirstNativeHeader("membership_id"));
@@ -115,7 +140,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                 sockets.close(Set.of(headers.getSessionId()), 4103, "CHAT_VIEW_UNAVAILABLE");
                 throw failure;
             }
-            Identity identity = new Identity(claims.userId(), claims.expiresAt(), roomId, membershipId);
+            Identity identity = new Identity(claims.userId(), claims.sessionId(), claims.expiresAt(), roomId,
+                    membershipId);
             authSessions.register(headers.getSessionId(), authContext);
             attributes.put("chat.identity", identity);
             identities.put(headers.getSessionId(), identity);
@@ -183,6 +209,6 @@ public class ChatStompInterceptor implements ChannelInterceptor {
         throw new IllegalArgumentException("CHAT_MEMBERSHIP_REQUIRED");
     }
 
-    private record Identity(Long userId, Instant expiresAt, Long roomId, Long membershipId) {
+    private record Identity(Long userId, String authSessionId, Instant expiresAt, Long roomId, Long membershipId) {
     }
 }

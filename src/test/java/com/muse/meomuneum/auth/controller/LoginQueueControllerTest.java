@@ -76,13 +76,12 @@ class LoginQueueControllerTest {
 
         var response = controller.create(idempotencyKey, request);
 
-        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getStatusCode().value()).isEqualTo(202);
         assertThat(response.getHeaders().getFirst("Set-Cookie")).contains("MEO_QUEUE_V2=queue-cookie");
         assertThat(response.getBody()).isInstanceOf(ApiResponse.class);
         var body = (ApiResponse<?>) response.getBody();
-        assertThat(body.data()).isInstanceOf(QueueStatusResponse.class);
-        var status = (QueueStatusResponse) body.data();
-        assertThat(status.status()).isEqualTo(HazelcastAuthStateStore.TicketStatus.WAITING);
+        assertThat(body.message()).isEqualTo("AUTH_QUEUE_CREATE_IN_PROGRESS");
+        assertThat(body.data()).isNotNull();
         verify(store, never()).acquireRequestPermit();
     }
 

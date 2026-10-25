@@ -30,6 +30,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.config.SecurityConfig;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -96,6 +97,11 @@ class ProfileImageHttpIntegrationTest {
     @Import({SecurityConfig.class, UserAccountController.class, UserAccountExceptionHandler.class,
             CurrentUserResolver.class})
     static class HttpConfiguration {
+
+        @Bean
+        AuthService authService() {
+            return mock(AuthService.class);
+        }
 
         @Bean(destroyMethod = "")
         ProfileImageStorage profileImageStorage() throws Exception {
