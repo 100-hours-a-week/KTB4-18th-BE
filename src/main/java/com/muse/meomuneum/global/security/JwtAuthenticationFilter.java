@@ -18,7 +18,6 @@ import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
 import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -31,17 +30,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
-    private final UserAuthenticationService userAuthenticationService;
+    private final ActiveUserLookup userAuthenticationService;
     private final AuthFlowService sessionAuthority;
     private final DirectAuthProtectedSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority) {
+            ActiveUserLookup userAuthenticationService, AuthFlowService sessionAuthority) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority,
+            ActiveUserLookup userAuthenticationService, AuthFlowService sessionAuthority,
             DirectAuthProtectedSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
@@ -51,7 +50,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService) {
+            ActiveUserLookup userAuthenticationService) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null, null);
     }
 
