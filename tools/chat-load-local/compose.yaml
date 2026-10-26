@@ -1,0 +1,162 @@
+name: meomuneum-chat-load-local
+services:
+  mysql:
+    image: mysql:9.7.0@sha256:c11782aa2a96624c1efc121768641d96954faa136d6aa82751b032d8c426ffbc
+    cpus: 1.5
+    mem_limit: 1g
+    environment:
+      MYSQL_DATABASE: chat_load_local
+      MYSQL_USER: chat_load
+      MYSQL_PASSWORD: ${LOCAL_DB_PASSWORD:?run init.py}
+      MYSQL_ROOT_PASSWORD: ${LOCAL_DB_ROOT_PASSWORD:?run init.py}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    command: ["--innodb-buffer-pool-size=268435456", "--max-connections=100"]
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u $$MYSQL_USER -D $$MYSQL_DATABASE -Nse 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+    networks: [testnet]
+
+  hazelcast:
+    image: hazelcast/hazelcast:5.7.0@sha256:f086bf0ecb23fcb2e9a516e337e51018156b89df41543ab768b8468ab281ad67
+    cpus: 1
+    mem_limit: 768m
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx384m -XX:ActiveProcessorCount=2
+      HAZELCAST_CONFIG: /opt/hazelcast/config/hazelcast.yaml
+    volumes:
+      - ./hazelcast.yaml:/opt/hazelcast/config/hazelcast.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/5701'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [testnet]
+
+  redis:
+    image: redis:8.10.2@sha256:97ec88159e6d7cfb5ddef9015386087d58a912de80112f06ebdfa78fa5989901
+    profiles: [redis]
+    cpus: 0.5
+    mem_limit: 128m
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [testnet]
+
+  location-mock:
+    image: python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
+    cpus: 0.25
+    mem_limit: 64m
+    read_only: true
+    user: "10001:10001"
+    command: ["python", "-B", "/app/location-mock.py"]
+    volumes:
+      - ./location-mock.py:/app/location-mock.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [testnet]
+
+  backend:
+    build: .
+    image: meomuneum-chat-load-local-backend:baseline
+    cpus: 2
+    mem_limit: 1536m
+    environment:
+      SPRING_PROFILES_ACTIVE: loadtest
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/app/local.yaml
+      LOCAL_DB_PASSWORD: ${LOCAL_DB_PASSWORD:?run init.py}
+      AUTH_JWT_SECRET: ${LOCAL_AUTH_JWT_SECRET:?run init.py}
+      AUTH_STATE_HMAC_KEY: ${LOCAL_AUTH_HMAC_KEY:?run init.py}
+      AUTH_STATE_REPLAY_ENCRYPTION_KEY: ${LOCAL_AUTH_REPLAY_KEY:?run init.py}
+      LOCATION_TOKEN_SECRET: ${LOCAL_LOCATION_SECRET:?run init.py}
+    volumes:
+      - ./application.yaml:/app/local.yaml:ro
+    depends_on:
+      mysql: {condition: service_healthy}
+      hazelcast: {condition: service_healthy}
+      location-mock: {condition: service_healthy}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3; head -n 1 <&3 | grep -q "200"'
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 60s
+    networks: [testnet]
+
+  proxy:
+    image: nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284
+    cpus: 0.5
+    mem_limit: 64m
+    ports: ["127.0.0.1:18080:8080"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend: {condition: service_healthy}
+    networks: [testnet, ingress]
+
+  resource-metrics:
+    image: python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
+    cpus: 0.25
+    mem_limit: 64m
+    read_only: true
+    user: "10001:10001"
+    command: ["python", "-B", "/app/resource-metrics.py"]
+    volumes:
+      - ./resource-metrics.py:/app/resource-metrics.py:ro
+      - ./.runtime/metrics:/metrics:ro
+    networks: [testnet]
+
+  prometheus:
+    image: prom/prometheus:v3.13.0@sha256:c6b27ea434f8389bfe233fbc7be381cf50587c286e871bc842008f5a1b1908a7
+    cpus: 1
+    mem_limit: 512m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-remote-write-receiver
+    ports: ["127.0.0.1:19090:9090"]
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    networks: [testnet, ingress]
+
+  grafana:
+    image: grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+    cpus: 0.5
+    mem_limit: 512m
+    environment:
+      GF_SECURITY_ADMIN_USER: localtester
+      GF_SECURITY_ADMIN_PASSWORD: ${LOCAL_GRAFANA_PASSWORD:?run init.py}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_CHECK_FOR_UPDATES: "false"
+    ports: ["127.0.0.1:13000:3000"]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks: [testnet, ingress]
+
+networks:
+  ingress:
+    driver: bridge
+  testnet:
+    internal: true
+volumes:
+  mysql-data:
+  prometheus-data:
+  grafana-data:

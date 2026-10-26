@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+scrape_configs:
+  - job_name: local-resources
+    static_configs:
+      - targets: [resource-metrics:8080]
+  - job_name: backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [backend:8081]
+        labels:
+          environment: chat-load-local
+          server: baseline-a
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
