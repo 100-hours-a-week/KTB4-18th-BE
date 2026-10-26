@@ -53,6 +53,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
 	implementation 'com.hazelcast:hazelcast:5.7.0'
+	implementation 'io.lettuce:lettuce-core'
 	implementation 'org.flywaydb:flyway-mysql'
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -76,6 +77,22 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 	exclude '**/ChatRecoveryProcessIntegrationTest.class'
+	exclude '**/ChatRedisFoundationProcessTest.class'
+	exclude '**/ChatRedisSecurityIntegrationTest.class'
+}
+
+// Explicit integration gate: Docker is required; a missing daemon must fail this task.
+tasks.register('chatRedisFoundationTest', Test) {
+	dependsOn 'classes'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/ChatRedisFoundationProcessTest.class'
+	include '**/ChatRedisSecurityIntegrationTest.class'
+	systemProperty 'chat.foundation.classpath', sourceSets.test.runtimeClasspath.asPath
+	systemProperty 'chat.foundation.redis-image', providers.gradleProperty('chatRedisImage').getOrElse('redis:8.10.2')
+	systemProperty 'user.timezone', 'UTC'
+	outputs.upToDateWhen { false }
 }
 
 // Separate JVM lifecycle tests deliberately kill only the server process they create.
