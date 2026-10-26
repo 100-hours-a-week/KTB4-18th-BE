@@ -256,7 +256,7 @@ class AppSeparationProcessTest {
             // The existing authentication services publish this data-only event in both app layouts.
             assertFalse(core.stream().anyMatch(e -> (!e.isDirectory() && e.getName().contains("/chat/connection/")
                     && !e.getName().endsWith("/ChatSessionLogoutEvent.class"))
-                    || e.getName().contains("/chat/view/") || e.getName().contains("lettuce-core")
+                    || e.getName().contains("/chat/view/")
                     || e.getName().contains("spring-websocket")));
             assertFalse(chat.stream().anyMatch(e -> e.getName().contains("/auth/application/")
                     || e.getName().contains("/user/account/") || e.getName().contains("/recommendation/")

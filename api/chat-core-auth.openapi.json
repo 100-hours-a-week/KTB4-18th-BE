@@ -1,0 +1,373 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Chat→Core session validation contract",
+    "version": "1.0.0",
+    "description": "P1 Core 내부 세션 검증 계약. 4단계 구현 및 격리 검증; 운영 배포와 부하 SLO는 별도 검증."
+  },
+  "paths": {
+    "/internal/v1/auth/sessions/validate": {
+      "post": {
+        "operationId": "validateChatAuthSessions",
+        "description": "1~100 pairs, 32KiB 상한. 동일 sid 중복은 전체400(서로 다른 user 포함). 서비스 TLS+bearer 필요. Core 저장소 실패는 전체503. ACTIVE 잔여시간은 항목 read 시작 시점 기준. 각 응답 pair 및 순서 일치는 Chat이 검증. 1000ms 전체 deadline, 결과는 요청 시작부터 최대4000ms.",
+        "security": [
+          {
+            "ChatServiceBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pair별 판정. 요청과 동일한 항목·순서·길이; 소유자 검증 실패 등은 INACTIVE.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "항상 no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INTERNAL_AUTH_400_INVALID. 사용자 인증 결과와 구분.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "내부 인증 확인 실패",
+                  "data": {
+                    "code": "INTERNAL_AUTH_400_INVALID"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INTERNAL_AUTH_401_UNAUTHORIZED. 사용자 인증 결과와 구분.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "내부 인증 확인 실패",
+                  "data": {
+                    "code": "INTERNAL_AUTH_401_UNAUTHORIZED"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INTERNAL_AUTH_403_FORBIDDEN. 사용자 인증 결과와 구분.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "내부 인증 확인 실패",
+                  "data": {
+                    "code": "INTERNAL_AUTH_403_FORBIDDEN"
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "INTERNAL_AUTH_413_TOO_LARGE. 사용자 인증 결과와 구분.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "내부 인증 확인 실패",
+                  "data": {
+                    "code": "INTERNAL_AUTH_413_TOO_LARGE"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INTERNAL_AUTH_503_UNAVAILABLE. 사용자 인증 결과와 구분.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "내부 인증 확인 실패",
+                  "data": {
+                    "code": "INTERNAL_AUTH_503_UNAVAILABLE"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ChatServiceBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "사용자 JWT와 다른 전용 서비스 비밀. TLS·망 제한 병행. 실제 비밀값 없음."
+      }
+    },
+    "schemas": {
+      "SessionPair": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "user_id",
+          "sid"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "sid": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        }
+      },
+      "ValidationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sessions"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/SessionPair"
+            }
+          }
+        }
+      },
+      "ActiveSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "user_id",
+          "sid",
+          "status",
+          "session_generation",
+          "remaining_session_ms"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "sid": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE"
+            ]
+          },
+          "session_generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "remaining_session_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "InactiveSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "user_id",
+          "sid",
+          "status"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "sid": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "INACTIVE"
+            ]
+          }
+        }
+      },
+      "ValidationResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sessions"
+            ],
+            "properties": {
+              "sessions": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ActiveSession"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InactiveSession"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "INTERNAL_AUTH_400_INVALID",
+                  "INTERNAL_AUTH_401_UNAUTHORIZED",
+                  "INTERNAL_AUTH_403_FORBIDDEN",
+                  "INTERNAL_AUTH_413_TOO_LARGE",
+                  "INTERNAL_AUTH_503_UNAVAILABLE"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

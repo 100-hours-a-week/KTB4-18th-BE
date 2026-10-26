@@ -710,7 +710,7 @@ Redis 기반만 되돌릴 때는 활성화를 해제한다. 이번 단계에는 
 | 산출물 | `build/libs/meomuneum-core.jar` | `build/libs/meomuneum-chat.jar` |
 | 소유 API | 인증·사용자·추천·음악·지도·위치 발급 | `/ws`, `/api/v1/chat-rooms/**`, `/api/v1/regions/{id}/chat-room` |
 | 배치/초기화 | 기존 인증 스케줄러 | 채팅 초기화·checkpoint·보관 기간 정리 |
-| 제외 | 채팅 런타임·WebSocket·Lettuce·마스킹 라이브러리 | Core 서비스/컨트롤러·Hazelcast·AI·역지오코딩 클라이언트·Flyway |
+| 제외 | 채팅 런타임·WebSocket·마스킹 라이브러리 (4단계부터 인증 알림용 Lettuce 포함) | Core 서비스/컨트롤러·Hazelcast·AI·역지오코딩 클라이언트·Flyway |
 | 이미지 | `Dockerfile.core`, FFmpeg 포함 | `Dockerfile.chat`, FFmpeg 제외 |
 
 Core의 위치 토큰 발급과 Chat의 토큰 검증은 같은 계약을 쓴다. 세션 ID 형식 검사는 공통 코드로
@@ -739,7 +739,7 @@ Chat에서 Core 비밀값을 요구하지 않는다. `.env.example`은 변수 �
 | `CORE_SHUTDOWN_TIMEOUT`, `CHAT_SHUTDOWN_TIMEOUT` | 각각 기본 30s; 프레임워크 종료 유예이며 WS drain 실측 완료를 뜻하지 않음 |
 | `AUTH_JWT_SECRET`, `LOCATION_TOKEN_SECRET`, JWT issuer/audience·허용 Origin | 양 앱의 토큰 계약 일치; Chat은 Hazelcast/AI 비밀값을 받지 않음 |
 | `CORE_FLYWAY_ENABLED` | 기본 false; 합의한 단일 migration 실행 주체만 명시적으로 활성화 |
-| `CHAT_RUNTIME_ENABLED` | 기본 false; 후속 Core 세션 검증 연동 전 운영 진입 차단 |
+| `CHAT_RUNTIME_ENABLED` | 기본 false; 남은 공유 상태·복구 P1 완료 전 운영 진입 차단 |
 
 Chat은 Flyway 라이브러리·migration SQL을 패키징하지 않고 Hibernate `validate`만 수행한다.
 Core는 migration 원본을 보존하되 평상시 자동 실행을 하지 않는다. 두 앱은 이미 준비된 schema에
@@ -753,8 +753,8 @@ Core readiness는 기존 `authState` 조건을 유지한다. Chat readiness는 D
 현재 Chat 런타임 활성화는 **격리 검증 전용**이다. `CHAT_RUNTIME_ENABLED=true`와 `chat-isolated`
 profile을 함께 지정해야 하며 `prod`와 함께 사용하면 DB 연결 전에 기동을 거절한다.
 기존 JWT/사용자 확인만으로 Core의 폐기 sid를 확인했다고 간주하지 않기 위한 임시 전환 경계다.
-후속 Core 인증 연동 후 이 활성화 제한을 교체하고 readiness에 내부 인증·Redis 실제 구독·공유 상태
-복구 조건을 연결해야 한다. 현 단계만으로 다중 Chat Task를 운영하지 않는다.
+4단계에서 내부 인증 readiness를 연결했다. 이 활성화 제한의 교체와 Redis 실제 구독·공유 상태
+복구 조건은 남은 P1에서 연결해야 한다. 현 단계만으로 다중 Chat Task를 운영하지 않는다.
 
 ```sh
 # 커밋된 소스로 빌드한다. 플랫폼은 ECS runtimePlatform과 맞춘다.
@@ -788,3 +788,82 @@ Spotless·Checkstyle main/core/chat/test·기존 및 분리 JAR 생성이 통과
 실패 10개의 테스트 이름과 원인은 이전에 변경 전 dev에서도 재현한 프로필 이미지·약관·가입 실패와 같다.
 로컬 Linux arm64 이미지로 검증했으며 ECS 대상 플랫폼·운영 인증·AWS 배포 결과로 표시하지 않는다.
 증빙은 `build/app-separation-verification/`과 `build/app-separation/run-*/`에 보존한다.
+
+
+## Core 인증 연동 (P1 4단계)
+
+Core가 인증 원장(Hazelcast 세션 + 활성 사용자 DB)을 소유하고 Chat은 내부 API로 확인한다.
+Chat에 Hazelcast 클러스터·refresh 쿠키·로그인 서비스를 복제하지 않는다. JWT 서명/만료와 위치 토큰
+검증은 유지하고, **서명된 JWT라도 Core에서 폐기된 sid는 허용하지 않는다**.
+공개 REST 필드·STOMP destination·DB schema와 migration은 변경하지 않는다.
+
+| 변경 | 동작과 판단 근거 |
+| --- | --- |
+| Core 내부 검증 | `POST /internal/v1/auth/sessions/validate`; 1~100개의 `(user_id,sid)`를 엄격하게 검증. 사용자 소유·ACTIVE·idle/absolute 만료·활성 계정을 함께 확인해야 폐기/탈퇴가 반영된다. |
+| 서비스 인증 | 사용자 JWT와 별도인 32~256바이트 Bearer 현재/다음 키. TLS 인증서/호스트명 검증, 내부 경로 외부 차단은 클라우드에서 적용한다. 양 키의 동시 수용으로 순차 교체한다. |
+| 비용 상한 | 요청 32KiB·응답 64KiB·중복 sid/알 수 없는 필드 거절, bounded executor/queue·rate limit·전체 1초 deadline. Chat은 자동 재시도/redirect를 하지 않는다. |
+| REST·CONNECT | 매 요청 Core fresh 확인; 같은 pair의 진행 중 요청만 합친다. 기존 캐시를 사용해 새 요청의 Core 장애를 숨기지 않는다. |
+| 기존 연결 | 요청 시작 monotonic 시각 기준 `min(4초, 남은 세션 수명)`만 허용. 2초마다 최대100개씩 확인, 250ms watchdog. 긴 GC/대기 후에도 유효기간을 늘리지 않는다. |
+| 권한 검사 | SUBSCRIBE/SEND·DB transaction 시작/commit·메시지 전송 및 실행 대기열에서 꺼낼 때 재확인. JWT 자체의 만료도 검사한다. 이미 commit된 데이터나 OS에 전달한 frame을 회수하는 보장은 아니다. |
+| 폐기 전파 | Core의 실제 sid 폐기 지점에서 generation을 포함한 이벤트를 발행. Redis 제어 채널 알림은 빠른 경로이고 HTTP 주기 확인이 유실을 보완한다. 늦게 도착한 ACTIVE 응답은 폐기를 되돌리지 못한다. |
+| sid별 정리 | 해당 sid의 소켓부터 종료한 뒤 view/참여 정리; DB 실패는 재시도한다. 같은 계정의 다른 sid와 계정 history는 유지한다. 기존 단일 앱도 같은 sid 이벤트를 처리한다. |
+| 장애 구분 | INACTIVE는 REST401/소켓4100 계열의 인증 종료. Core 통신/서비스 키 오류·timeout은 REST503·기존 연결1013·readiness DOWN이며 영구 LEFT로 기록하지 않는다. 복구 후 기존 history/recovery로 재연결한다. |
+
+내부 API는 [OpenAPI](api/chat-core-auth.openapi.json), 이벤트 계약은 [JSON Schema](api/chat-core-auth-events.schema.json)에 기록했다. 인증 외 이벤트는 후속 P1 계약이며 이번 구현 범위가 아니다.
+모든 내부 API 응답은 `Cache-Control: no-store`다. 오류 상세·Bearer·비밀번호·sid를 로그/오류 본문으로
+전달하지 않는다. 사용자 INACTIVE 응답은 원래 요청 순서/쌍을 보존하며 저장소 실패는 전체503이다.
+Core 검증은 읽기 전용이며 refresh를 회전하거나 수명을 연장하지 않는다.
+
+폐기 이벤트는 `<env>:chat:control:v1`에 `AUTH_SESSION_REVOKED`로 발행한다.
+`schema_version=1`, UUID event_id, `core:<UUID>` producer_id, UTC occurred_at 및
+payload의 user_id/sid/session_generation/reason만 허용하고 epoch/토큰을 포함하지 않는다.
+Chat은 설정된 Core producer allowlist와 16KiB 상한을 검사한다.
+현재 발행 reason은 `SESSION_REVOKED`이며 로그아웃·개별 세션 삭제·비밀번호 변경·refresh 재사용의
+공통 revoke 경로를 사용한다. 정상 refresh 회전은 폐기 알림을 발행하지 않는다.
+자동 세션 만료와 사용자 비활성화는 Core HTTP 확인으로 차단한다.
+Core Redis 연결은 첫 알림 때 비동기로 열며 publish 실패가 Core 기동/로그아웃 성공을 되돌리지 않는다.
+
+| 앱 | 필수 설정/활성화 |
+| --- | --- |
+| Core 내부 API | `CORE_CHAT_AUTH_ENABLED=true`, `CHAT_AUTH_SERVICE_TOKEN_CURRENT`; 교체 중 `CHAT_AUTH_SERVICE_TOKEN_NEXT` |
+| Chat 검증 | `CHAT_CORE_AUTH_ENABLED=true`, `CORE_INTERNAL_BASE_URL` (HTTPS), `CORE_AUTH_SERVICE_TOKEN` (Core 현재/다음 키와 일치) |
+| Core 빠른 알림 | `CORE_AUTH_REDIS_ENABLED=true`, `CORE_AUTH_PRODUCER_ID`, `CORE_AUTH_REDIS_ENVIRONMENT/HOST/PORT/USERNAME/PASSWORD/SSL/CA_CERTIFICATE` |
+| Chat 알림 구독 | 기존 `CHAT_REDIS_ENABLED=true` 및 TLS/ACL 설정, `CHAT_AUTH_REDIS_ENABLED=true`, 쉼표로 구분한 `CORE_AUTH_PRODUCER_IDS` |
+
+기본값은 모두 비활성이다. 기존 앱·3단계 실행 경로와 호환되도록 전환을 명시적으로 선택한다.
+HTTP plaintext는 `chat-isolated`의 loopback/localhost 시험만 허용한다. 사설 CA는 Chat JVM trust store로
+제공한다. 내부 서비스 키는 JWT·위치 토큰·Redis 비밀번호와 구분하고 SSM/ECS에서 주입한다.
+교체 순서는 Core current+next 수용 → 모든 Chat next 적용/확인 → Core current 교체/old 제거다.
+Core/Chat Redis 사용자도 분리해 Core는 해당 제어 채널 PUBLISH만, Chat은 필요한 채널 구독만 허용한다.
+현재 클라우드가 보고한 plaintext/default 공유 Redis만으로 이 조건이 충족됐다고 보지 않는다.
+
+```sh
+./gradlew test --tests 'com.muse.meomuneum.chat.auth.*' --no-daemon
+# Docker + Testcontainers 필요. 운영 자격 증명/데이터를 사용하지 않는다.
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+인증 단위/계약 테스트 11개가 strict schema·키 교체·상한·전체 deadline·늦은 응답 경쟁·transaction
+rollback·전송 대기열 가드를 확인한다. `coreAuthIntegrationTest`는 실제 Core/Chat JAR 프로세스,
+실제 Hazelcast 세션, 격리 MySQL9.7.0/Redis8.10.2와 합성 TLS relay를 사용한다.
+실제 Core logout 후 두 Chat을 동시에 관찰해, 한쪽은 Core HTTP를 막은 상태에서 Redis 알림으로,
+다른 쪽은 알림 구독 없이 polling으로 종료되는 것을 확인했다. 다른 sid는 유지됐다.
+TLS 신뢰/호스트명 거부·현재/다음 키·정상 refresh 후 기존 access JWT·Core503/401을 서비스503으로
+구분·장애1013·readiness DOWN·재연결 history 복원을 포함한다.
+최종 격리 시험의 두 연결 종료까지 2,112ms였다. 이는 운영 부하에서의 5초 SLO 실측이 아니다.
+증빙은 `build/core-auth-integration/run-1793015716538/result.json`과 각 역할 로그에 보존한다.
+
+Core readiness의 기존 authState는 유지하며 Chat readiness에 `coreSessionAuth`를 추가했다.
+남은 공유 정원·owner/epoch·제품 메시지 relay·Redis 복구·drain이 완료되지 않았으므로
+`CHAT_RUNTIME_ENABLED`의 격리 환경 제한과 prod 거부를 유지한다. 두 Chat으로 수행한 시험은
+인증 전파만 검증한 것으로 전체 제품의 다중 서버 정합성/운영 개방 완료를 뜻하지 않는다.
+클라우드 후속 사항은 내부 API TLS/신뢰 CA·서비스 키 주입/교체·외부 `/internal/*` 차단,
+Core Redis SG 접근·TLS 및 앱별 ACL, 운영 부하에서의 deadline/5초 차단 측정이다.
+
+최종 일반 회귀는 749개 중 719통과·7실패·23조건부 제외다. 실패 7개는 변경 전 dev에서도 재현한
+프로필 이미지 테스트의 `AuthService` fixture 누락과 동일하며 새 실패는 없다. 기존에 실패했던
+약관/가입 3개는 이번 실행에서 통과했다. 채팅 회귀 212개는 208통과·4조건부 제외·실패0이다.
+인증 통합1개·Redis4개 전부 통과했고 앱 분리 검증은 JAR2개 통과·이미지1개 조건부 제외다.
+이번 단계는 실제 역할 JAR로 검증했으며 3단계 Docker 이미지 재빌드/운영 배포를 수행하지 않았다.
+증빙과 기존 dev 실패 이름 대조는 `build/core-auth-verification/summary.json` 및 XML에 보존한다.

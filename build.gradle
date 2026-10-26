@@ -219,7 +219,9 @@ sourceSets {
 			exclude { element ->
 				!element.directory && element.path.startsWith('com/muse/meomuneum/chat/') &&
 						!element.path.startsWith('com/muse/meomuneum/chat/region/') &&
-                        element.path != 'com/muse/meomuneum/chat/connection/ChatSessionLogoutEvent.java'
+                        element.path != 'com/muse/meomuneum/chat/connection/ChatSessionLogoutEvent.java' &&
+						!(element.path.startsWith('com/muse/meomuneum/chat/redis/') &&
+								!element.path.endsWith('/ChatRedisConfiguration.java'))
 			}
 		}
 		resources {
@@ -234,7 +236,8 @@ sourceSets {
 			include 'com/muse/meomuneum/global/response/**', 'com/muse/meomuneum/global/web/**'
 			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims',
 				'SecurityErrorResponseWriter', 'SecurityErrorCode', 'RequestOriginValidationFilter',
-				'AuthSessionIds', 'ActiveUserLookup', 'AuthRequestPath'].each { name ->
+				'AuthSessionIds', 'ActiveUserLookup', 'AuthRequestPath', 'SessionPair', 'SessionDecision',
+                'InternalSessionProtocol', 'AuthSessionRevokedEvent', 'AuthRevocationProtocol'].each { name ->
 				include "com/muse/meomuneum/global/security/${name}.java"
 			}
 			['CorsConfig', 'JwtProperties'].each { name ->
@@ -264,7 +267,6 @@ sourceSets {
 	["${role}CompileClasspath", "${role}RuntimeClasspath"].each { configurationName ->
 		configurations.named(configurationName) {
 			if (role == 'core') {
-				exclude group: 'io.lettuce', module: 'lettuce-core'
 				exclude group: 'io.github.vaneproject', module: 'badwordfiltering'
 				exclude group: 'org.springframework.boot', module: 'spring-boot-starter-websocket'
 				exclude group: 'org.springframework', module: 'spring-websocket'
@@ -320,5 +322,18 @@ tasks.register('appSeparationTest', Test) {
 	systemProperty 'app.split.images', providers.gradleProperty('appSplitImages').getOrElse('false')
 	systemProperty 'app.split.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
 	systemProperty 'app.split.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+	outputs.upToDateWhen { false }
+}
+
+// Cross-app authentication uses real packaged processes and isolated Hazelcast/MySQL/Redis.
+tasks.named('test') { exclude '**/CoreAuthProcessTest.class' }
+tasks.register('coreAuthIntegrationTest', Test) {
+	dependsOn 'coreBootJar', 'chatBootJar'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/CoreAuthProcessTest.class'
+	systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+	systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
 	outputs.upToDateWhen { false }
 }

@@ -10,11 +10,14 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.muse.meomuneum.auth.config.AuthStateProperties;
 import com.muse.meomuneum.auth.exception.AuthStateBusyException;
+import com.muse.meomuneum.global.security.AuthSessionRevokedEvent;
 
 @Service
 public class HazelcastAuthStateStore {
@@ -24,6 +27,14 @@ public class HazelcastAuthStateStore {
     private final AuthUserSessionIndexStore userSessionIndexStore;
     private final HazelcastAuthSessionStore sessionStore;
     private final Semaphore requestSemaphore;
+
+    private ApplicationEventPublisher events = ignored -> {
+    };
+
+    @Autowired
+    public void setRevocationEvents(ApplicationEventPublisher publisher) {
+        events = publisher;
+    }
 
     public HazelcastAuthStateStore(ObjectProvider<HazelcastInstance> hazelcastProvider,
             AuthStateProperties properties) {
@@ -98,7 +109,15 @@ public class HazelcastAuthStateStore {
     }
 
     public AuthSession revokeSession(String sid, Long expectedUserId) {
-        return sessionStore.revokeSession(sid, expectedUserId);
+        AuthSession revoked = sessionStore.revokeSession(sid, expectedUserId);
+        if (revoked != null && revoked.status() == SessionStatus.REVOKED) {
+            try {
+                events.publishEvent(new AuthSessionRevokedEvent(revoked.userId(), revoked.sid(), revoked.generation()));
+            } catch (RuntimeException unavailable) {
+                // Fresh validation remains authoritative if notification delivery fails.
+            }
+        }
+        return revoked;
     }
 
     public List<AuthSession> activeSessions(Long userId) {
