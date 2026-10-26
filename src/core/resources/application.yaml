@@ -143,3 +143,23 @@ location:
     connect-timeout: ${LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT:2s}
     read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
 
+
+core:
+  chat-auth:
+    enabled: ${CORE_CHAT_AUTH_ENABLED:false}
+    service-token-current: ${CHAT_AUTH_SERVICE_TOKEN_CURRENT:}
+    service-token-next: ${CHAT_AUTH_SERVICE_TOKEN_NEXT:}
+    redis-enabled: ${CORE_AUTH_REDIS_ENABLED:false}
+    producer-id: ${CORE_AUTH_PRODUCER_ID:}
+chat:
+  redis:
+    environment: ${CORE_AUTH_REDIS_ENVIRONMENT:}
+    host: ${CORE_AUTH_REDIS_HOST:localhost}
+    port: ${CORE_AUTH_REDIS_PORT:6379}
+    username: ${CORE_AUTH_REDIS_USERNAME:default}
+    password: ${CORE_AUTH_REDIS_PASSWORD:}
+    ssl: ${CORE_AUTH_REDIS_SSL:true}
+    connect-timeout: 1s
+    command-timeout: 1s
+    request-queue-size: 1024
+    ssl-ca-certificate: ${CORE_AUTH_REDIS_CA_CERTIFICATE:}
