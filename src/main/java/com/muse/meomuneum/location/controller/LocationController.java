@@ -6,8 +6,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.global.response.ApiResponse;
+import com.muse.meomuneum.global.security.AuthSessionIds;
 import com.muse.meomuneum.global.security.TokenClaims;
 import com.muse.meomuneum.location.dto.LocationResolveRequest;
 import com.muse.meomuneum.location.dto.LocationResolveResponse;
@@ -28,7 +28,7 @@ public class LocationController {
             Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
         if (authentication.getDetails() instanceof TokenClaims claims && userId.equals(claims.userId())
-                && ChatAuthSessionRegistry.isValidSessionId(claims.sessionId())) {
+                && AuthSessionIds.isValid(claims.sessionId())) {
             return ApiResponse.of("location resolved",
                     locationResolutionService.resolve(userId, request, claims.sessionId()));
         }
