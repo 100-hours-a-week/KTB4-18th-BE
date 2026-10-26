@@ -25,7 +25,7 @@ management:
       show-details: never
       group:
         readiness:
-          include: readinessState,db,chatRuntime
+          include: readinessState,db,chatRuntime,coreSessionAuth
         liveness:
           include: livenessState
 auth:
@@ -41,7 +41,13 @@ location:
   token:
     secret: ${LOCATION_TOKEN_SECRET}
 chat:
-  # Temporary activation for isolated verification only; Core session auth is a later step.
+  core-auth:
+    enabled: ${CHAT_CORE_AUTH_ENABLED:false}
+    base-url: ${CORE_INTERNAL_BASE_URL:}
+    service-token: ${CORE_AUTH_SERVICE_TOKEN:}
+    redis-enabled: ${CHAT_AUTH_REDIS_ENABLED:false}
+    producer-ids: ${CORE_AUTH_PRODUCER_IDS:}
+  # Temporary activation for isolated verification only; shared state and recovery remain later steps.
   runtime:
     enabled: ${CHAT_RUNTIME_ENABLED:false}
   redis:

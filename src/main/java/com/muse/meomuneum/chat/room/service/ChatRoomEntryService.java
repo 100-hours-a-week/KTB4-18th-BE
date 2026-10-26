@@ -199,6 +199,8 @@ public class ChatRoomEntryService {
     @EventListener
     public void loggedOut(ChatSessionLogoutEvent event) {
         requireAuthSession(event.authSessionId());
+        sessionAccess.revoke(event.userId(), event.authSessionId());
+        sockets.close(authSessions.connections(event.userId(), event.authSessionId()), 4100, "CHAT_LOGGED_OUT");
         Set<String> ended = presence.exclusive(() -> {
             sessionAccess.revoke(event.userId(), event.authSessionId());
             List<Long> membershipIds = transactions.execute(status -> {

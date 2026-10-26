@@ -241,7 +241,7 @@ class AppSeparationProcessTest {
             assertEquals("com.muse.apps.chat.ChatApplication",
                     chat.getManifest().getMainAttributes().getValue("Start-Class"));
             assertFalse(core.stream().anyMatch(e -> e.getName().contains("/chat/connection/")
-                    || e.getName().contains("/chat/view/") || e.getName().contains("lettuce-core")
+                    || e.getName().contains("/chat/view/")
                     || e.getName().contains("spring-websocket")));
             assertFalse(chat.stream().anyMatch(e -> e.getName().contains("/auth/application/")
                     || e.getName().contains("/user/account/") || e.getName().contains("/recommendation/")

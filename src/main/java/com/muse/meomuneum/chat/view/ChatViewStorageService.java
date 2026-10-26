@@ -9,12 +9,14 @@ import java.util.UUID;
 
 import jakarta.annotation.PostConstruct;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.muse.meomuneum.chat.ban.service.ChatBanStorageService;
+import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
@@ -28,6 +30,7 @@ public class ChatViewStorageService {
     private final ChatRoomMemberRepository members;
     private final UserRepository users;
     private final ChatBanStorageService bans;
+    private ChatSessionAccessPolicy sessionAccess;
     private final Clock clock;
     private final String processId = UUID.randomUUID().toString();
 
@@ -38,6 +41,11 @@ public class ChatViewStorageService {
         this.users = users;
         this.bans = bans;
         this.clock = clock;
+    }
+
+    @Autowired
+    public void setSessionAccess(ChatSessionAccessPolicy policy) {
+        sessionAccess = policy;
     }
 
     @PostConstruct
@@ -166,6 +174,14 @@ public class ChatViewStorageService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void checkpoint(String viewId, Long roomId) {
+        if (sessionAccess != null && sessionAccess.isRemoteEnabled()) {
+            var owners = jdbc.query("SELECT user_id,membership_id FROM chat_view_sessions WHERE id=? AND room_id=?",
+                    (row, index) -> new long[]{row.getLong(1), row.getLong(2)}, viewId, roomId);
+            if (owners.isEmpty()) {
+                throw denied();
+            }
+            authorizeMember(owners.getFirst()[0], roomId, owners.getFirst()[1]);
+        }
         LocalDateTime now = now();
         jdbc.update("""
                 UPDATE chat_view_intervals i
@@ -260,9 +276,12 @@ public class ChatViewStorageService {
         if (bans.hasActiveBan(userId)) {
             throw new ChatRoomException(ChatRoomErrorCode.CHAT_BANNED, bans.activeBanUntil(userId).orElse(null));
         }
-        members.findByIdAndUser_IdAndChatRoom_Id(membershipId, userId, roomId)
+        ChatRoomMember owned = members.findByIdAndUser_IdAndChatRoom_Id(membershipId, userId, roomId)
                 .filter(ChatRoomMember::isActive).filter(member -> member.getChatRoom().isActive())
                 .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND));
+        if (sessionAccess != null && sessionAccess.isRemoteEnabled()) {
+            sessionAccess.authorize(userId, owned.getAuthSessionId());
+        }
     }
 
     private void validateViewId(String viewId) {
