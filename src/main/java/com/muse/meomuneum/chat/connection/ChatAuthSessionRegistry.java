@@ -14,6 +14,7 @@ import com.muse.meomuneum.global.security.TokenClaims;
 /** Identity comes exclusively from the verified access token, never from a device header. */
 @Component
 public class ChatAuthSessionRegistry {
+    private final Map<String, java.time.Instant> expirations = new ConcurrentHashMap<>();
     private final Map<String, Context> connections = new ConcurrentHashMap<>();
 
     public Context resolve(TokenClaims claims, String requestedSessionId) {
@@ -29,9 +30,15 @@ public class ChatAuthSessionRegistry {
     }
 
     public void register(String connectionId, Context context) {
+        register(connectionId, context, java.time.Instant.MAX);
+    }
+
+    public void register(String connectionId, Context context, java.time.Instant expiresAt) {
+        java.util.Objects.requireNonNull(expiresAt, "token expiry");
         if (connections.putIfAbsent(connectionId, context) != null) {
             throw new IllegalArgumentException("AUTH_REQUIRED");
         }
+        expirations.put(connectionId, expiresAt);
     }
 
     public Optional<Context> context(String connectionId) {
@@ -44,7 +51,17 @@ public class ChatAuthSessionRegistry {
                 .map(Map.Entry::getKey).collect(Collectors.toUnmodifiableSet());
     }
 
+    public Map<String, Context> snapshot() {
+        return Map.copyOf(connections);
+    }
+
+    public boolean tokenValid(String connectionId, java.time.Instant now) {
+        var expiry = expirations.get(connectionId);
+        return expiry != null && expiry.isAfter(now);
+    }
+
     public void remove(String connectionId) {
+        expirations.remove(connectionId);
         connections.remove(connectionId);
     }
 

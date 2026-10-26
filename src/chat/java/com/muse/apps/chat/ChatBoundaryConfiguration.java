@@ -2,6 +2,7 @@ package com.muse.apps.chat;
 
 import java.time.Clock;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.health.contributor.Health;
@@ -21,6 +22,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.chat.auth.ChatCoreAuthFilter;
+import com.muse.meomuneum.chat.auth.ChatCoreSessionVerifier;
+import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
 import com.muse.meomuneum.global.config.CorsConfig;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.ActiveUserLookup;
@@ -67,9 +71,18 @@ public class ChatBoundaryConfiguration {
         return () -> enabled ? Health.up().build() : Health.down().build();
     }
 
+    @Bean("coreSessionAuth")
+    public HealthIndicator coreSessionAuthHealth(ObjectProvider<ChatCoreSessionVerifier> verifiers) {
+        return () -> {
+            var verifier = verifiers.getIfAvailable();
+            return verifier == null || verifier.isAvailable() ? Health.up().build() : Health.down().build();
+        };
+    }
+
     @Bean
     public SecurityFilterChain chatSecurity(HttpSecurity http, JwtTokenProvider tokens, ActiveUserLookup users,
-            SecurityErrorResponseWriter errors, @Value("${auth.cors.allowed-origins}") String origins)
+            SecurityErrorResponseWriter errors, ObjectProvider<ChatSessionVerifier> verifiers,
+            @Value("${auth.cors.allowed-origins}") String origins)
             throws Exception {
         http.cors(Customizer.withDefaults()).csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -84,6 +97,10 @@ public class ChatBoundaryConfiguration {
                 .addFilterBefore(new JwtAuthenticationFilter(tokens, errors, users),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new RequestOriginValidationFilter(origins, errors), JwtAuthenticationFilter.class);
+        var verifier = verifiers.getIfAvailable();
+        if (verifier != null) {
+            http.addFilterAfter(new ChatCoreAuthFilter(verifier), JwtAuthenticationFilter.class);
+        }
         return http.build();
     }
 }
