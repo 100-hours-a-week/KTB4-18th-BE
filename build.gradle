@@ -25,7 +25,8 @@ repositories {
 
 spotless {
 	java {
-		target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+		target 'src/main/java/**/*.java', 'src/core/java/**/*.java',
+			'src/chat/java/**/*.java', 'src/test/java/**/*.java'
 		eclipse().configFile('config/eclipse-java-formatter.xml')
 		removeUnusedImports()
 		importOrder('java', 'javax', 'jakarta', 'org', 'com', '')
@@ -171,7 +172,8 @@ def buildIdentityFiles = {
 			'gradle/wrapper/gradle-wrapper.properties']
 			.findAll { file(it).isFile() }
 			.each { sourceFile -> filesByPath[project.relativePath(file(sourceFile))] = file(sourceFile) }
-	['src/main/java', 'src/main/resources', 'src/test/java'].each { sourceDir ->
+	['src/main/java', 'src/main/resources', 'src/core/java', 'src/core/resources',
+		'src/chat/java', 'src/chat/resources', 'src/test/java'].each { sourceDir ->
 		def directory = file(sourceDir)
 		if (directory.isDirectory()) {
 			fileTree(directory).files.each { sourceFile ->
@@ -193,12 +195,129 @@ def buildSourceSha256 = {
 	HexFormat.of().formatHex(digest.digest())
 }
 
+def buildGitCommit = providers.environmentVariable('BUILD_GIT_COMMIT').orElse(provider {
+	file('.git').exists() ? providers.exec {
+		commandLine 'git', 'rev-parse', 'HEAD'
+	}.standardOutput.asText.get().trim() : 'unknown'
+})
+
 tasks.named('bootJar') {
+	mainClass = 'com.muse.meomuneum.MeomuneumBackendApplication'
 	manifest {
 		attributes(
-				'Build-Git-Commit': providers.exec {
-					commandLine 'git', 'rev-parse', 'HEAD'
-				}.standardOutput.asText.get().trim(),
+				'Build-Git-Commit': buildGitCommit.get(),
 				'Build-Source-SHA256': buildSourceSha256())
 	}
+}
+
+// Role-specific source sets compile independently: an omitted app dependency fails compilation.
+sourceSets {
+	core {
+		java {
+			srcDirs = ['src/main/java', 'src/core/java']
+			exclude 'com/muse/meomuneum/MeomuneumBackendApplication.java'
+			exclude { element ->
+				!element.directory && element.path.startsWith('com/muse/meomuneum/chat/') &&
+						!element.path.startsWith('com/muse/meomuneum/chat/region/')
+			}
+		}
+		resources {
+			srcDirs = ['src/core/resources']
+		}
+	}
+	chat {
+		java {
+			srcDirs = ['src/main/java', 'src/chat/java']
+			include 'com/muse/apps/chat/**', 'com/muse/meomuneum/chat/**'
+			include 'com/muse/meomuneum/global/exception/**', 'com/muse/meomuneum/global/logging/**'
+			include 'com/muse/meomuneum/global/response/**', 'com/muse/meomuneum/global/web/**'
+			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims', 'JwtAuthenticationFilter',
+				'SecurityErrorResponseWriter', 'SecurityErrorCode', 'RequestOriginValidationFilter',
+				'AuthSessionIds', 'ActiveUserLookup'].each { name ->
+				include "com/muse/meomuneum/global/security/${name}.java"
+			}
+			['CorsConfig', 'JwtProperties'].each { name ->
+				include "com/muse/meomuneum/global/config/${name}.java"
+			}
+			include 'com/muse/meomuneum/location/security/**'
+			include 'com/muse/meomuneum/location/config/LocationTokenProperties.java'
+			['LocationException', 'LocationErrorCode'].each { name ->
+				include "com/muse/meomuneum/location/exception/${name}.java"
+			}
+			include 'com/muse/meomuneum/user/domain/**', 'com/muse/meomuneum/user/repository/UserRepository.java'
+			include 'com/muse/meomuneum/auth/exception/AuthErrorCode.java'
+			include 'com/muse/meomuneum/auth/exception/AuthenticationFailedException.java'
+			// Existing shared advice signatures; no music service/controller enters Chat.
+			include 'com/muse/meomuneum/music/exception/MusicMetadataException.java'
+			include 'com/muse/meomuneum/musicrecord/exception/MusicRecordException.java'
+		}
+		resources.srcDirs = ['src/chat/resources']
+	}
+}
+
+['core', 'chat'].each { role ->
+	configurations.named("${role}Implementation") { extendsFrom configurations.implementation }
+	configurations.named("${role}CompileOnly") { extendsFrom configurations.compileOnly }
+	configurations.named("${role}RuntimeOnly") { extendsFrom configurations.runtimeOnly }
+	configurations.named("${role}AnnotationProcessor") { extendsFrom configurations.annotationProcessor }
+	["${role}CompileClasspath", "${role}RuntimeClasspath"].each { configurationName ->
+		configurations.named(configurationName) {
+			if (role == 'core') {
+				exclude group: 'io.lettuce', module: 'lettuce-core'
+				exclude group: 'io.github.vaneproject', module: 'badwordfiltering'
+				exclude group: 'org.springframework.boot', module: 'spring-boot-starter-websocket'
+				exclude group: 'org.springframework', module: 'spring-websocket'
+				exclude group: 'org.springframework', module: 'spring-messaging'
+				exclude group: 'org.apache.tomcat.embed', module: 'tomcat-embed-websocket'
+			} else {
+				exclude group: 'com.hazelcast', module: 'hazelcast'
+				exclude group: 'com.twelvemonkeys.imageio', module: 'imageio-webp'
+				exclude group: 'org.springframework.boot', module: 'spring-boot-starter-flyway'
+				exclude group: 'org.springframework.boot', module: 'spring-boot-flyway'
+				exclude group: 'org.flywaydb'
+			}
+		}
+	}
+	def roleSourceSet = sourceSets[role]
+	def roleMainClass = "com.muse.apps.${role}.${role.capitalize()}Application"
+	tasks.register("${role}BootJar", org.springframework.boot.gradle.tasks.bundling.BootJar) {
+		group = 'build'
+		dependsOn "${role}Classes"
+		archiveFileName = "meomuneum-${role}.jar"
+		mainClass = roleMainClass
+		targetJavaVersion = java.targetCompatibility
+		classpath = roleSourceSet.runtimeClasspath
+		manifest.attributes('Build-App': role, 'Build-Git-Commit': buildGitCommit.get(),
+				'Build-Source-SHA256': buildSourceSha256())
+	}
+	tasks.register("${role}BootRun", org.springframework.boot.gradle.tasks.run.BootRun) {
+		group = 'application'
+		dependsOn "${role}Classes"
+		mainClass = roleMainClass
+		classpath = roleSourceSet.runtimeClasspath
+	}
+}
+
+tasks.named('processCoreResources') {
+	from('src/main/resources') {
+		include 'db/**', 'map-zones.json', 'hazelcast-auth-state-member.yaml'
+	}
+}
+
+tasks.named('processChatResources') {
+	from('src/main/resources') { include 'chat/**' }
+}
+
+
+tasks.named('test') { exclude '**/AppSeparationProcessTest.class' }
+tasks.register('appSeparationTest', Test) {
+	dependsOn 'coreBootJar', 'chatBootJar'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/AppSeparationProcessTest.class'
+	systemProperty 'app.split.images', providers.gradleProperty('appSplitImages').getOrElse('false')
+	systemProperty 'app.split.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+	systemProperty 'app.split.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+	outputs.upToDateWhen { false }
 }
