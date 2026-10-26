@@ -25,7 +25,7 @@ management:
       show-details: never
       group:
         readiness:
-          include: readinessState,db,chatRuntime,coreSessionAuth
+          include: readinessState,db,chatRuntime,coreSessionAuth,participation
         liveness:
           include: livenessState
 auth:
@@ -41,6 +41,8 @@ location:
   token:
     secret: ${LOCATION_TOKEN_SECRET}
 chat:
+  distributed-presence:
+    enabled: ${CHAT_DISTRIBUTED_PRESENCE_ENABLED:false}
   core-auth:
     enabled: ${CHAT_CORE_AUTH_ENABLED:false}
     base-url: ${CORE_INTERNAL_BASE_URL:}
