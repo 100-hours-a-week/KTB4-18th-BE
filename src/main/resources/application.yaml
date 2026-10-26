@@ -132,6 +132,18 @@ location:
     read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
 
 chat:
+  redis:
+    enabled: ${CHAT_REDIS_ENABLED:false}
+    environment: ${CHAT_REDIS_ENVIRONMENT:}
+    host: ${CHAT_REDIS_HOST:localhost}
+    port: ${CHAT_REDIS_PORT:6379}
+    username: ${CHAT_REDIS_USERNAME:default}
+    password: ${CHAT_REDIS_PASSWORD:}
+    ssl: ${CHAT_REDIS_SSL:true}
+    connect-timeout: ${CHAT_REDIS_CONNECT_TIMEOUT:1s}
+    command-timeout: ${CHAT_REDIS_COMMAND_TIMEOUT:1s}
+    request-queue-size: ${CHAT_REDIS_REQUEST_QUEUE_SIZE:1024}
+    ssl-ca-certificate: ${CHAT_REDIS_SSL_CA_CERTIFICATE:}
   message-cleanup:
     enabled: ${CHAT_MESSAGE_CLEANUP_ENABLED:true}
   message-policy:
