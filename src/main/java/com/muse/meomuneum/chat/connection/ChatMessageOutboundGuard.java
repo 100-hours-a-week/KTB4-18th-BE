@@ -1,5 +1,7 @@
 package com.muse.meomuneum.chat.connection;
 
+import java.time.Instant;
+import java.util.Optional;
 import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,10 +14,18 @@ import org.springframework.messaging.support.ExecutorChannelInterceptor;
 import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
+import com.muse.meomuneum.chat.participation.ChatParticipationService;
 
 /** Prevents asynchronous publication from reaching a later join or an ended subscription. */
 @Component
 public class ChatMessageOutboundGuard implements ExecutorChannelInterceptor {
+    private ChatParticipationService participation;
+
+    @Autowired(required = false)
+    public void setParticipation(ChatParticipationService service) {
+        participation = service;
+    }
+
     private final ChatPresenceRegistry presence;
     private ChatSessionVerifier coreVerifier;
     private ChatAuthSessionRegistry authSessions;
@@ -42,12 +52,27 @@ public class ChatMessageOutboundGuard implements ExecutorChannelInterceptor {
             var context = authSessions.context(SimpMessageHeaderAccessor.getSessionId(message.getHeaders()));
             if (context.isEmpty()
                     || !authSessions.tokenValid(SimpMessageHeaderAccessor.getSessionId(message.getHeaders()),
-                            java.time.Instant.now())) {
+                            Instant.now())) {
                 return null;
             }
             try {
                 coreVerifier.assertValid(context.get().userId(), context.get().authSessionId());
             } catch (RuntimeException unavailable) {
+                return null;
+            }
+        }
+        if (participation != null && message.getHeaders().get("chatMessageId") instanceof Long id) {
+            String socket = SimpMessageHeaderAccessor.getSessionId(message.getHeaders());
+            var context = authSessions == null
+                    ? Optional.<ChatAuthSessionRegistry.Context>empty()
+                    : authSessions.context(socket);
+            try {
+                if (context.isEmpty() || !(message.getHeaders().get("chatRoomId") instanceof Long room)
+                        || !participation.permitsMessage(context.get().userId(), socket, room, id)) {
+                    return null;
+                }
+            } catch (RuntimeException unavailable) {
+                participation.failClosed();
                 return null;
             }
         }

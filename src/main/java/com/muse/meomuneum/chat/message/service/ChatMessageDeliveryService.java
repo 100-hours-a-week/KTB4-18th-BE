@@ -4,8 +4,10 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -16,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.chat.auth.ChatAuthUnavailableException;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.message.dto.ChatMessageEvent;
@@ -25,6 +28,8 @@ import com.muse.meomuneum.chat.message.policy.ChatMessageMasking;
 import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy;
 import com.muse.meomuneum.chat.message.repository.ChatRoomMessageRepository;
+import com.muse.meomuneum.chat.participation.ChatParticipationService;
+import com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
@@ -32,6 +37,13 @@ import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
 /** Handles SEND without allowing rejected payloads into framework error logging. */
 @Service
 public class ChatMessageDeliveryService {
+    private ChatParticipationService participation;
+
+    @Autowired(required = false)
+    public void setParticipation(ChatParticipationService service) {
+        participation = service;
+    }
+
     private final ChatPresenceRegistry presence;
     private final ChatRoomEntryService entry;
     private final ChatSocketSessions sockets;
@@ -98,23 +110,27 @@ public class ChatMessageDeliveryService {
                 contentPolicy.validatePersonalContent(text);
                 String masked = masking.mask(text);
                 String id = clientId;
-                ChatMessageResponse saved = transactions.execute(status -> {
+                Supplier<ChatMessageResponse> persist = () -> {
                     // A UUID from a previous process/membership must never expose old room content.
                     if (messages.findByUser_IdAndClientMessageId(userId, id).isPresent()) {
                         throw new ChatMessageRejection("CLIENT_ID_CONFLICT");
                     }
                     return ChatMessageResponse.from(storage.store(userId, roomId, id, masked).message());
-                });
+                };
+                ChatMessageResponse saved = participation == null
+                        ? transactions.execute(status -> persist.get())
+                        : participation.writeMessage(userId, roomId, membershipId, sessionId, persist);
                 transmission.accepted(userId, membershipId, clientId, text, saved.messageId());
                 SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
                 headers.setHeader("chatRecipients", presence.recipients(roomId));
                 headers.setHeader("chatRoomId", roomId);
+                headers.setHeader("chatMessageId", saved.messageId());
                 headers.setLeaveMutable(true);
                 broker.getObject().convertAndSend("/topic/chat-rooms/" + roomId,
                         new ChatMessageEvent("CHAT_MESSAGE", saved), headers.getMessageHeaders());
                 acknowledge(userId, membershipId, sessionId, saved);
-            } catch (com.muse.meomuneum.chat.auth.ChatAuthUnavailableException
-                    | com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException unavailable) {
+            } catch (ChatAuthUnavailableException
+                    | ChatParticipationUnavailableException unavailable) {
                 sockets.close(Set.of(sessionId), 1013, "CHAT_SERVICE_UNAVAILABLE");
             } catch (ChatMessageRejection rejection) {
                 reject(userId, roomId, membershipId, sessionId, clientId, rejection);
