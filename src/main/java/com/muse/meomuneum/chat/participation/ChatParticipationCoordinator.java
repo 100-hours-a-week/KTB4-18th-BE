@@ -52,6 +52,9 @@ public final class ChatParticipationCoordinator {
     @Scheduled(fixedDelay = 250)
     public void closeInvalid() {
         try {
+            if (participation.isDraining()) {
+                return;
+            }
             if (!participation.available()) {
                 participation.failClosed();
                 return;

@@ -73,6 +73,24 @@ public final class ChatParticipationService {
     private volatile long epoch;
     private volatile long localLease;
     private volatile boolean failed;
+    private volatile boolean draining;
+    private volatile BooleanSupplier runtimePermit = () -> true;
+
+    public void setRuntimePermit(BooleanSupplier permit) {
+        runtimePermit = Objects.requireNonNull(permit);
+    }
+
+    public void beginDrain() {
+        draining = true;
+    }
+
+    public boolean isDraining() {
+        return draining;
+    }
+
+    public boolean isFailed() {
+        return failed;
+    }
     private volatile boolean controlEvents;
 
     public void enableControlEvents() {
@@ -133,7 +151,8 @@ public final class ChatParticipationService {
     }
 
     public boolean available() {
-        return !failed && messageTransportReady.getAsBoolean() && localLease - System.nanoTime() > 0;
+        return !draining && !failed && runtimePermit.getAsBoolean() && messageTransportReady.getAsBoolean()
+                && localLease - System.nanoTime() > 0;
     }
 
     public ChatRoomJoinResult join(long user, String sid, long room, LocationResolutionClaims claims) {
@@ -555,6 +574,9 @@ public final class ChatParticipationService {
     }
 
     public void heartbeat() {
+        if (draining) {
+            return;
+        }
         if (!available()) {
             failClosed();
             return;
@@ -953,6 +975,65 @@ public final class ChatParticipationService {
     public void failClosed() {
         failed = true;
         sockets.closeAll(1013, "CHAT_SERVICE_UNAVAILABLE");
+    }
+
+    /** No fresh authority is manufactured during shutdown: only the last verified reading edge is retained. */
+    public boolean releaseDrainingViews() {
+        if (!draining) {
+            throw new IllegalStateException("Chat drain must close ingress first");
+        }
+        return transactions.execute(status -> {
+            jdbc.execute("SET SESSION innodb_lock_wait_timeout=1");
+            control();
+            jdbc.queryForList("SELECT task_id FROM chat_runtime_tasks WHERE environment=? ORDER BY task_id FOR SHARE",
+                    String.class, environment);
+            var users = jdbc.queryForList("""
+                    SELECT DISTINCT user_id FROM chat_view_runtime WHERE environment=? AND owner_task_id=?
+                    ORDER BY user_id LIMIT 25
+                    """, Long.class, environment, taskId);
+            for (long user : users) {
+                jdbc.queryForObject("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, user);
+                var rooms = jdbc.queryForList("""
+                        SELECT DISTINCT room_id FROM chat_view_runtime WHERE environment=? AND owner_task_id=?
+                            AND user_id=? ORDER BY room_id
+                        """, Long.class, environment, taskId, user);
+                for (long room : rooms) {
+                    jdbc.queryForObject("""
+                            SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=? FOR UPDATE
+                            """, Long.class, environment, room);
+                    // A stopping Task is not a normal client disconnect: no new 30-second reading allowance.
+                    jdbc.update("""
+                            UPDATE chat_view_intervals i JOIN chat_view_runtime v ON v.view_id=i.view_session_id
+                            SET i.ends_at=i.verified_at,i.end_message_id=i.verified_through_message_id,
+                                i.end_room_seq=i.verified_through_room_seq,i.end_reason='RESTART'
+                            WHERE v.environment=? AND v.owner_task_id=? AND v.user_id=? AND v.room_id=?
+                                AND i.ends_at IS NULL
+                            """, environment, taskId, user, room);
+                    jdbc.update("UPDATE chat_room_runtime SET room_seq=room_seq+1 WHERE environment=? AND room_id=?",
+                            environment, room);
+                    long version = jdbc.queryForObject(
+                            "SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=?",
+                            Long.class, environment, room);
+                    jdbc.update("""
+                            UPDATE chat_view_runtime SET state='OFFLINE',deadline=NULL,owner_task_id=NULL,
+                                socket_token=NULL,owner_generation=owner_generation+1,changed_seq=?
+                            WHERE environment=? AND owner_task_id=? AND user_id=? AND room_id=?
+                            """, version, environment, taskId, user, room);
+                    recordControl("CHAT_PRESENCE_CHANGED", room, version,
+                            Map.of("room_id", room, "room_seq", version));
+                }
+            }
+            return !users.isEmpty();
+        });
+    }
+
+    public void finishDrain() {
+        transactions.executeWithoutResult(status -> {
+            control();
+            jdbc.update("UPDATE chat_runtime_tasks SET state='FENCED' WHERE environment=? AND task_id=? AND epoch=?",
+                    environment, taskId, epoch);
+        });
+        claims.clear();
     }
 
     private ChatRoomException denied() {
