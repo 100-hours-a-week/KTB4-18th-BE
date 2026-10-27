@@ -12,6 +12,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.muse.meomuneum.chat.control.ChatControlEvent;
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException;
 
@@ -34,7 +35,7 @@ public final class ChatMessageOutboxStore {
         jdbc.setQueryTimeout(1);
     }
 
-    public record Claim(ChatMessageRedisEvent event, String token, int attempts) {
+    public record Claim(ChatRedisEvent event, String token, int attempts) {
     }
 
     public List<Long> candidateRooms() {
@@ -59,7 +60,7 @@ public final class ChatMessageOutboxStore {
             var rows = jdbc.queryForList("""
                     SELECT *,next_attempt_at<=UTC_TIMESTAMP(6) AS due,expires_at>UTC_TIMESTAMP(6) AS unexpired
                     FROM chat_message_outbox WHERE environment=? AND epoch=? AND room_id=? AND status='PENDING'
-                    ORDER BY room_seq LIMIT 1 FOR UPDATE
+                    ORDER BY room_seq,event_id LIMIT 1 FOR UPDATE
                     """, environment, participation.epoch(), room);
             if (rows.isEmpty()) {
                 return null;
@@ -81,10 +82,12 @@ public final class ChatMessageOutboxStore {
             jdbc.update("UPDATE chat_message_outbox SET claim_token=? WHERE event_id=?", token, id);
             Object at = row.get("occurred_at");
             LocalDateTime time = at instanceof java.sql.Timestamp t ? t.toLocalDateTime() : (LocalDateTime) at;
-            return new Claim(new ChatMessageRedisEvent(id, (String) row.get("producer_id"),
-                    ((Number) row.get("epoch")).longValue(), room, ((Number) row.get("room_seq")).longValue(),
-                    ((Number) row.get("message_id")).longValue(), time.toInstant(ZoneOffset.UTC)), token,
-                    ((Number) row.get("attempts")).intValue());
+            ChatRedisEvent event = "CHAT_MESSAGE_CREATED".equals(row.get("event_type"))
+                    ? new ChatMessageRedisEvent(id, (String) row.get("producer_id"),
+                            ((Number) row.get("epoch")).longValue(), room, ((Number) row.get("room_seq")).longValue(),
+                            ((Number) row.get("message_id")).longValue(), time.toInstant(ZoneOffset.UTC))
+                    : ChatControlEvent.decode((String) row.get("event_body"));
+            return new Claim(event, token, ((Number) row.get("attempts")).intValue());
         });
     }
 

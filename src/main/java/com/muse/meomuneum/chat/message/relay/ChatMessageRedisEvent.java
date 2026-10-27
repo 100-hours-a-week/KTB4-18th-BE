@@ -14,10 +14,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 /** Strict reference-only wire contract; decode errors never contain payload data. */
 public record ChatMessageRedisEvent(String eventId, String producerId, long epoch, long roomId, long roomSeq,
-        long messageId, Instant occurredAt) {
+        long messageId, Instant occurredAt) implements ChatRedisEvent {
     private static final ObjectMapper JSON = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final long MAX_ID = 9007199254740991L;
+
+    public String channel(com.muse.meomuneum.chat.redis.ChatRedisChannels channels) {
+        return channels.roomChannel(roomId);
+    }
 
     public String encode() {
         try {

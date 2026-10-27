@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessageType;
@@ -21,6 +22,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
 import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
+import com.muse.meomuneum.chat.control.ChatControlEvent;
+import com.muse.meomuneum.chat.control.ChatControlEventConsumer;
 import com.muse.meomuneum.chat.message.dto.ChatMessageEvent;
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
 import com.muse.meomuneum.chat.message.service.DistributedChatMessageService;
@@ -33,6 +36,13 @@ import io.lettuce.core.pubsub.RedisPubSubAdapter;
 
 /** Both sender and peers use the same Pub/Sub path; ACK remains a DB-commit acknowledgement only. */
 public final class ChatMessageRelay implements AutoCloseable {
+    private ChatControlEventConsumer controls;
+
+    @Autowired(required = false)
+    public void setControls(ChatControlEventConsumer controls) {
+        this.controls = controls;
+    }
+
     private final ChatParticipationService participation;
     private final ChatMessageOutboxStore outbox;
     private final DistributedChatMessageService messages;
@@ -73,6 +83,13 @@ public final class ChatMessageRelay implements AutoCloseable {
             @Override
             public void message(String pattern, String channel, String body) {
                 receive(channel, body);
+            }
+
+            @Override
+            public void message(String channel, String body) {
+                if (controls != null && !ChatControlEvent.isCoreAuth(body)) {
+                    receiveControl(channel, body);
+                }
             }
         });
         redis.onUnavailable(() -> blocked.set(true));
@@ -133,7 +150,8 @@ public final class ChatMessageRelay implements AutoCloseable {
                             boolean sent = false;
                             try {
                                 // Subscriber count is not a user delivery receipt.
-                                redis.commands().sync().publish(channels.roomChannel(room), claim.event().encode());
+                                redis.commands().sync().publish(claim.event().channel(channels),
+                                        claim.event().encode());
                                 sent = true;
                                 published.incrementAndGet();
                             } catch (RuntimeException unavailable) {
@@ -159,7 +177,37 @@ public final class ChatMessageRelay implements AutoCloseable {
         }
     }
 
+    private void receiveControl(String channel, String body) {
+        if (!ready() || controls == null) {
+            return;
+        }
+        try {
+            ChatControlEvent.decode(body); // Bound and validate before accepting bytes into the finite queue.
+        } catch (RuntimeException invalid) {
+            controls.rejectMalformed();
+            return;
+        }
+        try {
+            receivers.execute(() -> {
+                try {
+                    if (ready()) {
+                        controls.receive(channel, channels, body);
+                    }
+                } catch (RuntimeException unavailable) {
+                    failures.incrementAndGet();
+                    failClosed();
+                }
+            });
+        } catch (RuntimeException full) {
+            failClosed();
+        }
+    }
+
     public void receive(String channel, String body) {
+        if (controls != null && ChatControlEvent.isControl(body)) {
+            receiveControl(channel, body);
+            return;
+        }
         ChatMessageRedisEvent event;
         try {
             event = ChatMessageRedisEvent.decode(channel, channels.roomPattern().replace("*", ""), body);
