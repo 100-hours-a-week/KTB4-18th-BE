@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -47,6 +48,8 @@ import com.muse.meomuneum.chat.connection.ChatMessageOutboundGuard;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
+import com.muse.meomuneum.chat.control.ChatControlEvent;
+import com.muse.meomuneum.chat.control.ChatControlEventConsumer;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
 import com.muse.meomuneum.chat.message.domain.ChatRoomMessage;
@@ -76,6 +79,7 @@ import com.muse.meomuneum.chat.room.dto.ChatRoomMembershipResponse;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomJoinResult;
+import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 import com.muse.meomuneum.chat.view.ChatViewStorageService;
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.user.domain.User;
@@ -98,7 +102,7 @@ class ChatParticipationMySqlTest {
     @BeforeAll
     static void migrate() {
         Flyway old = Flyway.configure().dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword())
-                .target("20261027131057").load();
+                .target("20261027142734").load();
         old.migrate();
         dataSource = new HikariDataSource();
         dataSource.setJdbcUrl(MYSQL.getJdbcUrl());
@@ -333,6 +337,7 @@ class ChatParticipationMySqlTest {
     void confirmedRegionMoveCommitsPreviousDepartureWhenTargetIsFullAndKeepsOtherSid() {
         var service = service("moving", snapshot -> {
         });
+        service.enableControlEvents();
         long user = user();
         String movingSid = UUID.randomUUID().toString();
         var moving = service.join(user, movingSid, room, claims(user)).membership();
@@ -353,6 +358,10 @@ class ChatParticipationMySqlTest {
         var full = assertThrows(ChatRoomException.class, () -> service.join(user, movingSid, target, location));
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, full.getErrorCode());
         assertEquals("LEFT", state(moving.viewSessionId()));
+        assertEquals("REGION_CHANGED", jdbc.queryForObject("SELECT end_reason FROM chat_room_members WHERE id=?",
+                String.class, moving.membershipId()));
+        assertTrue(jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment='moving' "
+                + "AND event_type='CHAT_MEMBERSHIP_ENDED'", Integer.class) > 0);
         assertEquals("RESERVED", state(staying.viewSessionId()));
         assertEquals(1, service.snapshot(room).occupied());
         assertEquals(1, service.snapshot(target).occupied());
@@ -646,6 +655,233 @@ class ChatParticipationMySqlTest {
         assertEquals(List.of(next.messageId()),
                 queries(owner).query(user, room, view.membershipId(), view.viewSessionId(),
                         "history", null, 10).items().stream().map(m -> m.messageId()).toList());
+    }
+
+    @Test
+    void remoteTabTerminalReferencesAreExactIdempotentAndDoNotEndOtherTabsOrSids() throws Exception {
+        String env = "control-tab";
+        var owner = service(env, snapshot -> {
+        });
+        var remote = service(env, snapshot -> {
+        });
+        remote.enableControlEvents();
+        var local = controlled(env, owner);
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var first = owner.join(user, sid, room, claims(user)).membership();
+        var second = remote.join(user, sid, room, claims(user)).membership();
+        var other = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        var firstSocket = local.attach(user, first, "control-first");
+        var secondSocket = local.attach(user, second, "control-second");
+        var otherSocket = local.attach(user, other, "control-other");
+        assertFalse(remote.leave(user, sid, room, first.membershipId(), first.viewSessionId()));
+        String event = terminalBody(env, "CHAT_VIEW_ENDED", first.viewSessionId());
+        local.consumer.receive(env + ":chat:control:v1", channels(env), event);
+        org.mockito.Mockito.verify(firstSocket)
+                .close(new org.springframework.web.socket.CloseStatus(4100, "CHAT_LEFT"));
+        org.mockito.Mockito.verify(secondSocket, org.mockito.Mockito.never()).close(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(otherSocket, org.mockito.Mockito.never()).close(org.mockito.ArgumentMatchers.any());
+        assertTrue(owner.socketValid(user, second.membershipId(), "control-second"));
+        long count = jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?", Long.class,
+                env);
+        remote.leave(user, sid, room, first.membershipId(), first.viewSessionId());
+        local.consumer.receive(env + ":chat:control:v1", channels(env), event);
+        assertEquals(count,
+                jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?", Long.class, env));
+        org.mockito.Mockito.verify(firstSocket, org.mockito.Mockito.times(1))
+                .close(org.mockito.ArgumentMatchers.any());
+        remote.leave(user, sid, room, second.membershipId(), second.viewSessionId());
+        String oldMember = terminalBody(env, "CHAT_MEMBERSHIP_ENDED", null);
+        assertEquals("LAST_VIEW_LEFT", ChatControlEvent.decode(oldMember).payload().get("reason"));
+        var fresh = owner.join(user, sid, room, claims(user)).membership();
+        var freshSocket = local.attach(user, fresh, "control-fresh");
+        assertFalse(fresh.membershipId().equals(first.membershipId()));
+        local.consumer.receive(env + ":chat:control:v1", channels(env), oldMember);
+        org.mockito.Mockito.verify(secondSocket).close(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(freshSocket, org.mockito.Mockito.never()).close(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(otherSocket, org.mockito.Mockito.never()).close(org.mockito.ArgumentMatchers.any());
+        assertTrue(owner.socketValid(user, fresh.membershipId(), "control-fresh"));
+    }
+
+    @Test
+    void droppedControlEventsReconcileSidReasonWithoutDestroyingAccountHistory() throws Exception {
+        String env = "control-revoke";
+        var owner = service(env, snapshot -> {
+        });
+        var remote = service(env, snapshot -> {
+        });
+        remote.enableControlEvents();
+        var local = controlled(env, owner);
+        long user = user();
+        String revoked = UUID.randomUUID().toString();
+        var first = owner.join(user, revoked, room, claims(user)).membership();
+        var second = owner.join(user, revoked, room, claims(user)).membership();
+        var survivor = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        var a = local.attach(user, first, "revoke-a");
+        var b = local.attach(user, second, "revoke-b");
+        var c = local.attach(user, survivor, "revoke-survivor");
+        var message = send(owner, user, first.membershipId(), "revoke-a");
+        owner.checkpoint(user, room, first.membershipId(), first.viewSessionId(), "revoke-a");
+        remote.end(user, revoked, null, null, "SESSION_REVOKED");
+        // No Pub/Sub delivery is performed. Persistent terminal state drives the independent fallback.
+        local.consumer.reconcile();
+        for (var socket : List.of(a, b)) {
+            org.mockito.Mockito.verify(socket)
+                    .close(new org.springframework.web.socket.CloseStatus(4100, "CHAT_LOGGED_OUT"));
+        }
+        org.mockito.Mockito.verify(c, org.mockito.Mockito.never()).close(org.mockito.ArgumentMatchers.any());
+        assertEquals(Set.of("revoke-survivor"), local.views.localViews().keySet());
+        assertEquals(List.of(message.messageId()), queries(remote).query(user, room, survivor.membershipId(),
+                survivor.viewSessionId(), "history", null, 50).items().stream().map(ChatMessageResponse::messageId)
+                .toList());
+        remote.end(user, revoked, null, null, "SESSION_REVOKED");
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? "
+                + "AND event_type='CHAT_MEMBERSHIP_ENDED'", Integer.class, env));
+    }
+
+    @Test
+    void terminalOutboxInsertFailureDoesNotCommitDepartureOrLoseOwnership() {
+        String env = "control-rollback";
+        var owner = service(env, snapshot -> {
+        });
+        var local = controlled(env, owner);
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var tab = owner.join(user, sid, room, claims(user)).membership();
+        local.attach(user, tab, "control-rollback");
+        jdbc.execute("""
+                CREATE TRIGGER fixture_control_failure BEFORE INSERT ON chat_message_outbox FOR EACH ROW
+                BEGIN IF NEW.environment='control-rollback' AND NEW.event_type='CHAT_PRESENCE_CHANGED' THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic control rollback'; END IF; END
+                """);
+        try {
+            assertThrows(ChatParticipationUnavailableException.class,
+                    () -> owner.leave(user, sid, room, tab.membershipId(), tab.viewSessionId()));
+        } finally {
+            jdbc.execute("DROP TRIGGER fixture_control_failure");
+        }
+        assertEquals("CONNECTED", state(tab.viewSessionId()));
+        assertTrue(owner.socketValid(user, tab.membershipId(), "control-rollback"));
+        assertEquals(1,
+                jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL",
+                        Integer.class, tab.viewSessionId()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? "
+                + "AND event_type='CHAT_VIEW_ENDED'", Integer.class, env));
+    }
+
+    @Test
+    void forgedWrongChannelAndEpochCannotCloseAndOldPresenceHintUsesCurrentDbVersion() throws Exception {
+        String env = "control-invalid";
+        var owner = service(env, snapshot -> {
+        });
+        var local = controlled(env, owner);
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var first = owner.join(user, sid, room, claims(user)).membership();
+        var socket = local.attach(user, first, "control-invalid");
+        var payload = Map.<String, Object>of("user_id", user, "sid", sid, "room_id", room,
+                "membership_id", first.membershipId(), "view_id", first.viewSessionId(),
+                "room_seq", owner.snapshot(room).version(), "reason", "LEFT");
+        var forged = new ChatControlEvent(UUID.randomUUID().toString(), "CHAT_VIEW_ENDED", "chat:" + owner.taskId(),
+                Instant.now(), owner.epoch(), payload);
+        assertThrows(IllegalArgumentException.class,
+                () -> ChatControlEvent.decode(forged.encode().replace("\"epoch\":", "\"extra\":1,\"epoch\":")));
+        assertThrows(IllegalArgumentException.class,
+                () -> ChatControlEvent.decode(forged.encode().replace("\"epoch\":", "\"epoch\":1,\"epoch\":")));
+        assertThrows(IllegalArgumentException.class, () -> ChatControlEvent.decode(" ".repeat(16385)));
+        assertThrows(IllegalArgumentException.class, () -> ChatControlEvent.decode(forged.encode() + " {}"));
+        local.consumer.receive(env + ":chat:control:v1", channels(env), forged.encode());
+        local.consumer.receive(env + ":chat:room:" + room, channels(env), forged.encode());
+        var wrongEpoch = new ChatControlEvent(forged.eventId(), forged.type(), forged.producerId(), forged.occurredAt(),
+                owner.epoch() + 1, payload);
+        local.consumer.receive(env + ":chat:control:v1", channels(env), wrongEpoch.encode());
+        assertEquals(3, local.consumer.rejectedEvents());
+        // Even a syntactically valid committed hint cannot replace the terminal DB-state check.
+        jdbc.update(
+                """
+                        INSERT INTO chat_message_outbox(event_id,environment,epoch,producer_id,room_id,room_seq,
+                            event_type,event_body,occurred_at,expires_at,next_attempt_at)
+                        VALUES (?,?,?,?,?,?,'CHAT_VIEW_ENDED',?,UTC_TIMESTAMP(6),
+                            TIMESTAMPADD(HOUR,24,UTC_TIMESTAMP(6)),UTC_TIMESTAMP(6))
+                        """,
+                forged.eventId(), env, owner.epoch(), forged.producerId(), room, forged.roomSeq(), forged.encode());
+        local.consumer.receive(env + ":chat:control:v1", channels(env), forged.encode());
+        assertEquals(4, local.consumer.rejectedEvents());
+        org.mockito.Mockito.verify(socket, org.mockito.Mockito.never()).close(org.mockito.ArgumentMatchers.any());
+        String hint = jdbc.queryForObject("SELECT event_body FROM chat_message_outbox WHERE environment=? "
+                + "AND event_type='CHAT_PRESENCE_CHANGED' ORDER BY room_seq LIMIT 1", String.class, env);
+        var second = owner.join(user, sid, room, claims(user)).membership();
+        local.attach(user, second, "control-later");
+        var published = mock(org.springframework.context.ApplicationEventPublisher.class);
+        ReflectionTestUtils.setField(owner, "events", published);
+        local.consumer.receive(env + ":chat:room:" + room, channels(env), hint);
+        long latest = owner.snapshot(room).version();
+        org.mockito.Mockito.verify(published)
+                .publishEvent(org.mockito.ArgumentMatchers.<Object>argThat(
+                        event -> event instanceof com.muse.meomuneum.chat.connection.ChatPresenceChangedEvent change
+                                && change.revision() == latest && change.count() == 1));
+        assertTrue(owner.socketValid(user, first.membershipId(), "control-invalid"));
+    }
+
+    @Test
+    void stalePollingSnapshotCannotDiscardAReconnectedSocketWithTheSameView() {
+        String env = "control-race";
+        var owner = service(env, snapshot -> {
+        });
+        var local = controlled(env, owner);
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var tab = owner.join(user, sid, room, claims(user)).membership();
+        local.attach(user, tab, "stale-socket");
+        var old = local.views.localViews().get("stale-socket");
+        local.views.disconnected(new com.muse.meomuneum.chat.view.ChatViewConnectionClosedEvent("stale-socket"));
+        local.presence.disconnect("stale-socket");
+        local.attach(user, tab, "fresh-socket");
+        assertTrue(local.views.discardInvalidSocket("stale-socket", old).isEmpty());
+        assertTrue(local.views.discardInvalidSocket("fresh-socket", local.views.localViews().get("fresh-socket"))
+                .isEmpty());
+        assertTrue(owner.socketValid(user, tab.membershipId(), "fresh-socket"));
+        assertTrue(local.views.localViews().containsKey("fresh-socket"));
+    }
+
+    private ChatRedisChannels channels(String env) {
+        return new ChatRedisChannels(new ChatRedisProperties(env, REDIS.getHost(), REDIS.getMappedPort(6379), "default",
+                "isolated-redis-password", false, Duration.ofSeconds(1), Duration.ofSeconds(1)));
+    }
+
+    private String terminalBody(String env, String type, String view) {
+        var rows = jdbc.queryForList("SELECT event_body FROM chat_message_outbox WHERE environment=? AND event_type=?",
+                String.class, env, type);
+        return rows.stream()
+                .filter(body -> view == null || view.equals(ChatControlEvent.decode(body).payload().get("view_id")))
+                .findFirst().orElseThrow();
+    }
+
+    private LocalControls controlled(String env, ChatParticipationService owner) {
+        var presence = new ChatPresenceRegistry(Clock.systemUTC());
+        presence.setParticipation(owner);
+        var storage = (ChatViewStorageService) ReflectionTestUtils.getField(owner, "storage");
+        var views = new ChatViewLifecycle(presence, storage);
+        views.setParticipation(owner);
+        var sockets = new ChatSocketSessions();
+        var consumer = new ChatControlEventConsumer(jdbc, owner, views, sockets, env);
+        return new LocalControls(owner, presence, views, sockets, consumer);
+    }
+
+    private record LocalControls(ChatParticipationService owner, ChatPresenceRegistry presence, ChatViewLifecycle views,
+            ChatSocketSessions sockets, ChatControlEventConsumer consumer) {
+        org.springframework.web.socket.WebSocketSession attach(long user, ChatRoomMembershipResponse tab, String id) {
+            var session = mock(org.springframework.web.socket.WebSocketSession.class);
+            when(session.getId()).thenReturn(id);
+            sockets.add(session);
+            views.connected(user, tab.roomId(), tab.membershipId(), id, tab.viewSessionId(),
+                    membershipSid(tab.membershipId()));
+            String destination = "/topic/chat-rooms/" + tab.roomId();
+            presence.subscribed(id, "room", destination);
+            views.subscribed(id, "room", destination);
+            return session;
+        }
     }
 
     private static final String FINGERPRINT_KEY = "v1:" + java.util.Base64.getEncoder().encodeToString(
@@ -1080,7 +1316,7 @@ class ChatParticipationMySqlTest {
         return new LocationResolutionClaims(user, 41L, "41", region, "41135", Instant.now().plusSeconds(60));
     }
 
-    private String membershipSid(long member) {
+    private static String membershipSid(long member) {
         return jdbc.queryForObject("SELECT auth_session_id FROM chat_room_members WHERE id=?", String.class, member);
     }
 

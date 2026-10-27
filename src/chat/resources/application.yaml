@@ -41,6 +41,8 @@ location:
   token:
     secret: ${LOCATION_TOKEN_SECRET}
 chat:
+  control-events:
+    enabled: ${CHAT_CONTROL_EVENTS_ENABLED:false}
   message-relay:
     enabled: ${CHAT_MESSAGE_RELAY_ENABLED:false}
     fingerprint-keys: ${CHAT_MESSAGE_FINGERPRINT_KEYS:}

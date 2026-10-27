@@ -66,6 +66,7 @@ import com.sun.net.httpserver.HttpsServer;
 /** Packaged Core/Chat authentication with optional shared participation and product message relay checks. */
 @Testcontainers
 class CoreAuthProcessTest {
+    private static final boolean CONTROL = Boolean.getBoolean("auth.integration.control-events");
     private static final boolean RELAY = Boolean.getBoolean("auth.integration.message-relay");
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
@@ -206,6 +207,9 @@ class CoreAuthProcessTest {
                 chatEnv.put("CHAT_MESSAGE_FINGERPRINT_KEYS", "v1:" + java.util.Base64.getEncoder().encodeToString(
                         "synthetic-message-fingerprint-key-at-least-32-bytes".getBytes(StandardCharsets.UTF_8)));
             }
+            if (CONTROL) {
+                chatEnv.put("CHAT_CONTROL_EVENTS_ENABLED", "true");
+            }
             Node polling = start("chat", chatEnv, trust);
             var fastEnv = new HashMap<>(chatEnv);
             fastEnv.put("CORE_AUTH_SERVICE_TOKEN", NEXT);
@@ -246,6 +250,59 @@ class CoreAuthProcessTest {
             }
             Probe second = join(subscribed, revokedSid, region, room);
             Probe survivor = join(polling, survivingSid, region, room);
+            if (CONTROL) {
+                String controlSid = UUID.randomUUID().toString();
+                sessions.put(controlSid, session(controlSid));
+                Probe tab = join(subscribed, polling, controlSid, region, room);
+                Probe peer = join(polling, subscribed, controlSid, region, room);
+                assertEquals(tab.membership, peer.membership);
+                var leave = request(subscribed, "DELETE", "/api/v1/chat-rooms/" + room + "/members/me?membership_id="
+                        + tab.membership + "&view_session_id=" + tab.view, token(controlSid), null, Map.of());
+                assertEquals(204, leave.statusCode(), leave.body());
+                assertEquals(4100, tab.closed.get(5, TimeUnit.SECONDS));
+                assertFalse(peer.closed.isDone());
+                assertFalse(first.closed.isDone());
+                assertFalse(survivor.closed.isDone());
+                // Location evidence, handled on the opposite Task, terminates only the moving sid.
+                var departure = request(polling, "POST", "/api/v1/chat-rooms/" + room
+                        + "/region-departures?membership_id=" + peer.membership, token(controlSid),
+                        json.writeValueAsString(Map.of("location_resolution_token", location(controlSid,
+                                jdbc.queryForObject("SELECT id FROM regions WHERE code='41150'", Long.class)))),
+                        Map.of());
+                assertEquals(204, departure.statusCode(), departure.body());
+                assertEquals(4100, peer.closed.get(5, TimeUnit.SECONDS));
+                assertFalse(second.closed.isDone());
+                assertFalse(survivor.closed.isDone());
+                Probe replacement = join(subscribed, controlSid, region, room);
+                assertTrue(replacement.membership != peer.membership);
+                // All original terminal references may be delivered late; replacement must survive.
+                var oldBodies = jdbc.queryForList("SELECT event_body FROM chat_message_outbox WHERE event_type IN "
+                        + "('CHAT_VIEW_ENDED','CHAT_MEMBERSHIP_ENDED') ORDER BY room_seq DESC", String.class);
+                try (var publish = new com.muse.meomuneum.chat.redis.ChatRedisConnection(
+                        new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
+                                REDIS.getMappedPort(6379), "chat-auth", REDIS_PASSWORD, false,
+                                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1)))) {
+                    for (String body : oldBodies) {
+                        publish.commands().sync().publish("auth-test:chat:control:v1", body);
+                        publish.commands().sync().publish("auth-test:chat:control:v1", body);
+                    }
+                }
+                Thread.sleep(300);
+                assertFalse(replacement.closed.isDone());
+                await(() -> jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE "
+                        + "event_type='CHAT_VIEW_ENDED' AND status='SENT'", Integer.class) > 0
+                        && jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE "
+                                + "event_type='CHAT_MEMBERSHIP_ENDED' AND status='SENT'", Integer.class) > 0);
+                Files.writeString(evidence.resolve("control-events.json"),
+                        json.writeValueAsString(Map.of("crossTaskTabOnly", true, "sidRegionDeparture", true,
+                                "otherSidSurvived", true, "lateDuplicate", true)));
+                var examples = new java.util.ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+                for (String type : List.of("CHAT_VIEW_ENDED", "CHAT_MEMBERSHIP_ENDED", "CHAT_PRESENCE_CHANGED")) {
+                    examples.add(json.readTree(jdbc.queryForObject("SELECT event_body FROM chat_message_outbox "
+                            + "WHERE event_type=? ORDER BY room_seq LIMIT 1", String.class, type)));
+                }
+                Files.writeString(evidence.resolve("control-event-examples.json"), json.writeValueAsString(examples));
+            }
             var original = sessions.get(survivingSid);
             sessions.replace(survivingSid, original, original.withRotation("rotated-jti", "rotated-hash", "jti", "hash",
                     UUID.randomUUID().toString(), Instant.now().plusSeconds(60), "synthetic-encrypted-replay",
@@ -266,7 +323,10 @@ class CoreAuthProcessTest {
                 retrying.sendMessage(room, survivor.lastClient, "변경된 내용");
                 assertEquals("CLIENT_ID_CONFLICT", frameData(retrying.await("CHAT_REJECTED")).path("reason").asText());
                 assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Integer.class));
-                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox", Integer.class));
+                assertEquals(1,
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM chat_message_outbox WHERE event_type='CHAT_MESSAGE_CREATED'",
+                                Integer.class));
                 Files.writeString(evidence.resolve("message-relay.json"),
                         "{\"senderViaPubSub\":true,\"peerMessage\":true,\"crossTaskRetry\":true,\"conflict\":true}");
             }
@@ -281,7 +341,9 @@ class CoreAuthProcessTest {
                     new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
                         @Override
                         public void message(String channel, String value) {
-                            notifications.add(value);
+                            if (com.muse.meomuneum.chat.control.ChatControlEvent.isCoreAuth(value)) {
+                                notifications.add(value);
+                            }
                         }
                     });
             await(subscription::isReady);
@@ -450,6 +512,16 @@ class CoreAuthProcessTest {
     }
 
     private Probe join(Node node, Node socketNode, String sid, long region, long room) throws Exception {
+        String location = location(sid, region);
+        var response = request(node, "POST", "/api/v1/chat-rooms/" + room + "/members", token(sid),
+                json.writeValueAsString(Map.of("location_resolution_token", location)), Map.of());
+        assertTrue(response.statusCode() == 200 || response.statusCode() == 201, response.body());
+        return connect(socketNode, sid, room,
+                json.readTree(response.body()).path("data").path("membership_id").asLong(),
+                json.readTree(response.body()).path("data").path("view_session_id").asText());
+    }
+
+    private String location(String sid, long region) {
         var provider = new com.muse.meomuneum.location.security.LocationResolutionTokenProvider(
                 new com.muse.meomuneum.location.config.LocationTokenProperties(SECRET), java.time.Clock.systemUTC());
         // Issue the existing token format from persisted administrative metadata, with synthetic signing material.
@@ -459,16 +531,11 @@ class CoreAuthProcessTest {
                 com.muse.meomuneum.chat.region.domain.RegionLevel.SIDO, null);
         ReflectionTestUtils.setField(parent, "id",
                 jdbc.queryForObject("SELECT parent_id FROM regions WHERE id=?", Long.class, region));
-        var local = com.muse.meomuneum.chat.region.domain.Region.create("41135", "fixture",
+        var local = com.muse.meomuneum.chat.region.domain.Region.create(
+                jdbc.queryForObject("SELECT code FROM regions WHERE id=?", String.class, region), "fixture",
                 com.muse.meomuneum.chat.region.domain.RegionLevel.SIGUNGU, parent);
         ReflectionTestUtils.setField(local, "id", region);
-        String location = provider.issueForSession(411001L, sid, parent, local, null).value();
-        var response = request(node, "POST", "/api/v1/chat-rooms/" + room + "/members", token(sid),
-                json.writeValueAsString(Map.of("location_resolution_token", location)), Map.of());
-        assertTrue(response.statusCode() == 200 || response.statusCode() == 201, response.body());
-        return connect(socketNode, sid, room,
-                json.readTree(response.body()).path("data").path("membership_id").asLong(),
-                json.readTree(response.body()).path("data").path("view_session_id").asText());
+        return provider.issueForSession(411001L, sid, parent, local, null).value();
     }
 
     private Probe connect(Node node, String sid, long room, long membership, String view) throws Exception {

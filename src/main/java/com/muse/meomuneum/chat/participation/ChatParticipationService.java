@@ -31,6 +31,7 @@ import com.muse.meomuneum.chat.auth.ChatAuthOperation;
 import com.muse.meomuneum.chat.connection.ChatPresenceChangedEvent;
 import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
+import com.muse.meomuneum.chat.control.ChatControlEvent;
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
 import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.message.query.ChatQueryException;
@@ -72,6 +73,15 @@ public final class ChatParticipationService {
     private volatile long epoch;
     private volatile long localLease;
     private volatile boolean failed;
+    private volatile boolean controlEvents;
+
+    public void enableControlEvents() {
+        controlEvents = true;
+    }
+
+    public void forgetSocket(String socket) {
+        claims.remove(socket);
+    }
 
     public ChatParticipationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
             ChatViewStorageService storage, ChatSessionAccessPolicy access, ChatParticipationProjection projection,
@@ -154,7 +164,7 @@ public final class ChatParticipationService {
                 if (member.room == room) {
                     same = member;
                 } else {
-                    endMembership(tx, member);
+                    endMembership(tx, member, "REGION_CHANGED");
                 }
             }
             if (!capacity(user, room, ((Number) target.get("capacity")).intValue())) {
@@ -170,7 +180,7 @@ public final class ChatParticipationService {
                                 VALUES (?,?,?,?,?,?,'RESERVED',TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6)))
                                 """,
                     view, environment, epoch, user, room, memberId);
-            tx.changed(room);
+            tx.presenceChanged(room);
             jdbc.update("UPDATE chat_view_runtime SET changed_seq=? WHERE view_id=?", tx.version(room), view);
             LocalDateTime joined = same == null ? now : same.created;
             return new Join(new ChatRoomJoinResult(new ChatRoomMembershipResponse(memberId, room,
@@ -212,7 +222,7 @@ public final class ChatParticipationService {
                                       THEN deadline ELSE TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6)) END
                     WHERE view_id=? AND owner_generation=? AND state<>'LEFT'
                     """, taskId, socket, view, current.generation);
-            tx.changed(room);
+            tx.presenceChanged(room);
             mark(view, tx.version(room));
             return current.generation + 1;
         });
@@ -232,13 +242,13 @@ public final class ChatParticipationService {
             if (current.state.equals("CONNECTED")) {
                 return view;
             }
-            tx.changed(room);
+            tx.presenceChanged(room);
             boundaries.subscribed(view, room, epoch, taskId, current.generation);
             jdbc.update("""
                     UPDATE chat_view_runtime SET state='CONNECTED',deadline=NULL
                     WHERE view_id=? AND owner_task_id=? AND socket_token=? AND owner_generation=?
                     """, view, taskId, socket, current.generation);
-            tx.changed(room);
+            tx.presenceChanged(room);
             mark(view, tx.version(room));
             return view;
         });
@@ -263,13 +273,13 @@ public final class ChatParticipationService {
         execute(user, tx -> {
             tx.lock(List.of(room));
             requireOwner(owned(user, room, member, view), socket);
-            tx.changed(room);
+            tx.presenceChanged(room);
             boundaries.close(view, room, "UNSUBSCRIBED");
             jdbc.update("""
                     UPDATE chat_view_runtime SET state='RESERVED',deadline=TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6))
                     WHERE view_id=?
                     """, view);
-            tx.changed(room);
+            tx.presenceChanged(room);
             mark(view, tx.version(room));
             return null;
         });
@@ -292,7 +302,7 @@ public final class ChatParticipationService {
                             deadline=CASE WHEN ? THEN TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6)) ELSE deadline END
                         WHERE view_id=? AND owner_task_id=? AND socket_token=? AND owner_generation=?
                         """, connected ? "GRACE" : "RESERVED", connected, view, taskId, socket, current.generation);
-                tx.changed(room);
+                tx.presenceChanged(room);
                 mark(view, tx.version(room));
                 return null;
             });
@@ -304,32 +314,50 @@ public final class ChatParticipationService {
     public boolean leave(long user, String sid, long room, long member, String view) {
         return execute(user, tx -> {
             tx.lock(List.of(room));
-            owned(user, room, member, view);
+            RuntimeView current = owned(user, room, member, view);
             if (!sid.equals(jdbc.queryForObject("SELECT auth_session_id FROM chat_room_members WHERE id=?",
                     String.class, member))) {
                 throw denied();
             }
-            tx.changed(room);
+            if (current.state.equals("LEFT")) {
+                return jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM chat_room_members WHERE id=? AND deleted_at IS NOT NULL",
+                        Integer.class, member) == 1;
+            }
+            tx.presenceChanged(room);
             boundaries.close(view, room, "LEFT");
             storage.leaveShared(user, room, member, view);
             jdbc.update("""
                     UPDATE chat_view_runtime SET state='LEFT',deadline=NULL,owner_task_id=NULL,socket_token=NULL,
-                        owner_generation=owner_generation+1 WHERE view_id=? AND state<>'LEFT'
+                        owner_generation=owner_generation+1,end_reason='LEFT' WHERE view_id=? AND state<>'LEFT'
                     """, view);
             boolean last = jdbc.queryForObject("""
                     SELECT COUNT(*) FROM chat_view_sessions WHERE membership_id=? AND ended_at IS NULL
                     """, Integer.class, member) == 0;
             if (last) {
-                jdbc.update("UPDATE chat_room_members SET deleted_at=COALESCE(deleted_at,UTC_TIMESTAMP(6)) WHERE id=?",
+                jdbc.update(
+                        "UPDATE chat_room_members SET deleted_at=COALESCE(deleted_at,UTC_TIMESTAMP(6)), "
+                                + "end_reason='LEFT' WHERE id=?",
                         member);
             }
-            tx.changed(room);
+            tx.presenceChanged(room);
             mark(view, tx.version(room));
+            terminalEvent(tx, "CHAT_VIEW_ENDED", user, sid, room, member, view, "LEFT");
+            if (last) {
+                terminalEvent(tx, "CHAT_MEMBERSHIP_ENDED", user, sid, room, member, null, "LEFT");
+            }
             return last;
         });
     }
 
     public void end(long user, String sid, Long room, Long membership) {
+        end(user, sid, room, membership, "LEFT");
+    }
+
+    public void end(long user, String sid, Long room, Long membership, String reason) {
+        if (!ChatControlEvent.REASONS.contains(reason)) {
+            throw new IllegalArgumentException("Unsupported Chat termination reason");
+        }
         execute(user, tx -> {
             List<Member> selected = members(user, sid, membership == null).stream()
                     .filter(m -> membership == null || membership == m.id && room != null && room == m.room).toList();
@@ -337,7 +365,7 @@ public final class ChatParticipationService {
                 throw error(ChatRoomErrorCode.MEMBERSHIP_NOT_FOUND);
             }
             tx.lock(selected.stream().map(Member::room).toList());
-            selected.forEach(member -> endMembership(tx, member));
+            selected.forEach(member -> endMembership(tx, member, reason));
             return null;
         });
     }
@@ -458,6 +486,7 @@ public final class ChatParticipationService {
                             AND c.epoch=v.epoch AND c.mode='RUNNING' AND o.room_seq>i.start_after_room_seq
                             AND msg.created_at>=i.started_at AND msg.created_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
                             AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
+                                AND b.deleted_at IS NULL AND b.created_at<=UTC_TIMESTAMP(6)
                                 AND b.expires_at>UTC_TIMESTAMP(6)) AND
                         """
                 + EFFECTIVE, message, environment, room, taskId, epoch);
@@ -490,7 +519,7 @@ public final class ChatParticipationService {
                     AND v.owner_task_id=? AND v.state='CONNECTED' AND o.room_seq>i.start_after_room_seq
                     AND m.created_at>=i.started_at AND m.created_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
                     AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
-                        AND b.expires_at>UTC_TIMESTAMP(6))
+                        AND b.deleted_at IS NULL AND b.created_at<=UTC_TIMESTAMP(6) AND b.expires_at>UTC_TIMESTAMP(6))
                 """, Integer.class, message, environment, user, member, socket, taskId) == 1;
     }
 
@@ -616,7 +645,7 @@ public final class ChatParticipationService {
                                 """, view);
                     }
                     if (!expired.isEmpty()) {
-                        rooms.forEach(tx::changed);
+                        rooms.forEach(tx::presenceChanged);
                         for (String view : expired) {
                             long room = jdbc.queryForObject("SELECT room_id FROM chat_view_runtime WHERE view_id=?",
                                     Long.class, view);
@@ -666,7 +695,12 @@ public final class ChatParticipationService {
                         ChatAuthOperation.check();
                     }
                 });
-                return action.apply(tx);
+                T applied = action.apply(tx);
+                for (long room : tx.presence) {
+                    recordControl("CHAT_PRESENCE_CHANGED", room, tx.version(room),
+                            Map.of("room_id", room, "room_seq", tx.version(room)));
+                }
+                return applied;
             });
         } catch (ChatRoomException | ChatQueryException | ChatMessageRejection
                 | ChatParticipationUnavailableException rejected) {
@@ -766,20 +800,67 @@ public final class ChatParticipationService {
                 r.getTimestamp(3).toLocalDateTime()), args.toArray());
     }
 
-    private void endMembership(Transition tx, Member member) {
-        tx.changed(member.room);
+    private void endMembership(Transition tx, Member member, String reason) {
+        var identity = jdbc.queryForMap("SELECT user_id,auth_session_id,deleted_at FROM chat_room_members WHERE id=?",
+                member.id);
+        if (identity.get("deleted_at") != null) {
+            return;
+        }
+        tx.presenceChanged(member.room);
         jdbc.queryForList("SELECT id FROM chat_view_sessions WHERE membership_id=?", String.class, member.id)
                 .forEach(view -> boundaries.close(view, member.room, "LEFT"));
         storage.endedShared(member.id);
-        jdbc.update("UPDATE chat_room_members SET deleted_at=COALESCE(deleted_at,UTC_TIMESTAMP(6)) WHERE id=?",
-                member.id);
+        jdbc.update("UPDATE chat_room_members SET deleted_at=UTC_TIMESTAMP(6),end_reason=? WHERE id=?",
+                reason, member.id);
         jdbc.update("""
                 UPDATE chat_view_runtime SET state='LEFT',deadline=NULL,owner_task_id=NULL,socket_token=NULL,
-                    owner_generation=owner_generation+1 WHERE membership_id=? AND state<>'LEFT'
-                """, member.id);
-        tx.changed(member.room);
+                    owner_generation=owner_generation+1,end_reason=?
+                WHERE membership_id=? AND environment=? AND state<>'LEFT'
+                """, reason, member.id, environment);
+        tx.presenceChanged(member.room);
         jdbc.update("UPDATE chat_view_runtime SET changed_seq=? WHERE membership_id=?", tx.version(member.room),
                 member.id);
+        terminalEvent(tx, "CHAT_MEMBERSHIP_ENDED", ((Number) identity.get("user_id")).longValue(),
+                (String) identity.get("auth_session_id"), member.room, member.id, null, reason);
+    }
+
+    private void terminalEvent(Transition tx, String type, long user, String sid, long room, long member,
+            String view, String reason) {
+        var payload = new java.util.TreeMap<String, Object>();
+        payload.put("user_id", user);
+        payload.put("sid", sid);
+        payload.put("room_id", room);
+        payload.put("membership_id", member);
+        payload.put("room_seq", tx.version(room));
+        payload.put("reason", type.equals("CHAT_MEMBERSHIP_ENDED") && reason.equals("LEFT")
+                ? "LAST_VIEW_LEFT"
+                : reason);
+        if (view != null) {
+            payload.put("view_id", view);
+        }
+        recordControl(type, room, tx.version(room), payload);
+    }
+
+    private void recordControl(String type, long room, long seq, Map<String, Object> payload) {
+        if (!controlEvents) {
+            return;
+        }
+        LocalDateTime occurred = now();
+        var event = new ChatControlEvent(UUID.randomUUID().toString(), type, "chat:" + taskId,
+                occurred.toInstant(ZoneOffset.UTC), epoch, payload);
+        ChatControlEvent.decode(event.encode());
+        jdbc.update("""
+                INSERT INTO chat_message_outbox(event_id,environment,epoch,producer_id,room_id,room_seq,event_type,
+                    event_body,occurred_at,expires_at,next_attempt_at)
+                VALUES (?,?,?,?,?,?,?,?,?,TIMESTAMPADD(HOUR,24,?),UTC_TIMESTAMP(6))
+                """, event.eventId(), environment, epoch, event.producerId(), room, seq, type, event.encode(), occurred,
+                occurred);
+    }
+
+    public void publishPresence(long room) {
+        validSockets();
+        var snapshot = snapshot(room);
+        events.publishEvent(new ChatPresenceChangedEvent(room, snapshot.connected(), snapshot.version(), null, null));
     }
 
     private long createMembership(long user, String sid, long room, LocalDateTime now) {
@@ -894,6 +975,12 @@ public final class ChatParticipationService {
     private final class Transition {
         private final long started = System.nanoTime();
         private final Set<Long> changed = new LinkedHashSet<>();
+        private final Set<Long> presence = new LinkedHashSet<>();
+
+        private void presenceChanged(long room) {
+            changed(room);
+            presence.add(room);
+        }
 
         private void lock(List<Long> rooms) {
             rooms.stream().distinct().sorted().forEach(room -> {

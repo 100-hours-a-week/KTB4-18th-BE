@@ -179,7 +179,7 @@ public class ChatRoomEntryService {
             if (current.getRegion().getId().equals(claims.sigunguRegionId())) {
                 throw new ChatRoomException(ChatRoomErrorCode.LOCATION_REGION_MISMATCH);
             }
-            participation.end(userId, authSessionId, roomId, membershipId);
+            participation.end(userId, authSessionId, roomId, membershipId, "REGION_CHANGED");
             return;
         }
         Set<String> ended = presence.exclusive(() -> {
@@ -232,7 +232,7 @@ public class ChatRoomEntryService {
         sessionAccess.revoke(event.userId(), event.authSessionId());
         sockets.close(authSessions.connections(event.userId(), event.authSessionId()), 4100, "CHAT_LOGGED_OUT");
         if (participation != null) {
-            participation.end(event.userId(), event.authSessionId(), null, null);
+            participation.end(event.userId(), event.authSessionId(), null, null, "SESSION_REVOKED");
             return;
         }
         Set<String> ended = presence.exclusive(() -> {
@@ -258,7 +258,7 @@ public class ChatRoomEntryService {
 
     public void leaveAll(Long userId, int code, String reason) {
         if (participation != null) {
-            participation.end(userId, null, null, null);
+            participation.end(userId, null, null, null, code == 4101 ? "ACCESS_RESTRICTED" : "LEFT");
             return;
         }
         Set<String> ended = presence.exclusive(() -> {

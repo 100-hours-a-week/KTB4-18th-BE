@@ -13,6 +13,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
@@ -23,6 +24,12 @@ import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 public class ChatViewLifecycle {
     private static final Logger log = LoggerFactory.getLogger(ChatViewLifecycle.class);
     private ChatParticipationService participation;
+    private ChatAuthSessionRegistry authSessions;
+
+    @Autowired(required = false)
+    public void setAuthSessions(ChatAuthSessionRegistry registry) {
+        authSessions = registry;
+    }
 
     @Autowired(required = false)
     public void setParticipation(ChatParticipationService service) {
@@ -166,6 +173,68 @@ public class ChatViewLifecycle {
     }
 
     public record Context(Long userId, Long roomId, Long membershipId) {
+    }
+
+    public record LocalView(long userId, long roomId, long membershipId, String viewId) {
+    }
+
+    public Map<String, LocalView> localViews() {
+        return presence.exclusive(() -> {
+            Map<String, LocalView> snapshot = new HashMap<>();
+            connections.forEach((socket, connection) -> {
+                if (connection.viewId != null) {
+                    snapshot.put(socket, new LocalView(connection.userId, connection.roomId,
+                            connection.membershipId, connection.viewId));
+                }
+            });
+            return Map.copyOf(snapshot);
+        });
+    }
+
+    public Set<String> discardInvalidSocket(String socket, LocalView expected) {
+        return presence.exclusive(() -> {
+            Connection connection = connections.get(socket);
+            if (connection == null || connection.userId != expected.userId() || connection.roomId != expected.roomId()
+                    || connection.membershipId != expected.membershipId()
+                    || !expected.viewId().equals(connection.viewId)
+                    || participation != null
+                            && participation.socketValid(expected.userId(), expected.membershipId(), socket)) {
+                return Set.of();
+            }
+            connections.remove(socket);
+            if (participation != null) {
+                participation.forgetSocket(socket);
+            }
+            if (authSessions != null) {
+                authSessions.remove(socket);
+            }
+            presence.removeTab(expected.userId(), expected.membershipId(), expected.viewId());
+            return Set.of(socket);
+        });
+    }
+
+    /** DB terminal state was verified by the caller. Remove local metadata before closing transports. */
+    public Set<String> discardEnded(long user, long room, long member, String view) {
+        return presence.exclusive(() -> {
+            Set<String> removed = new HashSet<>();
+            connections.entrySet().removeIf(entry -> {
+                Connection connection = entry.getValue();
+                boolean matches = connection.userId == user && connection.roomId == room
+                        && connection.membershipId == member && (view == null || view.equals(connection.viewId));
+                if (matches) {
+                    if (participation != null) {
+                        participation.forgetSocket(entry.getKey());
+                    }
+                    if (authSessions != null) {
+                        authSessions.remove(entry.getKey());
+                    }
+                    presence.removeTab(user, member, connection.viewId);
+                    removed.add(entry.getKey());
+                }
+                return matches;
+            });
+            return Set.copyOf(removed);
+        });
     }
 
     public List<ChatViewInterval> authorize(Long userId, Long roomId, Long membershipId, String viewId) {
