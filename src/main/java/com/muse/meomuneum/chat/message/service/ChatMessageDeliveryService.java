@@ -113,7 +113,8 @@ public class ChatMessageDeliveryService {
                 broker.getObject().convertAndSend("/topic/chat-rooms/" + roomId,
                         new ChatMessageEvent("CHAT_MESSAGE", saved), headers.getMessageHeaders());
                 acknowledge(userId, membershipId, sessionId, saved);
-            } catch (com.muse.meomuneum.chat.auth.ChatAuthUnavailableException unavailable) {
+            } catch (com.muse.meomuneum.chat.auth.ChatAuthUnavailableException
+                    | com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException unavailable) {
                 sockets.close(Set.of(sessionId), 1013, "CHAT_SERVICE_UNAVAILABLE");
             } catch (ChatMessageRejection rejection) {
                 reject(userId, roomId, membershipId, sessionId, clientId, rejection);

@@ -100,7 +100,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             try (var scope = new ChatAuthOperation(coreVerifier, pair, tokenExpiry)) {
                 return process(message, channel);
             }
-        } catch (ChatAuthUnavailableException unavailable) {
+        } catch (com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException
+                | ChatAuthUnavailableException unavailable) {
             sockets.close(Set.of(headers.getSessionId()), 1013, "CHAT_SERVICE_UNAVAILABLE");
             return null;
         } catch (com.muse.meomuneum.auth.exception.AuthenticationFailedException | IllegalArgumentException invalid) {
@@ -130,7 +131,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                     delivery.send(sender.userId(), sender.roomId(), sender.membershipId(), headers.getSessionId(),
                             headers.getDestination(),
                             message.getPayload() instanceof byte[] bytes ? bytes : new byte[0]);
-                } catch (ChatAuthUnavailableException unavailable) {
+                } catch (com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException
+                        | ChatAuthUnavailableException unavailable) {
                     sockets.close(Set.of(headers.getSessionId()), 1013, "CHAT_SERVICE_UNAVAILABLE");
                 } catch (RuntimeException unavailable) {
                     // Never let framework exception logging include a rejected SEND payload.
@@ -179,7 +181,7 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             entry.connect(claims.userId(), authContext.authSessionId(), roomId, membershipId, headers.getSessionId());
             try {
                 views.connected(claims.userId(), roomId, membershipId, headers.getSessionId(),
-                        requestedViewId);
+                        requestedViewId, claims.sessionId());
             } catch (RuntimeException failure) {
                 sockets.close(Set.of(headers.getSessionId()), 4103, "CHAT_VIEW_UNAVAILABLE");
                 throw failure;
@@ -230,7 +232,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             try {
                 entry.authorizeConnection(identity.userId(), identity.roomId(), identity.membershipId(),
                         sessionId);
-            } catch (ChatAuthUnavailableException unavailable) {
+            } catch (com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException
+                    | ChatAuthUnavailableException unavailable) {
                 sockets.close(Set.of(sessionId), 1013, "CHAT_SERVICE_UNAVAILABLE");
             } catch (ChatRoomException exception) {
                 if (exception.getErrorCode() == ChatRoomErrorCode.CHAT_BANNED) {

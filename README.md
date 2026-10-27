@@ -867,3 +867,70 @@ Core Redis SG 접근·TLS 및 앱별 ACL, 운영 부하에서의 deadline/5초 �
 인증 통합1개·Redis4개 전부 통과했고 앱 분리 검증은 JAR2개 통과·이미지1개 조건부 제외다.
 이번 단계는 실제 역할 JAR로 검증했으며 3단계 Docker 이미지 재빌드/운영 배포를 수행하지 않았다.
 증빙과 기존 dev 실패 이름 대조는 `build/core-auth-verification/summary.json` 및 XML에 보존한다.
+
+
+## 전역 정원·참여 상태 (P1 5단계)
+
+여러 Chat Task가 같은 방을 처리할 때 로컬 Map의 인원을 합산하지 않고 **MySQL 원장의 유효 view를
+계정별로 중복 제거**해 정원을 판단한다. Redis는 공유 투영이며 자리·권한을 승인하지 않는다.
+Redis의 유실/오래된 snapshot이 계정 정원1000을 늘리는 근거가 되지 않도록 하기 위한 선택이다.
+
+| 항목 | 구현·판단 근거 |
+| --- | --- |
+| DB 원장 | 추가형 migration의 `chat_runtime_control`, `chat_runtime_tasks`, `chat_room_runtime`, `chat_view_runtime`. 기존 membership/view/history는 유지하고 과거 membership을 접속자로 복원하지 않는다. |
+| 정원 확보 | READ COMMITTED에서 control → Task UUID순 SHARE → user → room ID순 UPDATE 잠금. 방 잠금 후 유효 view의 DISTINCT user를 조회하고 같은 transaction에서 예약을 저장한다. 별도 account-seat 물리 테이블을 중복 원장으로 두지 않는다. |
+| 상태 | RESERVED/CONNECTED/GRACE/OFFLINE/LEFT. 유효 예약·유예30초와 유효 CONNECTED가 계정 한 자리, 실제 구독 준비가 끝난 CONNECTED만 화면 인원이다. DB UTC의 `now < deadline`을 사용한다. |
+| 소켓/소유권 | REST에서 받은 view로 어느 Task에도 CONNECT할 수 있다. JWT sid와 membership sid를 직접 비교하고, 유효 owner가 있는 view의 중복 claim을 거절한다. Task UUID·소켓 token·증가 owner_generation을 기록하고 DB 잠금 안에서 현재 소유권을 재확인한다. |
+| 단절/재연결 | 정상 관측한 단절만30초 GRACE와 owner release. 이전 소켓의 지연 disconnect는 새 claim을 변경하지 않는다. 만료/OFFLINE에서 새 입장 자리를 다시 검사한다. |
+| 탭/sid 격리 | 탭 퇴장은 그 view만 LEFT. 지역 이동·로그아웃은 해당 sid만 종료한다. 목적지가 만원이어도 확인된 이전 방 퇴장을 commit하며 다른 sid는 유지한다. |
+| Task lease | DB heartbeat5초/lease15초와 요청 시작 기준 보수적 로컬14초 deadline. 만료한 동일 Task ID는 되살리지 않고 새 UUID로 등록한다. 만료 Task를 FENCED로 바꾸며 해당 열린 구간은 마지막 verified 경계로 닫는다. |
+| 만료 | 1초 정리 작업이 물리적으로 늦어져도 deadline/lease가 지난 view는 정원 계산에서 즉시 제외한다. 만료 후 재연결이 과거 부재 구간을 연장하지 않는다. |
+| Redis 투영 | 환경/room hash tag/epoch namespace에 인원·view 상태를 기록한다. 방과 view의 DB version을 각각 Lua CAS해 역순 갱신을 막고24시간 TTL을 사용한다. 원문 메시지·인증 토큰·소켓 객체는 넣지 않는다. |
+| 실패 | 잠금/statement 초기1초·transaction2초 예산과 commit 전 Task/인증 확인. timeout은 전체 rollback 후503. DB commit 후 투영 실패는 예약을 가짜 rollback하지 않고 Task를 차단·소켓1013/readiness DOWN으로 처리한다. |
+
+설정은 Chat의 `CHAT_DISTRIBUTED_PRESENCE_ENABLED=true`로 명시적으로 선택한다(기본false).
+`CHAT_CORE_AUTH_ENABLED=true`, `CHAT_REDIS_ENABLED=true`와 namespace·접속 정보가 필요하다.
+`CHAT_RUNTIME_ENABLED`의 **chat-isolated 전용·prod 거부를 유지**하므로 이번 작업만으로 운영 Task를
+증설하지 않는다. 기존 단일 앱과 분산 모드가 같은 채팅 DB 상태를 동시에 수정하지 않게 한다.
+공개 REST 경로/필드·STOMP destination은 유지한다. 분산 모드 CONNECT에는 최신 REST 입장에서 발급한
+`view_session_id`가 필요하며 다른 탭의 view를 임의로 선택하지 않는다.
+
+새 Task는 다른 정상 Task의 열린 구간을 재시작으로 닫지 않는다. 주기 checkpoint는 DB 소유권/lease를
+확인한 transaction에서만 수행한다. 분산 모드 조회는 임의로 now까지 checkpoint하지 않고 마지막
+검증 경계를 사용한다. **다른 Task로 배정된 REST history/recovery의 현재 view 권한 확인, 메시지와
+구간의 room_seq 경계 매핑·전파는 후속6/7단계다.** 이번 room_seq는 상태/투영 버전이며 완성된
+분산 메시지 순서 계약으로 표시하지 않는다. Redis 상태 유실의 전역 epoch 복구·outbox/relay·drain도
+후속이다. DB/Redis 실패로 차단된 Task는 이 단계에서 자동 개방하지 않으며 재기동/후속 복구 절차가 필요하다.
+
+새 SQL은 `V20261027002610__create_chat_participation_runtime.sql`이다. 기존 적용 SQL은 변경하지 않는다.
+실제 운영 적용 전에 지정한 단일 migrator·Chat 계정의 네 테이블 CRUD/locking read 권한·DB 연결 수를
+클라우드와 맞춘다. Core는 migration 원본을 패키징하지만 평소 Flyway=false, Chat은 migration을 실행하지 않는다.
+전환은 채팅 중단·구 처리 종료 → 단일 migration → 새 앱 확인 순서다. rollback도 채팅을 중단하고
+새 영속 상태와 호환되는 버전으로 수행한다. 테이블 삭제나 구 단일 서버로 단순 재라우팅은 자동 수행하지 않는다.
+
+Redis Chat ACL은 기존 권한에 환경별 `~<env>:chat:state:*`와 `EVAL/HGET/HSET/EXPIRE`가 필요하다.
+Core는 상태 key 권한을 받지 않는다. TLS·앱별 사용자/secret·Core 망 허용 등 기존 클라우드 준비 사항은
+여전히 별도이며 보고된 default 공유/plaintext 구성으로 충족됐다고 보지 않는다.
+
+```sh
+# Docker + Testcontainers, 합성 자격 증명/격리 DB만 사용한다.
+./gradlew chatParticipationTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+`chatParticipationTest`는 실제 MySQL9.7.0/Redis8.10.2로 상태 전이·999→마지막 자리 동시 경합,
+동일 계정 중복 제거·다른 sid 거절·탭 퇴장·이동 목적지 만실·만료 경계·옛 소켓/Task 차단,
+실제 DB lock timeout rollback·commit 후 투영 실패·실제 Lua 역순/키 유실을 검증한다.
+추가로 실제 Core/두 Chat JAR를 TLS로 연결해 REST/WS 교차 배정·live view 이후 새 Task 기동·폐기/장애/history
+복구를 확인한다. 계정 상태999개 fixture와 동시 요청 검증이며 실제1000 WebSocket 부하/SLO 시험은 아니다.
+
+2026-10-27 최종 검증: 전역 참여7개 + 실제 Core/Chat 프로세스1개 = `chatParticipationTest`8개 전부 통과.
+기존 인증 통합1개·Redis4개 전부 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+전체 회귀749개는718통과·8실패·23조건부 제외였다. 실패는 이전 dev에서도 재현한 프로필 이미지
+AuthService fixture 누락7개와 인증 scheduler 진단 로그 집계1개다. 후자는 분리 재실행에서 통과했으며
+그때 함께 실행한 채팅212개도208통과·4조건부 제외·실패0이었다. 전체 회귀 최초 실패를 삭제하거나
+전체green으로 표시하지 않는다. 인증 서비스/해당 진단 테스트 소스는 이번에 변경하지 않았다.
+최종 Spotless·Checkstyle main/core/chat/test·세 JAR 생성 통과. 증빙은
+`build/participation-verification/summary.json`과 full-test/targeted-regression/각 전용 task XML이다.
+이번 Docker 이미지 재빌드·push·운영 migration·AWS/배포는 수행하지 않았다.

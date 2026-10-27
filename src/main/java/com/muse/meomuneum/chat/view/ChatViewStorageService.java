@@ -10,6 +10,7 @@ import java.util.UUID;
 import jakarta.annotation.PostConstruct;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -31,6 +32,8 @@ public class ChatViewStorageService {
     private final UserRepository users;
     private final ChatBanStorageService bans;
     private ChatSessionAccessPolicy sessionAccess;
+    @Value("${chat.distributed-presence.enabled:false}")
+    private boolean distributedPresence;
     private final Clock clock;
     private final String processId = UUID.randomUUID().toString();
 
@@ -50,6 +53,9 @@ public class ChatViewStorageService {
 
     @PostConstruct
     public void recoverAfterRestart() {
+        if (distributedPresence) {
+            return; // A new Task must not close another live Task's ranges. Lease recovery owns this work.
+        }
         // A dead process's open range has no provable disconnect time. Never invent a grace interval.
         jdbc.update("""
                 UPDATE chat_view_intervals SET ends_at = verified_at,
@@ -202,7 +208,9 @@ public class ChatViewStorageService {
         if (viewId == null) {
             throw denied();
         }
-        checkpoint(viewId, roomId);
+        if (!distributedPresence) {
+            checkpoint(viewId, roomId);
+        }
         LocalDateTime now = now();
         return jdbc.query("""
                 SELECT id, start_after_message_id, started_at,
@@ -233,7 +241,9 @@ public class ChatViewStorageService {
         if (viewId == null) {
             throw denied();
         }
-        checkpoint(viewId, roomId);
+        if (!distributedPresence) {
+            checkpoint(viewId, roomId);
+        }
         LocalDateTime asOf = now();
         List<ChatViewInterval> ranges = jdbc.query("""
                 SELECT i.id, i.start_after_message_id, i.started_at,
@@ -260,6 +270,37 @@ public class ChatViewStorageService {
                 row.getTimestamp("started_at").toLocalDateTime(), row.getTimestamp("ends_at").toLocalDateTime(),
                 row.getObject("end_id", Long.class)), userId, roomId, asOf.minusHours(24), asOf);
         return new ChatAccountReadIntervals(userId, roomId, asOf, ranges);
+    }
+
+    // Same transaction as the globally serialized participation transition; never suspend its DB locks.
+    @Transactional
+    public String subscribedShared(Long userId, Long roomId, Long memberId, String viewId) {
+        return subscribed(userId, roomId, memberId, viewId);
+    }
+
+    @Transactional
+    public boolean leaveShared(Long userId, Long roomId, Long memberId, String viewId) {
+        return leave(userId, roomId, memberId, viewId);
+    }
+
+    @Transactional
+    public void endedShared(Long memberId) {
+        ended(memberId);
+    }
+
+    @Transactional
+    public void disconnectedShared(String viewId) {
+        disconnected(viewId);
+    }
+
+    @Transactional
+    public void checkpointShared(String viewId, Long roomId) {
+        checkpoint(viewId, roomId);
+    }
+
+    @Transactional
+    public void unsubscribedShared(String viewId, Long roomId) {
+        unsubscribed(viewId, roomId);
     }
 
     private void closeRange(String viewId, Long roomId, String reason) {
@@ -335,7 +376,9 @@ public class ChatViewStorageService {
     }
 
     private LocalDateTime now() {
-        return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
+        return distributedPresence
+                ? jdbc.queryForObject("SELECT UTC_TIMESTAMP(6)", LocalDateTime.class)
+                : LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
     }
 
     private record RangeState(long id, LocalDateTime endsAt, String reason) {

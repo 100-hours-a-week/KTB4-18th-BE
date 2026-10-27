@@ -112,6 +112,11 @@ class ChatRoomEntryIntegrationTest {
         jdbcTemplate.update("DELETE FROM chat_bans");
         jdbcTemplate.update("DELETE FROM chat_view_sessions");
         jdbcTemplate.update("DELETE FROM chat_room_members");
+        jdbcTemplate.update("""
+                DELETE FROM auth_browser_flows WHERE flow_id IN (
+                    SELECT flow_id FROM auth_browser_sessions WHERE user_id IN (
+                        SELECT id FROM users WHERE email LIKE 'chat-entry-%'))
+                """);
         jdbcTemplate.update("DELETE FROM users WHERE email LIKE 'chat-entry-%'");
         jdbcTemplate.update("UPDATE chat_rooms SET capacity = 25, status = 'ACTIVE'");
     }
@@ -1286,12 +1291,35 @@ class ChatRoomEntryIntegrationTest {
     private String issueToken(Long userId, Region sigungu, String authSessionId) {
         Long sigunguId = sigungu.getId();
         return new TransactionTemplate(transactionManager).execute(status -> {
+            prepareAuthSession(userId, authSessionId);
             Region managedSigungu = regionRepository.findById(sigunguId).orElseThrow();
             Region sido = managedSigungu.getParent();
             IssuedLocationToken token = tokenProvider.issueForSession(userId, authSessionId, sido, managedSigungu,
                     null);
             return token.value();
         });
+    }
+
+    private void prepareAuthSession(Long userId, String authSessionId) {
+        Integer existing = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM auth_browser_sessions WHERE sid=?", Integer.class, authSessionId);
+        if (existing != null && existing > 0) {
+            return;
+        }
+        String flowId = java.util.UUID.randomUUID().toString();
+        String cookieHash = flowId.replace("-", "").repeat(2);
+        jdbcTemplate.update("""
+                INSERT INTO auth_browser_flows
+                    (flow_id,flow_cookie_hash,flow_epoch,revision,lifecycle,active_session_sid,
+                     cookie_expires_at,created_at,updated_at)
+                VALUES (?,?,1,1,'AUTHENTICATED',?,DATE_ADD(NOW(6),INTERVAL 1 DAY),NOW(6),NOW(6))
+                """, flowId, cookieHash, authSessionId);
+        jdbcTemplate.update("""
+                INSERT INTO auth_browser_sessions
+                    (sid,flow_id,flow_epoch,user_id,status,idle_expires_at,absolute_expires_at,created_at,updated_at)
+                VALUES (?,?,1,?,'ACTIVE',DATE_ADD(NOW(6),INTERVAL 1 DAY),
+                        DATE_ADD(NOW(6),INTERVAL 1 DAY),NOW(6),NOW(6))
+                """, authSessionId, flowId, userId);
     }
 
     @SafeVarargs
