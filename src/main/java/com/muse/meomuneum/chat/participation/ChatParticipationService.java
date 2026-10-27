@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -31,6 +32,7 @@ import com.muse.meomuneum.chat.connection.ChatPresenceChangedEvent;
 import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
+import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.message.query.ChatQueryException;
 import com.muse.meomuneum.chat.room.dto.ChatRoomMembershipResponse;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
@@ -114,8 +116,14 @@ public final class ChatParticipationService {
         return epoch;
     }
 
+    private volatile BooleanSupplier messageTransportReady = () -> true;
+
+    public void setMessageTransportReady(BooleanSupplier guard) {
+        messageTransportReady = guard;
+    }
+
     public boolean available() {
-        return !failed && localLease - System.nanoTime() > 0;
+        return !failed && messageTransportReady.getAsBoolean() && localLease - System.nanoTime() > 0;
     }
 
     public ChatRoomJoinResult join(long user, String sid, long room, LocationResolutionClaims claims) {
@@ -383,6 +391,11 @@ public final class ChatParticipationService {
 
     public ChatMessageResponse writeMessage(long user, long room, long member,
             String socket, Supplier<ChatMessageResponse> write) {
+        return messageTransaction(user, room, member, socket, operation -> operation.save(write));
+    }
+
+    public <T> T messageTransaction(long user, long room, long member, String socket,
+            Function<MessageTransaction, T> operation) {
         return execute(user, tx -> {
             tx.lock(List.of(room));
             List<String> found = jdbc.queryForList("""
@@ -399,7 +412,21 @@ public final class ChatParticipationService {
             }
             authorizeUser(user, false);
             access.authorize(user, sid(member));
-            tx.changed(room);
+            return operation.apply(new MessageTransaction(tx, room));
+        });
+    }
+
+    public final class MessageTransaction {
+        private final Transition transition;
+        private final long room;
+
+        private MessageTransaction(Transition transition, long room) {
+            this.transition = transition;
+            this.room = room;
+        }
+
+        public ChatMessageResponse save(Supplier<ChatMessageResponse> write) {
+            transition.changed(room);
             var message = write.get();
             jdbc.update("UPDATE chat_room_messages SET created_at=UTC_TIMESTAMP(6) WHERE id=?", message.messageId());
             boundaries.recordMessage(message.messageId(), room, epoch);
@@ -409,7 +436,39 @@ public final class ChatParticipationService {
                     message.clientMessageId(), message.roomId(), message.userId(), message.nickname(),
                     message.content(),
                     savedAt.atOffset(ZoneOffset.UTC));
+        }
+    }
+
+    /** One primary DB query for local candidates; per-frame guards still recheck on actual enqueue. */
+    public Set<String> messageRecipients(long room, long message) {
+        if (!available()) {
+            throw new ChatParticipationUnavailableException();
+        }
+        List<Map<String, Object>> eligible = jdbc.queryForList("SELECT v.socket_token,v.owner_generation "
+                + VIEW_JOINS
+                + """
+                        JOIN chat_runtime_control c ON c.environment=v.environment
+                        JOIN users u ON u.id=v.user_id AND u.deleted_at IS NULL
+                        JOIN chat_message_order o ON o.environment=v.environment
+                            AND o.room_id=v.room_id AND o.message_id=?
+                        JOIN chat_room_messages msg ON msg.id=o.message_id
+                        JOIN chat_view_intervals i ON i.view_session_id=v.view_id AND i.ends_at IS NULL
+                            AND i.owner_task_id=v.owner_task_id AND i.owner_generation=v.owner_generation
+                        WHERE v.environment=? AND v.room_id=? AND v.owner_task_id=? AND v.state='CONNECTED'
+                            AND c.epoch=v.epoch AND c.mode='RUNNING' AND o.room_seq>i.start_after_room_seq
+                            AND msg.created_at>=i.started_at AND msg.created_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                            AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
+                                AND b.expires_at>UTC_TIMESTAMP(6)) AND
+                        """
+                + EFFECTIVE, message, environment, room, taskId, epoch);
+        Set<String> result = new HashSet<>();
+        eligible.forEach(row -> {
+            String socket = (String) row.get("socket_token");
+            if (claims.getOrDefault(socket, -1L) == ((Number) row.get("owner_generation")).longValue()) {
+                result.add(socket);
+            }
         });
+        return Set.copyOf(result);
     }
 
     public boolean permitsMessage(long user, String socket, long room, long message) {
@@ -430,6 +489,8 @@ public final class ChatParticipationService {
                 WHERE v.environment=? AND v.user_id=? AND v.membership_id=? AND v.socket_token=?
                     AND v.owner_task_id=? AND v.state='CONNECTED' AND o.room_seq>i.start_after_room_seq
                     AND m.created_at>=i.started_at AND m.created_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                    AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
+                        AND b.expires_at>UTC_TIMESTAMP(6))
                 """, Integer.class, message, environment, user, member, socket, taskId) == 1;
     }
 
@@ -607,7 +668,7 @@ public final class ChatParticipationService {
                 });
                 return action.apply(tx);
             });
-        } catch (ChatRoomException | ChatQueryException
+        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection
                 | ChatParticipationUnavailableException rejected) {
             throw rejected;
         } catch (RuntimeException unavailable) {
