@@ -126,6 +126,7 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20261027002610__create_chat_participation_runtime.sql'
 		include 'V20261027131057__add_distributed_chat_read_boundaries.sql'
 		include 'V20261027142734__create_chat_message_delivery_state.sql'
+		include 'V20261027153823__extend_chat_outbox_for_control_events.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -153,6 +154,7 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20261027002610__create_chat_participation_runtime.sql'
 		include 'V20261027131057__add_distributed_chat_read_boundaries.sql'
 		include 'V20261027142734__create_chat_message_delivery_state.sql'
+		include 'V20261027153823__extend_chat_outbox_for_control_events.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'
@@ -366,6 +368,21 @@ tasks.register('chatMessageRelayTest', Test) {
     include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class'
     systemProperty 'auth.integration.distributed-presence', 'true'
     systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}
+
+// Exact cross-Task view/sid terminal references and independent DB cleanup fallback.
+tasks.register('chatControlEventsTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.control-events', 'true'
     systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
     systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
     outputs.upToDateWhen { false }
