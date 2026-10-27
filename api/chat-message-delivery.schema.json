@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Regional Chat SEND and DB-commit ACK / broadcast",
+  "description": "Existing STOMP paths and type/data envelope are preserved. deduplicated is additive and optional for old senders. ACK goes only to the requesting socket and means DB commit, not Pub/Sub or user delivery. Distributed retry requires the same user, room, membership, UUID and trimmed original content. Redis reference schema is chat-core-auth-events.schema.json#/definitions/CHAT_MESSAGE_CREATED.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/Send"
+    },
+    {
+      "$ref": "#/definitions/Ack"
+    },
+    {
+      "$ref": "#/definitions/Broadcast"
+    }
+  ],
+  "definitions": {
+    "Message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "client_message_id",
+        "room_id",
+        "user_id",
+        "nickname",
+        "content",
+        "created_at"
+      ],
+      "properties": {
+        "message_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "client_message_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "room_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "user_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "nickname": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "Send": {
+      "type": "object",
+      "required": [
+        "client_message_id",
+        "content"
+      ],
+      "properties": {
+        "client_message_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 300
+        }
+      }
+    },
+    "Ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "const": "CHAT_ACK"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "membership_id",
+            "message"
+          ],
+          "properties": {
+            "membership_id": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "message": {
+              "$ref": "#/definitions/Message"
+            },
+            "deduplicated": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "Broadcast": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "const": "CHAT_MESSAGE"
+        },
+        "data": {
+          "$ref": "#/definitions/Message"
+        }
+      }
+    }
+  }
+}
