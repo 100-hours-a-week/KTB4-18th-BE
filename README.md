@@ -934,3 +934,68 @@ AuthService fixture 누락7개와 인증 scheduler 진단 로그 집계1개다. 
 최종 Spotless·Checkstyle main/core/chat/test·세 JAR 생성 통과. 증빙은
 `build/participation-verification/summary.json`과 full-test/targeted-regression/각 전용 task XML이다.
 이번 Docker 이미지 재빌드·push·운영 migration·AWS/배포는 수행하지 않았다.
+
+
+## 탭 소유권·열람 구간·복구 분산 처리 (P1 6단계)
+
+REST와 WebSocket이 서로 다른 Chat Task에 배정돼도 같은 권한·열람 경계를 사용한다.
+로컬 소켓 등록부는 실제 연결을 찾는 용도로 유지하고, **현재 view의 권한과 과거 열람 범위는 MySQL 원장**에서
+확인한다. 원격 REST 요청이 소켓 소유자의 접속 증거를 대신 만들지 않도록 하기 위한 선택이다.
+아래 내용은 앞선5단계 문서의 후속6단계 설명을 갱신한다. 제품 메시지 relay는 여전히7단계다.
+
+| 변경 | 동작과 판단 근거 |
+| --- | --- |
+| 현재 탭 소유권 | Task UUID·소켓 token·claim 때 캡처한 generation을 함께 검증한다. REST는 현재 view의 계정/membership/sid/epoch/CONNECTED·소유 Task lease를 공유 DB에서 확인한다. 다른 Task의 로컬 소켓 등록이 없다는 이유로 정상 조회를 거절하지 않는다. |
+| 방 순서와 시간 | 메시지 저장·구독·checkpoint·종료가 기존 control/Task/user/room 잠금 순서와 같은 transaction을 사용한다. 메시지에는 room_seq와 DB UTC를 부여한다. ID가 발급된 시점과 commit 순서의 역전, Task 시계 차이로 부재 구간이 열리는 것을 막는다. |
+| 열람 구간 | 소유자만 checkpoint를 갱신한다. 원격 조회는 열린 구간의 마지막 verified 경계까지만 읽는다. 기존5초 checkpoint 때문에 최신 메시지의 REST 노출이 그 주기만큼 늦을 수 있으며, REST 조회가 이를 임의로 확장하지 않는다. |
+| history/recovery | history는 같은 계정·방의 과거 유효 구간 합집합이므로 재로그인 후에도 복원한다. recovery는 현재 view의 구간만 사용한다. 과거 구간을 읽으려 해도 현재 탭/sid의 정상 권한은 먼저 필요하다. 다른 탭·sid의 현재 권한으로 대체하지 않는다. |
+| 고정 페이지 | 최초 조회 시 DB snapshot에 열람 구간·room_seq·as_of를 복사한다. 다음 페이지 중 다른 탭의 checkpoint가 갱신돼도 그 snapshot 범위가 늘지 않는다. 각 페이지는 현재 권한·DB 만료·24시간 보존 범위를 다시 검사한다. |
+| cursor | 서명에 기존 필드와 snapshot ID/epoch/generation을 포함하고 DB snapshot과 대조한다. 다른 계정/방/view/mode, 이전 generation/epoch, 만료 snapshot은 거절한다. 분산 snapshot의 만료는 DB UTC가 기준이며 JVM 시각으로 대체하지 않는다. |
+| 단절과 강제 종료 | 관측한 단절만30초 유예를 만든다. 기한과 같은 시각은 만료다. Task 강제 종료처럼 단절 증거가 없으면 lease 만료 후 마지막 verified 경계에서 닫고 OFFLINE으로 둔다. 다른 Task의 새 claim은 새 generation/구간으로 시작하며 부재를 소급해서 열지 않는다. |
+| 늦은 전송 | outbound enqueue/handler에서 현재 소유권과 메시지 room_seq가 현재 구독 구간에 속하는지 재확인한다. unsubscribe 후 새 구독으로 늦게 도착한 과거 frame을 전달하지 않는다. |
+| 물리 삭제 | 메시지가24시간 정리돼도 기존 verified ID 경계가 역행하지 않는다. 실제 메시지 내용은 기존 테이블에만 저장하고 순서 테이블에는 식별자만 기록한다. |
+
+공개 REST 경로·응답 필드·STOMP destination은 유지한다. cursor는 opaque 값이지만 **분산 모드 전환 또는
+새 소유권 획득 후에는 이전 cursor를 이어 쓰지 않고 재연결 ready/fresh 조회로 시작**해야 한다.
+연결 유지 중 신규 FE 자동 누락 복구/sync는 P2이며 이번에 추가하지 않았다.
+
+추가형 migration은 `V20261027131057__add_distributed_chat_read_boundaries.sql`이다.
+기존 migration/열람 구간은 삭제하거나 다시 작성하지 않고, interval에 환경/epoch/owner/순서 경계를 추가한다.
+`chat_message_order`는 방 메시지 순서, `chat_query_snapshots`와 `chat_query_snapshot_ranges`는 고정 페이지 범위를
+저장한다. snapshot은24시간 뒤 만료되며 Task별60초 정리 작업이 한 번에 최대1000개 header와 하위 범위를 삭제한다.
+정리가 늦어져도 조회 경로의 만료 검사가 권한을 연장하지 않는다.
+
+설정은 기존 `CHAT_DISTRIBUTED_PRESENCE_ENABLED=true`를 사용한다. 기본false·Core 인증/Redis 의존과
+`CHAT_RUNTIME_ENABLED`의 chat-isolated 전용·prod 거부를 유지한다. 이 단계만으로 운영 다중 Task를 개방하지 않는다.
+분산 receipt/정책/outbox/PubSub 제품 전파, Redis 유실의 전역 epoch 복구, 배포 drain은 남은 P1 작업이다.
+
+클라우드 협의와 전환 절차:
+
+1. 채팅 일시 중단 → 기존 처리 Task 종료 → 지정한 단일 migrator로 새 SQL 적용 → 새 앱 격리 검증 순서를 지킨다.
+   구 단일 앱과 새 분산 앱이 같은 상태를 동시에 쓰지 않는다. Chat 앱 자체는 Flyway를 실행하지 않는다.
+2. Chat DB 계정에 새 세 테이블 CRUD와 기존 interval/room runtime 추가 열의 읽기·쓰기/locking 권한이 필요하다.
+   snapshot의 페이지 수·구간 수에 따른 DB 저장량/청소 속도·풀 예산을 확인한다. 읽기도 권한 잠금과 snapshot 쓰기가
+   필요하므로 read replica/읽기 전용 DB 계정으로 보내지 않는다.
+3. 최초 room 잠금에서 기존 메시지를 ID순 room_seq에 매핑하고 기존 interval ID 경계를 연결한다.
+   원래 ID/시각/종료 경계는 유지하며 매핑 완료 표시와 같은 transaction으로 commit한다.
+   방별 메시지/구간 수가 큰 경우 기존1초 statement/2초 transaction 예산 안에 들어오는지 전환 전 측정한다.
+   초과하면 rollback·서비스503이며 자동으로 권한을 넓히거나 예산을 무제한 늘리지 않는다.
+4. rollback도 채팅을 중단하고 새 DB 상태와 호환되는 버전을 선택한다. 테이블 삭제나 구 cursor 재사용으로 우회하지 않는다.
+
+검증 명령은 앞선5단계와 같다. `chatParticipationTest`는 실제 MySQL/Redis 도메인13개와 실제 Core/두 Chat JAR의
+프로세스1개로 구성된다. 원격 history/recovery/by-client-id, 원격 checkpoint 금지, 고정 페이지·다른 epoch/generation·
+DB 만료·JVM 시계 차이, 재로그인 계정 합집합·부재·24시간, 메시지 commit/구독 경합, 지연 outbound,
+기존 구간 매핑·물리 삭제 후 경계 보존, Task lease 만료 복구를 포함한다.
+격리 fixture와 제한된 경합 시험이며 운영1000 WebSocket 부하/SLO·운영 migration 완료를 의미하지 않는다.
+
+
+2026-10-27 검증 결과: 전용 분산 시험14개, 기존 Core 인증1개·Redis4개는 전부 통과했고,
+앱 분리 JAR2개 통과·이미지1개는 조건부 제외다. 실제 소유 Chat 프로세스를 강제 종료해
+lease 만료→마지막 verified 경계 폐쇄/OFFLINE→조회403→다른 Task 재연결/조회200도 확인했다.
+전체 회귀749개는717통과·9실패·23제외였다. 이전 단계에서도 재현한 프로필 이미지 AuthService
+fixture 누락7개와 Hazelcast 진단 로그 집계/채팅 차단 각1개이며, 후자2개를 포함한 분리 재실행은
+213개 중209통과·4제외·실패0이었다. 최초 전체 실패를 보존하고 전체green으로 표시하지 않는다.
+관련 없는 인증/프로필 이미지 소스는 수정하지 않았다. Spotless·Checkstyle main/core/chat/test·세 JAR를
+검증하며 증빙은 `build/distributed-view-verification/summary.json`과 각 task XML,
+`build/core-auth-integration/run-*/cross-task-read.json`에 보존한다.
+Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 않았다.
