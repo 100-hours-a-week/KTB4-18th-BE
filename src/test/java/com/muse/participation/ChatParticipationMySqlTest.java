@@ -102,7 +102,7 @@ class ChatParticipationMySqlTest {
     @BeforeAll
     static void migrate() {
         Flyway old = Flyway.configure().dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword())
-                .target("20261027142734").load();
+                .target("20261027153823").load();
         old.migrate();
         dataSource = new HikariDataSource();
         dataSource.setJdbcUrl(MYSQL.getJdbcUrl());
@@ -843,6 +843,205 @@ class ChatParticipationMySqlTest {
                 .isEmpty());
         assertTrue(owner.socketValid(user, tab.membershipId(), "fresh-socket"));
         assertTrue(local.views.localViews().containsKey("fresh-socket"));
+    }
+
+    @Test
+    void offlineRecoveryIsResumableFencesOldTokenAndPreservesMessagesReceiptsAndHistory() {
+        String env = "runtime-recovery";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var tab = owner.join(user, sid, room, claims(user)).membership();
+        connect(owner, user, tab, "old-runtime");
+        var writer = messages(owner, env, FINGERPRINT_KEY, false);
+        var saved = writer.send(user, room, tab.membershipId(), "old-runtime", UUID.randomUUID().toString(), "safe",
+                "safe");
+        owner.checkpoint(user, room, tab.membershipId(), tab.viewSessionId(), "old-runtime");
+        var recovery = runtimeRecovery(env);
+        try (var redis = runtimeRedis(env);
+                var subscription = redis.openSubscription(channels(env),
+                        new io.lettuce.core.pubsub.RedisPubSubAdapter<>())) {
+            var first = recovery.begin(com.muse.meomuneum.chat.runtime.ChatRuntimeRecovery.serverId(redis));
+            assertThrows(IllegalStateException.class, () -> recovery.begin(first.serverId()));
+            assertThrows(IllegalStateException.class, () -> recovery.finish(first, redis, channels(env)));
+            assertThrows(ChatParticipationUnavailableException.class, () -> owner.validSockets());
+            assertTrue(recovery.chunk(first));
+            jdbc.update("UPDATE chat_runtime_control SET recovery_lease_until=UTC_TIMESTAMP(6) WHERE environment=?",
+                    env);
+            var next = recovery.begin(first.serverId());
+            assertEquals(first.epoch(), next.epoch());
+            assertFalse(first.token().equals(next.token()));
+            assertThrows(IllegalStateException.class, () -> recovery.chunk(first));
+            assertThrows(IllegalStateException.class, () -> recovery.finish(first, redis, channels(env)));
+            while (recovery.chunk(next)) {
+            }
+            recovery.finish(next, redis, channels(env));
+            assertEquals("OFFLINE", state(tab.viewSessionId()));
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_receipts WHERE environment=?",
+                    Integer.class, env));
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_send_repetitions WHERE environment=?",
+                    Integer.class, env));
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? "
+                    + "AND status='EXPIRED'", Integer.class, env));
+            var replacement = service(env, snapshot -> {
+            });
+            connect(replacement, user, tab, "new-runtime");
+            assertEquals(List.of(saved.message().messageId()),
+                    queries(replacement).query(user, room, tab.membershipId(),
+                            tab.viewSessionId(), "history", null, 50).items().stream()
+                            .map(ChatMessageResponse::messageId).toList());
+            assertEquals(next.epoch(), replacement.epoch());
+        }
+    }
+
+    @Test
+    void lostMarkerAndWrongServerGenerationLatchClosedEvenAfterMarkerRestoration() {
+        for (String env : List.of("runtime-marker", "runtime-server")) {
+            var recovery = runtimeRecovery(env);
+            try (var redis = runtimeRedis(env);
+                    var subscription = redis.openSubscription(channels(env),
+                            new io.lettuce.core.pubsub.RedisPubSubAdapter<>())) {
+                var lease = recovery.begin(com.muse.meomuneum.chat.runtime.ChatRuntimeRecovery.serverId(redis));
+                while (recovery.chunk(lease)) {
+                }
+                recovery.finish(lease, redis, channels(env));
+                var owner = service(env, snapshot -> {
+                });
+                var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+                var lifecycle = new com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle(jdbc, owner, redis,
+                        channels(env),
+                        new ChatSocketSessions(), new com.muse.meomuneum.chat.runtime.ChatRuntimeMetrics(registry),
+                        env, Duration.ofSeconds(1));
+                lifecycle.start();
+                assertTrue(owner.available());
+                if (env.endsWith("marker")) {
+                    redis.commands().sync().del(channels(env).runtimeMarkerKey());
+                } else {
+                    jdbc.update("UPDATE chat_runtime_control SET redis_server_id=? WHERE environment=?", "0".repeat(40),
+                            env);
+                }
+                lifecycle.check();
+                assertFalse(lifecycle.permitted());
+                assertFalse(owner.available());
+                redis.commands().sync().hset(channels(env).runtimeMarkerKey(), "generation", lease.marker());
+                lifecycle.check();
+                assertFalse(lifecycle.permitted());
+                assertEquals(1, registry.get("chat.runtime.failures").counter().count());
+                lifecycle.stop();
+            }
+        }
+    }
+
+    @Test
+    void drainKeepsOnlyLastVerifiedAndDoesNotTouchTheOtherTaskOrPermanentMembership() {
+        String env = "runtime-drain";
+        var owner = service(env, snapshot -> {
+        });
+        var other = service(env, snapshot -> {
+        });
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var tab = owner.join(user, sid, room, claims(user)).membership();
+        connect(owner, user, tab, "drain-one");
+        var peer = other.join(user, sid, room, claims(user)).membership();
+        connect(other, user, peer, "drain-peer");
+        send(owner, user, tab.membershipId(), "drain-one");
+        var before = jdbc.queryForMap("SELECT verified_at,verified_through_room_seq FROM chat_view_intervals "
+                + "WHERE view_session_id=?", tab.viewSessionId());
+        long versionBefore = jdbc.queryForObject("SELECT changed_seq FROM chat_view_runtime WHERE view_id=?",
+                Long.class,
+                tab.viewSessionId());
+        owner.enableControlEvents();
+        owner.beginDrain();
+        assertFalse(owner.available());
+        assertThrows(ChatParticipationUnavailableException.class, () -> owner.join(user, sid, room, claims(user)));
+        while (owner.releaseDrainingViews()) {
+        }
+        owner.finishDrain();
+        assertEquals("OFFLINE", state(tab.viewSessionId()));
+        assertTrue(jdbc.queryForObject("SELECT changed_seq FROM chat_view_runtime WHERE view_id=?", Long.class,
+                tab.viewSessionId()) > versionBefore);
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? "
+                + "AND event_type='CHAT_PRESENCE_CHANGED'", Integer.class, env));
+        assertEquals("CONNECTED", state(peer.viewSessionId()));
+        assertTrue(other.socketValid(user, peer.membershipId(), "drain-peer"));
+        assertEquals(before.get("verified_at"), jdbc.queryForObject("SELECT ends_at FROM chat_view_intervals "
+                + "WHERE view_session_id=?", LocalDateTime.class, tab.viewSessionId()));
+        assertEquals(0,
+                jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_members WHERE id=? AND deleted_at IS NOT NULL",
+                        Integer.class, tab.membershipId()));
+        connect(other, user, tab, "drain-reconnected");
+    }
+
+    @Test
+    void drainTimeoutAndDbFailureStillFinishLifecycleWithoutInventingReadingTime() {
+        var owner = mock(ChatParticipationService.class);
+        when(owner.releaseDrainingViews()).thenAnswer(call -> {
+            Thread.sleep(5000);
+            return true;
+        });
+        var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        var metrics = new com.muse.meomuneum.chat.runtime.ChatRuntimeMetrics(registry);
+        var redis = mock(ChatRedisConnection.class);
+        var lifecycle = new com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle(jdbc, owner, redis,
+                channels("drain-timeout"),
+                new ChatSocketSessions(), metrics, "drain-timeout", Duration.ofSeconds(1));
+        var callback = new AtomicInteger();
+        long start = System.nanoTime();
+        lifecycle.stop(callback::incrementAndGet);
+        assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(3));
+        assertEquals(1, callback.get());
+        assertEquals(1, registry.get("chat.runtime.drain.timeouts").counter().count());
+        org.mockito.Mockito.verify(owner, org.mockito.Mockito.never()).finishDrain();
+    }
+
+    @Test
+    void realDbLockDuringShutdownClosesTransportsAndFallsBackToExpiredOwnerSweep() throws Exception {
+        String env = "drain-db-lock";
+        var owner = service(env, snapshot -> {
+        });
+        var peer = service(env, snapshot -> {
+        });
+        long user = user();
+        var tab = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, tab, "db-lock");
+        var sockets = mock(ChatSocketSessions.class);
+        var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        var lifecycle = new com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle(jdbc, owner,
+                mock(ChatRedisConnection.class),
+                channels(env), sockets, new com.muse.meomuneum.chat.runtime.ChatRuntimeMetrics(registry), env,
+                Duration.ofSeconds(2));
+        try (var lock = dataSource.getConnection()) {
+            lock.setAutoCommit(false);
+            try (var query = lock
+                    .prepareStatement("SELECT epoch FROM chat_runtime_control WHERE environment=? FOR UPDATE")) {
+                query.setString(1, env);
+                query.executeQuery().close();
+            }
+            lifecycle.stop();
+            assertEquals("CONNECTED", state(tab.viewSessionId()));
+            org.mockito.Mockito.verify(sockets).closeAll(1013, "CHAT_SERVICE_UNAVAILABLE");
+            assertTrue(registry.get("chat.runtime.drain.failures").counter().count() > 0);
+            lock.rollback();
+        }
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=UTC_TIMESTAMP(6) WHERE environment=? AND task_id=?", env,
+                owner.taskId());
+        peer.sweep();
+        assertEquals("OFFLINE", state(tab.viewSessionId()));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? "
+                + "AND ends_at=verified_at", Integer.class, tab.viewSessionId()));
+    }
+
+    private com.muse.meomuneum.chat.runtime.ChatRuntimeRecovery runtimeRecovery(String env) {
+        return new com.muse.meomuneum.chat.runtime.ChatRuntimeRecovery(jdbc,
+                new DataSourceTransactionManager(dataSource), env);
+    }
+
+    private ChatRedisConnection runtimeRedis(String env) {
+        return new ChatRedisConnection(
+                new ChatRedisProperties(env, REDIS.getHost(), REDIS.getMappedPort(6379), "default",
+                        "isolated-redis-password", false, Duration.ofSeconds(1), Duration.ofSeconds(1)));
     }
 
     private ChatRedisChannels channels(String env) {
