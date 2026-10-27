@@ -51,13 +51,13 @@ public class ChatCursorCodec {
             ChatQueryCursor cursor = mapper.readValue(payload, ChatQueryCursor.class);
             if (cursor.userId() <= 0 || cursor.roomId() <= 0 || cursor.membershipId() <= 0 ||
                     cursor.snapshot() < 0 || cursor.position() < 0 || cursor.position() > cursor.snapshot() ||
-                    cursor.expiresAt() <= clock.instant().toEpochMilli() ||
+                    (cursor.snapshotId() == null && cursor.expiresAt() <= clock.instant().toEpochMilli()) ||
                     !("history".equals(cursor.mode()) || "recovery".equals(cursor.mode()))) {
                 throw new ChatQueryException(false);
             }
             if ("history".equals(cursor.mode())) {
                 var asOf = java.time.LocalDateTime.parse(cursor.historyAsOf());
-                if (asOf.toInstant(java.time.ZoneOffset.UTC).isAfter(clock.instant())) {
+                if (cursor.snapshotId() == null && asOf.toInstant(java.time.ZoneOffset.UTC).isAfter(clock.instant())) {
                     throw new ChatQueryException(false);
                 }
             }
