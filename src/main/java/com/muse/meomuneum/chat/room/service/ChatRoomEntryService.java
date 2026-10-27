@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -22,6 +23,7 @@ import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
+import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.room.domain.ChatRoom;
 import com.muse.meomuneum.chat.room.dto.ChatRoomMembershipResponse;
 import com.muse.meomuneum.chat.room.dto.ChatRoomResponse;
@@ -37,6 +39,13 @@ import com.muse.meomuneum.user.repository.UserRepository;
 
 @Service
 public class ChatRoomEntryService {
+
+    private ChatParticipationService participation;
+
+    @Autowired(required = false)
+    public void setParticipation(ChatParticipationService service) {
+        participation = service;
+    }
 
     private final ChatRoomRepository chatRoomRepository;
     private final ChatRoomMemberRepository memberRepository;
@@ -84,6 +93,9 @@ public class ChatRoomEntryService {
     public ChatRoomJoinResult join(Long userId, String authSessionId, Long roomId, String locationResolutionToken) {
         requireAuthSession(authSessionId);
         LocationResolutionClaims claims = tokenProvider.validateForChat(locationResolutionToken, userId, authSessionId);
+        if (participation != null) {
+            return participation.join(userId, authSessionId, roomId, claims);
+        }
         Transition transition = presence.exclusive(() -> {
             sessionAccess.authorize(userId, authSessionId);
             Transition committed = transactions
@@ -136,6 +148,11 @@ public class ChatRoomEntryService {
 
     public void leaveTab(Long userId, String authSessionId, Long roomId, Long membershipId, String viewId) {
         requireAuthSession(authSessionId);
+        if (participation != null) {
+            participation.leave(userId, authSessionId, roomId, membershipId, viewId);
+            sockets.close(presence.removeTab(userId, membershipId, viewId), 4100, "CHAT_LEFT");
+            return;
+        }
         Set<String> ended = presence.exclusive(() -> {
             transactions.executeWithoutResult(status -> ownedMembership(userId, authSessionId, roomId, membershipId));
             ChatViewLifecycle.Departure departure = views.leave(userId, roomId, membershipId, viewId);
@@ -156,6 +173,15 @@ public class ChatRoomEntryService {
             String locationToken) {
         requireAuthSession(authSessionId);
         LocationResolutionClaims claims = tokenProvider.validateForChat(locationToken, userId, authSessionId);
+        if (participation != null) {
+            ChatRoom current = chatRoomRepository.findById(roomId)
+                    .orElseThrow(() -> new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_NOT_FOUND));
+            if (current.getRegion().getId().equals(claims.sigunguRegionId())) {
+                throw new ChatRoomException(ChatRoomErrorCode.LOCATION_REGION_MISMATCH);
+            }
+            participation.end(userId, authSessionId, roomId, membershipId);
+            return;
+        }
         Set<String> ended = presence.exclusive(() -> {
             transactions.executeWithoutResult(status -> {
                 ChatRoomMember member = ownedMembership(userId, authSessionId, roomId, membershipId);
@@ -180,6 +206,10 @@ public class ChatRoomEntryService {
 
     public void leave(Long userId, String authSessionId, Long roomId, Long membershipId) {
         requireAuthSession(authSessionId);
+        if (participation != null) {
+            participation.end(userId, authSessionId, roomId, membershipId);
+            return;
+        }
         Set<String> ended = presence.exclusive(() -> {
             transactions.executeWithoutResult(status -> {
                 userRepository.findActiveByIdForUpdate(userId)
@@ -201,6 +231,10 @@ public class ChatRoomEntryService {
         requireAuthSession(event.authSessionId());
         sessionAccess.revoke(event.userId(), event.authSessionId());
         sockets.close(authSessions.connections(event.userId(), event.authSessionId()), 4100, "CHAT_LOGGED_OUT");
+        if (participation != null) {
+            participation.end(event.userId(), event.authSessionId(), null, null);
+            return;
+        }
         Set<String> ended = presence.exclusive(() -> {
             sessionAccess.revoke(event.userId(), event.authSessionId());
             List<Long> membershipIds = transactions.execute(status -> {
@@ -223,6 +257,10 @@ public class ChatRoomEntryService {
     }
 
     public void leaveAll(Long userId, int code, String reason) {
+        if (participation != null) {
+            participation.end(userId, null, null, null);
+            return;
+        }
         Set<String> ended = presence.exclusive(() -> {
             List<Long> membershipIds = transactions.execute(status -> {
                 userRepository.findActiveByIdForUpdate(userId);
@@ -240,6 +278,10 @@ public class ChatRoomEntryService {
 
     public void connect(Long userId, String authSessionId, Long roomId, Long membershipId, String sessionId) {
         requireAuthSession(authSessionId);
+        if (participation != null) {
+            sessionAccess.authorize(userId, authSessionId);
+            return; // Lifecycle claims the exact view/socket atomically, after its headers are validated.
+        }
         presence.exclusive(() -> {
             sessionAccess.authorize(userId, authSessionId);
             Integer capacity = transactions.execute(status -> {
@@ -255,6 +297,10 @@ public class ChatRoomEntryService {
     }
 
     public void authorizeConnection(Long userId, Long roomId, Long membershipId, String sessionId) {
+        if (participation != null) {
+            participation.assertSocket(userId, roomId, membershipId, sessionId);
+            return;
+        }
         presence.exclusive(() -> transactions.execute(status -> {
             ChatRoomMember membership = authorizedMembership(userId, roomId, membershipId);
             sessionAccess.authorize(userId, membership.getAuthSessionId());

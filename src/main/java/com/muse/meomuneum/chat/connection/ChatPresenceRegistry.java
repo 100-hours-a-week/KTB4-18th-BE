@@ -14,14 +14,22 @@ import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties;
 import com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy;
+import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.view.ChatViewConnectionClosedEvent;
 import com.muse.meomuneum.chat.view.ChatViewMembershipEndedEvent;
 
-/** Single-server membership seats, counted per account and room. Database transitions finish inside exclusive(). */
+/** Local transports and legacy seats; distributed participation uses the DB authority instead of this monitor. */
 @Component
 public class ChatPresenceRegistry {
+
+    private ChatParticipationService participation;
+
+    @Autowired(required = false)
+    public void setParticipation(ChatParticipationService service) {
+        participation = service;
+    }
 
     private final Clock clock;
     private final ChatTransmissionPolicy transmission;
@@ -63,7 +71,7 @@ public class ChatPresenceRegistry {
             }
             return; // Retries must not indefinitely renew a disconnected reservation.
         }
-        seats.put(membershipId, new Seat(userId, roomId, clock.instant().plusSeconds(30)));
+        seats.put(membershipId, new Seat(userId, roomId, membershipId, clock.instant().plusSeconds(30)));
     }
 
     public synchronized void reserveTab(Long userId, Long roomId, Long membershipId, String viewId) {
@@ -127,7 +135,7 @@ public class ChatPresenceRegistry {
 
     public synchronized void connect(Long userId, Long roomId, Long membershipId, int capacity, String sessionId) {
         expire();
-        if (!hasCapacity(userId, roomId, capacity)) {
+        if (participation == null && !hasCapacity(userId, roomId, capacity)) {
             throw new ChatRoomException(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED);
         }
         reserve(userId, roomId, membershipId);
@@ -157,7 +165,8 @@ public class ChatPresenceRegistry {
 
     public synchronized boolean ownsConnection(Long userId, Long membershipId, String sessionId) {
         Seat seat = seats.get(membershipId);
-        return seat != null && seat.userId.equals(userId) && seat.sessions.contains(sessionId);
+        return seat != null && seat.userId.equals(userId) && seat.sessions.contains(sessionId)
+                && (participation == null || participation.socketValid(userId, membershipId, sessionId));
     }
 
     public synchronized Set<String> remove(Long userId, Long membershipId) {
@@ -204,15 +213,23 @@ public class ChatPresenceRegistry {
     public synchronized boolean hasRoomSubscription(String sessionId, Long roomId) {
         return seats.values().stream().filter(seat -> seat.roomId.equals(roomId) && seat.sessions.contains(sessionId))
                 .anyMatch(seat -> seat.subscriptions.getOrDefault(sessionId, Map.of()).values()
-                        .contains("/topic/chat-rooms/" + roomId));
+                        .contains("/topic/chat-rooms/" + roomId)
+                        && (participation == null || participation.socketValid(seat.userId,
+                                seat.membershipId, sessionId)));
     }
 
     public synchronized int connectedCount(Long roomId) {
+        if (participation != null) {
+            return participation.connectedCount(roomId);
+        }
         return (int) seats.values().stream().filter(seat -> seat.roomId.equals(roomId) && !seat.sessions.isEmpty())
                 .map(seat -> seat.userId).distinct().count();
     }
 
     private void changed(Long roomId, int previousCount) {
+        if (participation != null) {
+            return; // Only committed DB room versions may describe global presence.
+        }
         int count = connectedCount(roomId);
         if (previousCount != count) {
             revisions.merge(roomId, 1L, Long::sum);
@@ -221,6 +238,15 @@ public class ChatPresenceRegistry {
     }
 
     public synchronized void sendSnapshot(String sessionId, String subscriptionId, String destination) {
+        if (participation != null) {
+            seats.values().stream().filter(seat -> seat.sessions.contains(sessionId)
+                    && destination.equals("/topic/chat-rooms/" + seat.roomId)).forEach(seat -> {
+                        var snapshot = participation.snapshot(seat.roomId);
+                        events.publishEvent(new ChatPresenceChangedEvent(seat.roomId, snapshot.connected(),
+                                snapshot.version(), sessionId, subscriptionId));
+                    });
+            return;
+        }
         seats.values().stream().filter(seat -> seat.sessions.contains(sessionId)
                 && destination.equals("/topic/chat-rooms/" + seat.roomId))
                 .forEach(seat -> events
@@ -248,15 +274,17 @@ public class ChatPresenceRegistry {
     private static final class Seat {
         private final Long userId;
         private final Long roomId;
+        private final Long membershipId;
         private final Set<String> sessions = new HashSet<>();
         private final Map<String, Map<String, String>> subscriptions = new HashMap<>();
         private final Map<String, Instant> tabs = new HashMap<>();
         private final Map<String, String> socketViews = new HashMap<>();
         private Instant expiresAt;
 
-        private Seat(Long userId, Long roomId, Instant expiresAt) {
+        private Seat(Long userId, Long roomId, Long membershipId, Instant expiresAt) {
             this.userId = userId;
             this.roomId = roomId;
+            this.membershipId = membershipId;
             this.expiresAt = expiresAt;
         }
     }

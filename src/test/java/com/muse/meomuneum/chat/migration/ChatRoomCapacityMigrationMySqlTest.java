@@ -34,7 +34,7 @@ class ChatRoomCapacityMigrationMySqlTest {
         var members = jdbc.queryForList("SELECT * FROM chat_room_members");
 
         Flyway flyway = Flyway.configure().dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword())
-                .load();
+                .target("20261020213622").load();
         assertEquals(1, flyway.migrate().migrationsExecuted);
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_rooms WHERE capacity<>1000", Integer.class));
         assertEquals(before,

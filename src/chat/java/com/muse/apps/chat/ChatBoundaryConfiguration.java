@@ -71,6 +71,14 @@ public class ChatBoundaryConfiguration {
         return () -> enabled ? Health.up().build() : Health.down().build();
     }
 
+    @Bean("participation")
+    public HealthIndicator participationHealth(
+            ObjectProvider<com.muse.meomuneum.chat.participation.ChatParticipationService> services) {
+        return () -> services.getIfAvailable() == null || services.getObject().available()
+                ? Health.up().build()
+                : Health.down().build();
+    }
+
     @Bean("coreSessionAuth")
     public HealthIndicator coreSessionAuthHealth(ObjectProvider<ChatCoreSessionVerifier> verifiers) {
         return () -> {

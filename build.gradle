@@ -123,6 +123,7 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
 		include 'V20261016090922__add_auth_session_to_chat_memberships.sql'
 		include 'V20261020213622__increase_chat_room_capacity.sql'
+		include 'V20261027002610__create_chat_participation_runtime.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -147,6 +148,7 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
 		include 'V20261016090922__add_auth_session_to_chat_memberships.sql'
 		include 'V20261020213622__increase_chat_room_capacity.sql'
+		include 'V20261027002610__create_chat_participation_runtime.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'
@@ -335,4 +337,18 @@ tasks.register('coreAuthIntegrationTest', Test) {
 	systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
 	systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
 	outputs.upToDateWhen { false }
+}
+
+// Isolated DB/Redis concurrency tests and packaged Core/two-Chat participation checks.
+tasks.named('test') { exclude '**/ChatParticipationMySqlTest.class' }
+tasks.register('chatParticipationTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
 }
