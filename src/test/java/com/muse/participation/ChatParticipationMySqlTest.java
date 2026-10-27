@@ -49,11 +49,21 @@ import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
+import com.muse.meomuneum.chat.message.domain.ChatRoomMessage;
+import com.muse.meomuneum.chat.message.dto.ChatMessageEvent;
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
+import com.muse.meomuneum.chat.message.policy.ChatMessageFingerprint;
+import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.message.query.ChatCursorCodec;
 import com.muse.meomuneum.chat.message.query.ChatQueryCursor;
 import com.muse.meomuneum.chat.message.query.ChatQueryException;
 import com.muse.meomuneum.chat.message.query.DistributedChatMessageQueryService;
+import com.muse.meomuneum.chat.message.relay.ChatMessageOutboxStore;
+import com.muse.meomuneum.chat.message.relay.ChatMessageRedisEvent;
+import com.muse.meomuneum.chat.message.relay.ChatMessageRelay;
+import com.muse.meomuneum.chat.message.service.ChatMessageSaveResult;
+import com.muse.meomuneum.chat.message.service.ChatMessageStorageService;
+import com.muse.meomuneum.chat.message.service.DistributedChatMessageService;
 import com.muse.meomuneum.chat.participation.ChatParticipationProjection;
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException;
@@ -75,7 +85,8 @@ import com.zaxxer.hikari.HikariDataSource;
 class ChatParticipationMySqlTest {
     @Container
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
-            .withDatabaseName("participation").withUsername("test").withPassword("isolated-test-password");
+            .withDatabaseName("participation").withUsername("test").withPassword("isolated-test-password")
+            .withCommand("mysqld", "--skip-log-bin");
     @Container
     private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:8.10.2")
             .withExposedPorts(6379).withCommand("redis-server", "--requirepass", "isolated-redis-password");
@@ -87,7 +98,7 @@ class ChatParticipationMySqlTest {
     @BeforeAll
     static void migrate() {
         Flyway old = Flyway.configure().dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword())
-                .target("20261027002610").load();
+                .target("20261027131057").load();
         old.migrate();
         dataSource = new HikariDataSource();
         dataSource.setJdbcUrl(MYSQL.getJdbcUrl());
@@ -635,6 +646,359 @@ class ChatParticipationMySqlTest {
         assertEquals(List.of(next.messageId()),
                 queries(owner).query(user, room, view.membershipId(), view.viewSessionId(),
                         "history", null, 10).items().stream().map(m -> m.messageId()).toList());
+    }
+
+    private static final String FINGERPRINT_KEY = "v1:" + java.util.Base64.getEncoder().encodeToString(
+            "synthetic-chat-message-fingerprint-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+    @Test
+    void durableReceiptSurvivesOwnerChangeAndPolicyIsSharedAcrossTasksAndKeyRotation() {
+        String env = "message-policy";
+        var owner = service(env, snapshot -> {
+        });
+        var peer = service(env, snapshot -> {
+        });
+        var firstService = messages(owner, env, FINGERPRINT_KEY, false);
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "message-first");
+        String client = UUID.randomUUID().toString();
+        var first = firstService.send(user, room, joined.membershipId(), "message-first", client, "original", "masked");
+        assertFalse(first.deduplicated());
+        assertEquals("masked", jdbc.queryForObject("SELECT content FROM chat_room_messages WHERE id=?",
+                String.class, first.message().messageId()));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?",
+                Integer.class, env));
+        owner.disconnected(user, room, joined.membershipId(), joined.viewSessionId(), "message-first");
+        connect(peer, user, joined, "message-peer");
+        String rotatedKey = "v2:" + java.util.Base64.getEncoder().encodeToString(
+                "synthetic-next-fingerprint-secret-key".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThrows(IllegalArgumentException.class, () -> messages(peer, env, rotatedKey, false));
+        var nextService = messages(peer, env, rotatedKey + "," + FINGERPRINT_KEY, false);
+        var retry = nextService.send(user, room, joined.membershipId(), "message-peer", client, "original", "masked");
+        assertTrue(retry.deduplicated());
+        assertEquals(first.message().messageId(), retry.message().messageId());
+        assertEquals(1, jdbc.queryForObject("SELECT SUM(accepted_count) FROM chat_send_repetitions WHERE environment=?",
+                Integer.class, env));
+        assertEquals("CLIENT_ID_CONFLICT", assertThrows(ChatMessageRejection.class,
+                () -> nextService.send(user, room, joined.membershipId(), "message-peer", client, "changed", "masked"))
+                .reason());
+        String second = UUID.randomUUID().toString();
+        assertEquals("RATE_LIMIT", assertThrows(ChatMessageRejection.class,
+                () -> nextService.send(user, room, joined.membershipId(), "message-peer", second, "other", "other"))
+                .reason());
+        jdbc.update("UPDATE chat_send_policy SET last_accepted_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=?", env);
+        nextService.send(user, room, joined.membershipId(), "message-peer", second, "original", "masked");
+        jdbc.update("UPDATE chat_send_policy SET last_accepted_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=?", env);
+        assertEquals("DUPLICATE_CONTENT", assertThrows(ChatMessageRejection.class,
+                () -> nextService.send(user, room, joined.membershipId(), "message-peer", UUID.randomUUID().toString(),
+                        "original", "masked"))
+                .reason());
+        var otherMembership = peer.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(peer, user, otherMembership, "other-member");
+        assertEquals("CLIENT_ID_CONFLICT", assertThrows(ChatMessageRejection.class,
+                () -> nextService.send(user, room, otherMembership.membershipId(), "other-member", client,
+                        "original", "masked"))
+                .reason());
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?",
+                Integer.class, env));
+    }
+
+    @Test
+    void concurrentSameUuidHasOneMessageReceiptAndOutboxAndRollbackHasNone() throws Exception {
+        String env = "message-race";
+        var one = service(env, snapshot -> {
+        });
+        var two = service(env, snapshot -> {
+        });
+        var writerOne = messages(one, env, FINGERPRINT_KEY, false);
+        var writerTwo = messages(two, env, FINGERPRINT_KEY, false);
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var tabOne = one.join(user, sid, room, claims(user)).membership();
+        var tabTwo = two.join(user, sid, room, claims(user)).membership();
+        connect(one, user, tabOne, "race-one");
+        connect(two, user, tabTwo, "race-two");
+        assertEquals(tabOne.membershipId(), tabTwo.membershipId());
+        String client = UUID.randomUUID().toString();
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var a = executor.submit(() -> {
+                start.await();
+                return writerOne.send(user, room, tabOne.membershipId(),
+                        "race-one", client, "race", "race");
+            });
+            var b = executor.submit(() -> {
+                start.await();
+                return writerTwo.send(user, room, tabTwo.membershipId(),
+                        "race-two", client, "race", "race");
+            });
+            start.countDown();
+            var ra = a.get(5, TimeUnit.SECONDS);
+            var rb = b.get(5, TimeUnit.SECONDS);
+            assertEquals(ra.message().messageId(), rb.message().messageId());
+            assertTrue(ra.deduplicated() != rb.deduplicated());
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_receipts WHERE environment=?",
+                Integer.class, env));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?",
+                Integer.class, env));
+        long failing = user();
+        var failedTab = one.join(failing, UUID.randomUUID().toString(), room, claims(failing)).membership();
+        connect(one, failing, failedTab, "rollback");
+        var broken = messages(one, env, FINGERPRINT_KEY, true);
+        assertThrows(ChatParticipationUnavailableException.class, () -> broken.send(failing, room,
+                failedTab.membershipId(), "rollback", UUID.randomUUID().toString(), "rollback", "rollback"));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE user_id=?", Integer.class,
+                failing));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_send_policy WHERE user_id=?", Integer.class,
+                failing));
+    }
+
+    @Test
+    void outboxClaimsFenceLateResultsRetrySameEventAndExpireWithoutPublishing() {
+        String env = "message-outbox";
+        var one = service(env, snapshot -> {
+        });
+        var two = service(env, snapshot -> {
+        });
+        long user = user();
+        var tab = one.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(one, user, tab, "outbox");
+        var writer = messages(one, env, FINGERPRINT_KEY, false);
+        var saved = writer.send(user, room, tab.membershipId(), "outbox", UUID.randomUUID().toString(), "pending",
+                "safe");
+        var outboxOne = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), one, env);
+        var outboxTwo = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), two, env);
+        var old = outboxOne.claim(room);
+        assertTrue(old != null);
+        assertEquals(null, outboxTwo.claim(room));
+        jdbc.update("UPDATE chat_room_runtime SET dispatch_until=UTC_TIMESTAMP(6) WHERE environment=?", env);
+        var replacement = outboxTwo.claim(room);
+        assertEquals(old.event().eventId(), replacement.event().eventId());
+        assertFalse(outboxOne.publishable(old));
+        assertTrue(outboxTwo.publishable(replacement));
+        assertFalse(outboxOne.complete(old, true));
+        assertTrue(outboxTwo.complete(replacement, false));
+        assertEquals(null, outboxOne.claim(room));
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=UTC_TIMESTAMP(6) WHERE environment=?", env);
+        var retry = outboxOne.claim(room);
+        assertEquals(old.event().eventId(), retry.event().eventId());
+        assertEquals(1, retry.attempts());
+        String body = retry.event().encode();
+        assertFalse(body.contains("safe"));
+        assertFalse(body.contains("pending"));
+        assertEquals(retry.event(),
+                ChatMessageRedisEvent.decode(env + ":chat:room:" + room, env + ":chat:room:", body));
+        assertThrows(IllegalArgumentException.class,
+                () -> ChatMessageRedisEvent.decode(env + ":chat:room:999999", env + ":chat:room:", body));
+        assertThrows(IllegalArgumentException.class,
+                () -> ChatMessageRedisEvent.decode(env + ":chat:room:" + room, env + ":chat:room:",
+                        body.replace("\"payload\":{", "\"unknown\":true,\"payload\":{")));
+        assertTrue(outboxOne.complete(retry, true));
+        assertEquals(null, outboxTwo.claim(room));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE id=?", Integer.class,
+                saved.message().messageId()));
+        jdbc.update("UPDATE chat_send_policy SET last_accepted_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=?", env);
+        writer.send(user, room, tab.membershipId(), "outbox", UUID.randomUUID().toString(), "expired", "safe");
+        jdbc.update(
+                "UPDATE chat_message_outbox SET expires_at=UTC_TIMESTAMP(6) WHERE environment=? AND status='PENDING'",
+                env);
+        assertEquals(null, outboxOne.claim(room));
+        assertEquals(1,
+                jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? AND status='EXPIRED'",
+                        Integer.class, env));
+    }
+
+    @Test
+    void outboxInsertFailureRollsBackMessageReceiptAndPolicyTogether() {
+        String env = "message-atomic";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        var tab = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, tab, "atomic");
+        var writer = messages(owner, env, FINGERPRINT_KEY, false);
+        String client = UUID.randomUUID().toString();
+        jdbc.execute("""
+                CREATE TRIGGER fixture_outbox_failure BEFORE INSERT ON chat_message_outbox FOR EACH ROW
+                BEGIN IF NEW.environment='message-atomic' THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic outbox rollback'; END IF; END
+                """);
+        try {
+            assertThrows(ChatParticipationUnavailableException.class, () -> writer.send(user, room,
+                    tab.membershipId(), "atomic", client, "original", "masked"));
+        } finally {
+            jdbc.execute("DROP TRIGGER fixture_outbox_failure");
+        }
+        assertEquals(0,
+                jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE user_id=?", Integer.class, user));
+        for (String table : List.of("chat_message_receipts", "chat_send_policy", "chat_send_repetitions",
+                "chat_message_outbox")) {
+            assertEquals(0,
+                    jdbc.queryForObject("SELECT COUNT(*) FROM " + table + " WHERE environment=?", Integer.class, env));
+        }
+        assertFalse(writer.send(user, room, tab.membershipId(), "atomic", client, "original", "masked").deduplicated());
+        assertEquals(1,
+                jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? AND status='PENDING'",
+                        Integer.class, env));
+    }
+
+    @Test
+    void realRedisReferenceEventsDeduplicateReorderingAndExcludeNewSubscriptionGaps() throws Exception {
+        String env = "message-events";
+        var owner = service(env, snapshot -> {
+        });
+        var peer = service(env, snapshot -> {
+        });
+        long sender = user();
+        long reader = user();
+        var writing = owner.join(sender, UUID.randomUUID().toString(), room, claims(sender)).membership();
+        var reading = peer.join(reader, UUID.randomUUID().toString(), room, claims(reader)).membership();
+        connect(owner, sender, writing, "writer");
+        connect(peer, reader, reading, "reader");
+        var writer = messages(owner, env, FINGERPRINT_KEY, false);
+        var first = writer.send(sender, room, writing.membershipId(), "writer", UUID.randomUUID().toString(), "first",
+                "masked1");
+        jdbc.update(
+                "UPDATE chat_send_policy SET last_accepted_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                        + "WHERE environment=?",
+                env);
+        var second = writer.send(sender, room, writing.membershipId(), "writer", UUID.randomUUID().toString(), "second",
+                "masked2");
+        var properties = new ChatRedisProperties(env, REDIS.getHost(), REDIS.getMappedPort(6379), "default",
+                "isolated-redis-password", false, Duration.ofSeconds(1), Duration.ofSeconds(1));
+        var presence = new ChatPresenceRegistry(Clock.systemUTC());
+        presence.setParticipation(peer);
+        presence.connect(reader, room, reading.membershipId(), 1000, "reader");
+        presence.attachTab(reading.membershipId(), reading.viewSessionId(), "reader");
+        presence.subscribed("reader", "room", "/topic/chat-rooms/" + room);
+        var registry = new ChatAuthSessionRegistry();
+        registry.register("reader", new ChatAuthSessionRegistry.Context(reader, membershipSid(reading.membershipId())));
+        var template = mock(org.springframework.messaging.simp.SimpMessagingTemplate.class);
+        var delivered = new java.util.concurrent.LinkedBlockingQueue<Long>();
+        org.mockito.Mockito.doAnswer(call -> {
+            ChatMessageEvent event = call.getArgument(1);
+            delivered.add(((ChatMessageResponse) event.data()).messageId());
+            return null;
+        }).when(template).convertAndSend(org.mockito.ArgumentMatchers.eq("/topic/chat-rooms/" + room),
+                org.mockito.ArgumentMatchers.any(Object.class), org.mockito.ArgumentMatchers.anyMap());
+        var beanFactory = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+        beanFactory.registerSingleton("broker", template);
+        var channels = new ChatRedisChannels(properties);
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), peer, env);
+        try (var connection = new ChatRedisConnection(properties);
+                var relay = new ChatMessageRelay(jdbc, peer, store, messages(peer, env, FINGERPRINT_KEY, false),
+                        connection, channels, presence, registry, mock(ChatSessionVerifier.class),
+                        beanFactory.getBeanProvider(org.springframework.messaging.simp.SimpMessagingTemplate.class),
+                        env)) {
+            awaitCondition(relay::ready);
+            var e1 = event(env, first.message().messageId());
+            var e2 = event(env, second.message().messageId());
+            connection.commands().sync().publish(channels.roomChannel(room), e2.encode());
+            connection.commands().sync().publish(channels.roomChannel(room), e1.encode());
+            connection.commands().sync().publish(channels.roomChannel(room), e1.encode());
+            assertEquals(Set.of(first.message().messageId(), second.message().messageId()),
+                    Set.of(delivered.poll(3, TimeUnit.SECONDS), delivered.poll(3, TimeUnit.SECONDS)));
+            assertEquals(null, delivered.poll(300, TimeUnit.MILLISECONDS));
+            var forged = new ChatMessageRedisEvent(UUID.randomUUID().toString(), "chat:" + UUID.randomUUID(),
+                    e1.epoch(), room, e1.roomSeq(), 9007199254740990L, e1.occurredAt());
+            connection.commands().sync().publish(channels.roomChannel(room), forged.encode());
+            connection.commands().sync().publish(channels.roomChannel(room), e1.encode() + "{}");
+            connection.commands().sync().publish(channels.roomChannel(room), new ChatMessageRedisEvent(
+                    UUID.randomUUID().toString(), e1.producerId(), e1.epoch() + 1, room, e1.roomSeq(),
+                    e1.messageId(), e1.occurredAt()).encode());
+            awaitCondition(() -> relay.rejectedEvents() >= 3);
+            assertEquals(null, delivered.poll(100, TimeUnit.MILLISECONDS));
+            peer.paused(reader, room, reading.membershipId(), reading.viewSessionId(), "reader");
+            jdbc.update(
+                    "UPDATE chat_send_policy SET last_accepted_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                            + "WHERE environment=?",
+                    env);
+            var hidden = writer.send(sender, room, writing.membershipId(), "writer", UUID.randomUUID().toString(),
+                    "absent", "masked3");
+            peer.ready(reader, room, reading.membershipId(), reading.viewSessionId(), "reader");
+            connection.commands().sync().publish(channels.roomChannel(room),
+                    event(env, hidden.message().messageId()).encode());
+            assertEquals(null, delivered.poll(300, TimeUnit.MILLISECONDS));
+            assertTrue(relay.ready());
+        }
+    }
+
+    @Test
+    void distributedRetentionUsesDbTimeEvenWhenTheTaskClockIsTwoDaysAhead() {
+        long user = user();
+        var valid = insert(user);
+        var expired = insert(user);
+        jdbc.update("UPDATE chat_room_messages SET created_at=TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6)) WHERE id=?",
+                expired.messageId());
+        var repository = mock(com.muse.meomuneum.chat.message.repository.ChatRoomMessageRepository.class);
+        when(repository.deleteExpired(org.mockito.ArgumentMatchers.any(LocalDateTime.class)))
+                .thenAnswer(call -> jdbc.update("DELETE FROM chat_room_messages WHERE created_at<=?",
+                        (LocalDateTime) call.getArgument(0)));
+        var storage = new ChatMessageStorageService(repository, mock(UserRepository.class),
+                mock(com.muse.meomuneum.chat.room.repository.ChatRoomRepository.class),
+                Clock.offset(Clock.systemUTC(), Duration.ofHours(48)));
+        storage.setDatabaseClock(jdbc, true);
+        storage.deleteExpiredMessages();
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE id=?", Integer.class,
+                valid.messageId()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE id=?", Integer.class,
+                expired.messageId()));
+    }
+
+    private ChatMessageRedisEvent event(String env, long message) {
+        var row = jdbc.queryForMap("SELECT * FROM chat_message_outbox WHERE environment=? AND message_id=?", env,
+                message);
+        Object at = row.get("occurred_at");
+        var time = at instanceof java.sql.Timestamp t ? t.toLocalDateTime() : (LocalDateTime) at;
+        return new ChatMessageRedisEvent((String) row.get("event_id"), (String) row.get("producer_id"),
+                ((Number) row.get("epoch")).longValue(), ((Number) row.get("room_id")).longValue(),
+                ((Number) row.get("room_seq")).longValue(), message, time.toInstant(ZoneOffset.UTC));
+    }
+
+    private void awaitCondition(java.util.function.BooleanSupplier condition) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertTrue(condition.getAsBoolean());
+    }
+
+    private DistributedChatMessageService messages(ChatParticipationService participation, String environment,
+            String keys, boolean failAfterInsert) {
+        var storage = mock(ChatMessageStorageService.class);
+        when(storage.store(anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    long user = call.getArgument(0);
+                    long messageRoom = call.getArgument(1);
+                    String client = call.getArgument(2);
+                    String content = call.getArgument(3);
+                    jdbc.update("""
+                            INSERT INTO chat_room_messages(room_id,user_id,client_message_id,content,created_at)
+                            VALUES (?,?,?,?,UTC_TIMESTAMP(6))
+                            """, messageRoom, user, client, content);
+                    if (failAfterInsert) {
+                        throw new IllegalStateException("synthetic rollback");
+                    }
+                    long id = jdbc.queryForObject(
+                            "SELECT id FROM chat_room_messages WHERE user_id=? AND client_message_id=?",
+                            Long.class, user, client);
+                    var account = mock(User.class);
+                    when(account.getId()).thenReturn(user);
+                    when(account.getNickname()).thenReturn("fixture");
+                    var target = mock(ChatRoom.class);
+                    when(target.getId()).thenReturn(messageRoom);
+                    var message = ChatRoomMessage.create(account, target, client, content,
+                            LocalDateTime.now(ZoneOffset.UTC));
+                    ReflectionTestUtils.setField(message, "id", id);
+                    return new ChatMessageSaveResult(message, false);
+                });
+        return new DistributedChatMessageService(jdbc, participation, storage, new ChatMessageFingerprint(keys),
+                environment);
     }
 
     private ChatCursorCodec codec() {
