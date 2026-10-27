@@ -9,10 +9,13 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -27,10 +30,13 @@ import com.muse.meomuneum.chat.auth.ChatAuthOperation;
 import com.muse.meomuneum.chat.connection.ChatPresenceChangedEvent;
 import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
+import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
+import com.muse.meomuneum.chat.message.query.ChatQueryException;
 import com.muse.meomuneum.chat.room.dto.ChatRoomMembershipResponse;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomJoinResult;
+import com.muse.meomuneum.chat.view.ChatRoomReadBoundaryStore;
 import com.muse.meomuneum.chat.view.ChatViewStorageService;
 import com.muse.meomuneum.global.security.AuthSessionIds;
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
@@ -57,8 +63,10 @@ public final class ChatParticipationService {
     private final ApplicationEventPublisher events;
     private final ChatSocketSessions sockets;
     private final String environment;
+    private final ChatRoomReadBoundaryStore boundaries;
+    private final Map<String, Long> claims = new ConcurrentHashMap<>();
     private final String taskId = UUID.randomUUID().toString();
-    private final Set<Long> touchedRooms = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<Long> touchedRooms = ConcurrentHashMap.newKeySet();
     private volatile long epoch;
     private volatile long localLease;
     private volatile boolean failed;
@@ -69,7 +77,7 @@ public final class ChatParticipationService {
         if (environment == null || !environment.matches("[a-z0-9-]{1,32}")) {
             throw new IllegalArgumentException("chat participation environment required");
         }
-        this.jdbc = new JdbcTemplate(java.util.Objects.requireNonNull(jdbc.getDataSource()));
+        this.jdbc = new JdbcTemplate(Objects.requireNonNull(jdbc.getDataSource()));
         this.jdbc.setQueryTimeout(1);
         this.transactions = new TransactionTemplate(manager);
         this.transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -81,6 +89,7 @@ public final class ChatParticipationService {
         this.events = events;
         this.sockets = sockets;
         this.environment = environment;
+        this.boundaries = new ChatRoomReadBoundaryStore(this.jdbc, environment);
     }
 
     public void start() {
@@ -168,10 +177,10 @@ public final class ChatParticipationService {
     }
 
     public void claim(long user, String authSessionId, long room, long member, String view, String socket) {
-        if (!AuthSessionIds.isValid(view) || socket == null || socket.length() > 128) {
+        if (!AuthSessionIds.isValid(view) || socket == null || socket.length() > 128 || claims.containsKey(socket)) {
             throw denied();
         }
-        execute(user, tx -> {
+        long generation = execute(user, tx -> {
             tx.lock(List.of(room));
             RuntimeView current = owned(user, room, member, view);
             if (authSessionId == null || !authSessionId.equals(sid(member))) {
@@ -197,8 +206,9 @@ public final class ChatParticipationService {
                     """, taskId, socket, view, current.generation);
             tx.changed(room);
             mark(view, tx.version(room));
-            return null;
+            return current.generation + 1;
         });
+        claims.put(socket, generation);
     }
 
     public String ready(long user, long room, long member, String view, String socket) {
@@ -211,7 +221,11 @@ public final class ChatParticipationService {
             }
             authorizeUser(user, false);
             access.authorize(user, sid(member));
-            storage.subscribedShared(user, room, member, view);
+            if (current.state.equals("CONNECTED")) {
+                return view;
+            }
+            tx.changed(room);
+            boundaries.subscribed(view, room, epoch, taskId, current.generation);
             jdbc.update("""
                     UPDATE chat_view_runtime SET state='CONNECTED',deadline=NULL
                     WHERE view_id=? AND owner_task_id=? AND socket_token=? AND owner_generation=?
@@ -231,7 +245,8 @@ public final class ChatParticipationService {
                 throw denied();
             }
             access.authorize(user, sid(member));
-            storage.checkpointShared(view, room);
+            tx.changed(room);
+            boundaries.checkpoint(view, room, taskId, current.generation);
             return null;
         });
     }
@@ -240,7 +255,8 @@ public final class ChatParticipationService {
         execute(user, tx -> {
             tx.lock(List.of(room));
             requireOwner(owned(user, room, member, view), socket);
-            storage.unsubscribedShared(view, room);
+            tx.changed(room);
+            boundaries.close(view, room, "UNSUBSCRIBED");
             jdbc.update("""
                     UPDATE chat_view_runtime SET state='RESERVED',deadline=TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6))
                     WHERE view_id=?
@@ -252,25 +268,29 @@ public final class ChatParticipationService {
     }
 
     public void disconnected(long user, long room, long member, String view, String socket) {
-        execute(user, tx -> {
-            tx.lock(List.of(room));
-            RuntimeView current = owned(user, room, member, view);
-            if (!taskId.equals(current.owner) || !socket.equals(current.socket)) {
-                return null; // Delayed old socket callbacks cannot modify a new claim.
-            }
-            boolean connected = current.state.equals("CONNECTED");
-            if (connected) {
-                storage.disconnectedShared(view);
-            }
-            jdbc.update("""
-                    UPDATE chat_view_runtime SET state=?,owner_task_id=NULL,socket_token=NULL,
-                        deadline=CASE WHEN ? THEN TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6)) ELSE deadline END
-                    WHERE view_id=? AND owner_task_id=? AND socket_token=? AND owner_generation=?
-                    """, connected ? "GRACE" : "RESERVED", connected, view, taskId, socket, current.generation);
-            tx.changed(room);
-            mark(view, tx.version(room));
-            return null;
-        });
+        try {
+            execute(user, tx -> {
+                tx.lock(List.of(room));
+                RuntimeView current = owned(user, room, member, view);
+                if (!taskId.equals(current.owner) || !socket.equals(current.socket)) {
+                    return null; // Delayed old socket callbacks cannot modify a new claim.
+                }
+                boolean connected = current.state.equals("CONNECTED");
+                if (connected) {
+                    boundaries.disconnected(view, taskId, current.generation);
+                }
+                jdbc.update("""
+                        UPDATE chat_view_runtime SET state=?,owner_task_id=NULL,socket_token=NULL,
+                            deadline=CASE WHEN ? THEN TIMESTAMPADD(SECOND,30,UTC_TIMESTAMP(6)) ELSE deadline END
+                        WHERE view_id=? AND owner_task_id=? AND socket_token=? AND owner_generation=?
+                        """, connected ? "GRACE" : "RESERVED", connected, view, taskId, socket, current.generation);
+                tx.changed(room);
+                mark(view, tx.version(room));
+                return null;
+            });
+        } finally {
+            claims.remove(socket);
+        }
     }
 
     public boolean leave(long user, String sid, long room, long member, String view) {
@@ -281,6 +301,8 @@ public final class ChatParticipationService {
                     String.class, member))) {
                 throw denied();
             }
+            tx.changed(room);
+            boundaries.close(view, room, "LEFT");
             storage.leaveShared(user, room, member, view);
             jdbc.update("""
                     UPDATE chat_view_runtime SET state='LEFT',deadline=NULL,owner_task_id=NULL,socket_token=NULL,
@@ -333,6 +355,84 @@ public final class ChatParticipationService {
         });
     }
 
+    public record ReadContext(String environment, long epoch, long generation, long roomSeq,
+            LocalDateTime asOf) {
+    }
+
+    public <T> T read(long user, long room, long member, String view, Function<ReadContext, T> operation) {
+        return execute(user, tx -> {
+            tx.lock(List.of(room));
+            RuntimeView current = owned(user, room, member, view);
+            if (!current.state.equals("CONNECTED") || current.owner == null || !ownerLive(current.owner)
+                    || current.generation < 1 || jdbc.queryForObject("""
+                            SELECT COUNT(*) FROM chat_view_sessions WHERE id=? AND ended_at IS NULL
+                                AND updated_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                            """, Integer.class, view) != 1) {
+                throw denied();
+            }
+            authorizeUser(user, false);
+            access.authorize(user, sid(member));
+            T result = operation
+                    .apply(new ReadContext(environment, epoch, current.generation, tx.version(room), now()));
+            if (!ownerLive(current.owner)) {
+                throw denied();
+            }
+            return result;
+        });
+    }
+
+    public ChatMessageResponse writeMessage(long user, long room, long member,
+            String socket, Supplier<ChatMessageResponse> write) {
+        return execute(user, tx -> {
+            tx.lock(List.of(room));
+            List<String> found = jdbc.queryForList("""
+                    SELECT view_id FROM chat_view_runtime WHERE environment=? AND epoch=? AND user_id=?
+                        AND room_id=? AND membership_id=? AND owner_task_id=? AND socket_token=?
+                    """, String.class, environment, epoch, user, room, member, taskId, socket);
+            if (found.size() != 1) {
+                throw denied();
+            }
+            RuntimeView current = owned(user, room, member, found.getFirst());
+            requireOwner(current, socket);
+            if (!current.state.equals("CONNECTED")) {
+                throw denied();
+            }
+            authorizeUser(user, false);
+            access.authorize(user, sid(member));
+            tx.changed(room);
+            var message = write.get();
+            jdbc.update("UPDATE chat_room_messages SET created_at=UTC_TIMESTAMP(6) WHERE id=?", message.messageId());
+            boundaries.recordMessage(message.messageId(), room, epoch);
+            LocalDateTime savedAt = jdbc.queryForObject("SELECT created_at FROM chat_room_messages WHERE id=?",
+                    LocalDateTime.class, message.messageId());
+            return new ChatMessageResponse(message.messageId(),
+                    message.clientMessageId(), message.roomId(), message.userId(), message.nickname(),
+                    message.content(),
+                    savedAt.atOffset(ZoneOffset.UTC));
+        });
+    }
+
+    public boolean permitsMessage(long user, String socket, long room, long message) {
+        List<Long> members = jdbc.queryForList("""
+                SELECT membership_id FROM chat_view_runtime WHERE environment=? AND user_id=? AND socket_token=?
+                    AND owner_task_id=? AND room_id=?
+                """, Long.class, environment, user, socket, taskId, room);
+        if (members.size() != 1 || !socketValid(user, members.getFirst(), socket)) {
+            return false;
+        }
+        long member = members.getFirst();
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_view_runtime v JOIN chat_message_order o ON o.environment=v.environment
+                    AND o.room_id=v.room_id AND o.message_id=?
+                JOIN chat_room_messages m ON m.id=o.message_id
+                JOIN chat_view_intervals i ON i.view_session_id=v.view_id AND i.ends_at IS NULL
+                    AND i.owner_task_id=v.owner_task_id AND i.owner_generation=v.owner_generation
+                WHERE v.environment=? AND v.user_id=? AND v.membership_id=? AND v.socket_token=?
+                    AND v.owner_task_id=? AND v.state='CONNECTED' AND o.room_seq>i.start_after_room_seq
+                    AND m.created_at>=i.started_at AND m.created_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                """, Integer.class, message, environment, user, member, socket, taskId) == 1;
+    }
+
     /** Local transport guard: no cache, replica read or Redis snapshot can extend the DB lease. */
     public boolean socketValid(long user, long member, String socket) {
         if (!available()) {
@@ -342,8 +442,9 @@ public final class ChatParticipationService {
             Integer count = jdbc.queryForObject("SELECT COUNT(*) " + VIEW_JOINS + """
                     JOIN chat_runtime_control c ON c.environment=v.environment
                     WHERE v.environment=? AND v.user_id=? AND v.membership_id=? AND v.owner_task_id=?
-                      AND v.socket_token=? AND c.epoch=v.epoch AND c.mode='RUNNING' AND
-                    """ + EFFECTIVE, Integer.class, environment, user, member, taskId, socket, epoch);
+                      AND v.socket_token=? AND v.owner_generation=? AND c.epoch=v.epoch AND c.mode='RUNNING' AND
+                    """ + EFFECTIVE, Integer.class, environment, user, member, taskId, socket,
+                    claims.getOrDefault(socket, -1L), epoch);
             return count != null && count == 1;
         } catch (RuntimeException unavailable) {
             failClosed();
@@ -440,11 +541,14 @@ public final class ChatParticipationService {
                             """, String.class, environment, user, epoch);
                     for (String view : expired) {
                         // Missing disconnect evidence never invents a new 30 second reading interval.
-                        jdbc.update("""
-                                UPDATE chat_view_intervals SET ends_at=verified_at,
-                                    end_message_id=verified_through_message_id,end_reason='RESTART'
-                                WHERE view_session_id=? AND ends_at IS NULL
-                                """, view);
+                        jdbc.update(
+                                """
+                                        UPDATE chat_view_intervals SET ends_at=verified_at,
+                                            end_message_id=verified_through_message_id,
+                                            end_room_seq=verified_through_room_seq,end_reason='RESTART'
+                                        WHERE view_session_id=? AND ends_at IS NULL
+                                        """,
+                                view);
                         jdbc.update("""
                                 UPDATE chat_view_runtime SET state='OFFLINE',deadline=NULL,owner_task_id=NULL,
                                     socket_token=NULL,owner_generation=owner_generation+1 WHERE view_id=?
@@ -503,7 +607,8 @@ public final class ChatParticipationService {
                 });
                 return action.apply(tx);
             });
-        } catch (ChatRoomException | ChatParticipationUnavailableException rejected) {
+        } catch (ChatRoomException | ChatQueryException
+                | ChatParticipationUnavailableException rejected) {
             throw rejected;
         } catch (RuntimeException unavailable) {
             throw new ChatParticipationUnavailableException();
@@ -568,6 +673,7 @@ public final class ChatParticipationService {
 
     private void requireOwner(RuntimeView view, String socket) {
         if (!taskId.equals(view.owner) || !socket.equals(view.socket) || !ownerLive(taskId)
+                || !Long.valueOf(view.generation).equals(claims.get(socket))
                 || !(view.state.equals("CONNECTED") || view.state.equals("RESERVED"))) {
             throw denied();
         }
@@ -600,6 +706,9 @@ public final class ChatParticipationService {
     }
 
     private void endMembership(Transition tx, Member member) {
+        tx.changed(member.room);
+        jdbc.queryForList("SELECT id FROM chat_view_sessions WHERE membership_id=?", String.class, member.id)
+                .forEach(view -> boundaries.close(view, member.room, "LEFT"));
         storage.endedShared(member.id);
         jdbc.update("UPDATE chat_room_members SET deleted_at=COALESCE(deleted_at,UTC_TIMESTAMP(6)) WHERE id=?",
                 member.id);
@@ -624,7 +733,7 @@ public final class ChatParticipationService {
             statement.setObject(4, now);
             return statement;
         }, key);
-        return java.util.Objects.requireNonNull(key.getKey()).longValue();
+        return Objects.requireNonNull(key.getKey()).longValue();
     }
 
     private boolean capacity(long user, long room, int capacity) {
@@ -735,6 +844,7 @@ public final class ChatParticipationService {
                 jdbc.queryForObject("""
                         SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=? FOR UPDATE
                         """, Long.class, environment, room);
+                boundaries.initialize(room, epoch);
             });
         }
 
