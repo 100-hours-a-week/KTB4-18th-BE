@@ -41,6 +41,9 @@ location:
   token:
     secret: ${LOCATION_TOKEN_SECRET}
 chat:
+  message-relay:
+    enabled: ${CHAT_MESSAGE_RELAY_ENABLED:false}
+    fingerprint-keys: ${CHAT_MESSAGE_FINGERPRINT_KEYS:}
   distributed-presence:
     enabled: ${CHAT_DISTRIBUTED_PRESENCE_ENABLED:false}
   core-auth:
