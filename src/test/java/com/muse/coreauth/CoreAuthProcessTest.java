@@ -63,9 +63,10 @@ import com.muse.meomuneum.user.domain.UserRole;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 
-/** Auth fanout only: both Chat processes start before views exist; this is not a shared-state acceptance test. */
+/** Packaged Core/Chat authentication with optional shared participation and product message relay checks. */
 @Testcontainers
 class CoreAuthProcessTest {
+    private static final boolean RELAY = Boolean.getBoolean("auth.integration.message-relay");
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
     private static final String SERVICE = "auth-process-synthetic-service-secret-current";
@@ -81,14 +82,15 @@ class CoreAuthProcessTest {
             .withCopyToContainer(Transferable
                     .of("""
                             user default off
+                            user fixture-admin on >%s +@all ~* &*
                             user core-auth on >%s &auth-test:chat:control:v1 \
                             +hello +ping +quit +client|setinfo +client|setname +publish
                             user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
-                            +hello +ping +quit +client|setinfo +client|setname \
+                            +hello +ping +quit +publish +client|setinfo +client|setname \
                             +subscribe +psubscribe +unsubscribe +punsubscribe \
                             ~auth-test:chat:state:* +eval +hget +hset +expire
                             """
-                            .formatted(REDIS_PASSWORD, REDIS_PASSWORD)),
+                            .formatted(REDIS_PASSWORD, REDIS_PASSWORD, REDIS_PASSWORD)),
                     "/fixture/acl")
             .withCommand("redis-server", "--aclfile", "/fixture/acl", "--appendonly", "no", "--save", "");
     private final Path evidence = Path.of("build/core-auth-integration", "run-" + Instant.now().toEpochMilli());
@@ -199,6 +201,11 @@ class CoreAuthProcessTest {
                         "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(), "CHAT_REDIS_USERNAME", "chat-auth",
                         "CHAT_REDIS_PASSWORD", REDIS_PASSWORD, "CHAT_REDIS_SSL", "false"));
             }
+            if (RELAY) {
+                chatEnv.put("CHAT_MESSAGE_RELAY_ENABLED", "true");
+                chatEnv.put("CHAT_MESSAGE_FINGERPRINT_KEYS", "v1:" + java.util.Base64.getEncoder().encodeToString(
+                        "synthetic-message-fingerprint-key-at-least-32-bytes".getBytes(StandardCharsets.UTF_8)));
+            }
             Node polling = start("chat", chatEnv, trust);
             var fastEnv = new HashMap<>(chatEnv);
             fastEnv.put("CORE_AUTH_SERVICE_TOKEN", NEXT);
@@ -244,7 +251,25 @@ class CoreAuthProcessTest {
                     UUID.randomUUID().toString(), Instant.now().plusSeconds(60), "synthetic-encrypted-replay",
                     Instant.now().plusSeconds(3600), Instant.now().plusSeconds(3600)));
             survivor.sendMessage(room);
-            survivor.await("CHAT_ACK");
+            String savedAck = survivor.await("CHAT_ACK");
+            if (RELAY) {
+                long message = frameData(savedAck).path("message").path("message_id").asLong();
+                assertTrue(message > 0);
+                for (Probe probe : List.of(first, second, survivor)) {
+                    assertEquals(message, frameData(probe.await("CHAT_MESSAGE")).path("message_id").asLong());
+                }
+                Probe retrying = join(subscribed, survivingSid, region, room);
+                retrying.sendMessage(room, survivor.lastClient, "인증 연동 검증");
+                var retry = frameData(retrying.await("CHAT_ACK"));
+                assertTrue(retry.path("deduplicated").asBoolean());
+                assertEquals(message, retry.path("message").path("message_id").asLong());
+                retrying.sendMessage(room, survivor.lastClient, "변경된 내용");
+                assertEquals("CLIENT_ID_CONFLICT", frameData(retrying.await("CHAT_REJECTED")).path("reason").asText());
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Integer.class));
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox", Integer.class));
+                Files.writeString(evidence.resolve("message-relay.json"),
+                        "{\"senderViaPubSub\":true,\"peerMessage\":true,\"crossTaskRetry\":true,\"conflict\":true}");
+            }
             var csrf = request(core, "GET", "/api/v1/auth/token/csrf", null, null, Map.of());
             String csrfToken = json.readTree(csrf.body()).path("data").path("csrf_token").asText();
             var redisProperties = new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
@@ -334,6 +359,15 @@ class CoreAuthProcessTest {
                 assertEquals(200, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
                         + "/messages?membership_id=" + survivor.membership + "&mode=history&size=10",
                         token(survivingSid), null, Map.of("X-Chat-View-Session", reclaimed.view)).statusCode());
+                if (RELAY) {
+                    REDIS.execInContainer("redis-cli", "--user", "fixture-admin", "--pass", REDIS_PASSWORD,
+                            "CLIENT", "KILL", "TYPE", "pubsub");
+                    assertEquals("PONG", observer.commands().sync().ping());
+                    assertEquals(1013, reclaimed.closed.get(5, TimeUnit.SECONDS));
+                    await(() -> status(subscribed, "/actuator/health/readiness") == 503);
+                    Files.writeString(evidence.resolve("pubsub-interruption.json"),
+                            "{\"commandPing\":true,\"ws1013\":true,\"readinessDown\":true}");
+                }
                 Files.writeString(evidence.resolve("cross-task-read.json"),
                         "{\"history\":true,\"recovery\":true,\"byClientId\":true,\"killedOwnerReclaimed\":true}");
             }
@@ -365,7 +399,7 @@ class CoreAuthProcessTest {
     }
 
     private Node start(String role, Map<String, String> additions, Path trust) throws Exception {
-        int port = port();
+        var log = evidence.resolve(role + "-" + UUID.randomUUID() + ".log");
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString()));
         if (trust != null) {
             command.addAll(List.of("-Djavax.net.ssl.trustStore=" + trust,
@@ -373,7 +407,7 @@ class CoreAuthProcessTest {
         }
         command.addAll(
                 List.of("-jar", System.getProperty("auth.integration." + role + "-jar"), "--server.address=127.0.0.1",
-                        "--server.port=" + port, "--chat.message-cleanup.enabled=false"));
+                        "--server.port=0", "--chat.message-cleanup.enabled=false"));
         if (role.equals("chat")) {
             command.add("--spring.profiles.active=chat-isolated");
         }
@@ -390,14 +424,25 @@ class CoreAuthProcessTest {
                     "http://127.0.0.1:1"));
         }
         builder.environment().putAll(additions);
-        builder.redirectErrorStream(true).redirectOutput(evidence.resolve(role + "-" + port + ".log").toFile());
-        Node node = new Node(builder.start(), port);
-        nodes.add(node);
+        builder.redirectErrorStream(true).redirectOutput(log.toFile());
+        Node pending = new Node(builder.start(), 0);
+        nodes.add(pending); // Cleanup owns the process even if startup fails before a port is assigned.
+        int[] actualPort = {0};
         await(() -> {
-            assertTrue(node.process().isAlive(), "app exited; inspect core-auth-integration logs");
-            return status(node, "/actuator/health/liveness") == 200;
+            assertTrue(pending.process().isAlive(), "app exited; inspect core-auth-integration logs");
+            try {
+                var match = java.util.regex.Pattern.compile("Tomcat started on port ([0-9]+)")
+                        .matcher(Files.readString(log));
+                if (match.find()) {
+                    actualPort[0] = Integer.parseInt(match.group(1));
+                    return status(new Node(pending.process(), actualPort[0]), "/actuator/health/liveness") == 200;
+                }
+                return false;
+            } catch (java.io.IOException unavailable) {
+                return false;
+            }
         });
-        return node;
+        return new Node(pending.process(), actualPort[0]);
     }
 
     private Probe join(Node node, String sid, long region, long room) throws Exception {
@@ -512,6 +557,11 @@ class CoreAuthProcessTest {
         throw new AssertionError("integration deadline exceeded; inspect evidence");
     }
 
+    private com.fasterxml.jackson.databind.JsonNode frameData(String frame) throws Exception {
+        int start = frame.indexOf("\n\n");
+        return json.readTree(frame.substring(start + 2).replace("\u0000", "")).path("data");
+    }
+
     private int port() throws Exception {
         try (var socket = new ServerSocket(0)) {
             return socket.getLocalPort();
@@ -541,10 +591,14 @@ class CoreAuthProcessTest {
         void send(String value) {
             socket.sendText(value + "\u0000", true).join();
         }
+        private String lastClient;
         void sendMessage(long room) throws Exception {
+            sendMessage(room, UUID.randomUUID().toString(), "인증 연동 검증");
+        }
+        void sendMessage(long room, String client, String content) throws Exception {
+            lastClient = client;
             send("SEND\ndestination:/app/chat-rooms/" + room + "/messages\ncontent-type:application/json\n\n"
-                    + json.writeValueAsString(
-                            Map.of("client_message_id", UUID.randomUUID().toString(), "content", "인증 연동 검증")));
+                    + json.writeValueAsString(Map.of("client_message_id", client, "content", content)));
         }
         String await(String wanted) throws Exception {
             for (int i = 0; i < pending.size(); i++) {

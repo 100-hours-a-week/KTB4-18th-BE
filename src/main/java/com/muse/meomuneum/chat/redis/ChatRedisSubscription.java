@@ -18,7 +18,8 @@ public final class ChatRedisSubscription implements AutoCloseable {
     private final Consumer<ChatRedisSubscription> onClose;
 
     ChatRedisSubscription(StatefulRedisPubSubConnection<String, String> connection, ChatRedisChannels channels,
-            RedisPubSubListener<String, String> listener, Consumer<ChatRedisSubscription> onClose) {
+            RedisPubSubListener<String, String> listener, Consumer<ChatRedisSubscription> onClose,
+            Runnable onUnavailable) {
         this.connection = connection;
         this.onClose = onClose;
         connection.addListener(new RedisConnectionStateListener() {
@@ -26,6 +27,7 @@ public final class ChatRedisSubscription implements AutoCloseable {
             public void onRedisDisconnected(RedisChannelHandler<?, ?> disconnected) {
                 roomReady.set(false);
                 controlReady.set(false);
+                onUnavailable.run();
             }
         });
         connection.addListener(new RedisPubSubAdapter<>() {
@@ -47,6 +49,7 @@ public final class ChatRedisSubscription implements AutoCloseable {
             public void unsubscribed(String channel, long count) {
                 if (channels.controlChannel().equals(channel)) {
                     controlReady.set(false);
+                    onUnavailable.run();
                 }
             }
 
@@ -54,6 +57,7 @@ public final class ChatRedisSubscription implements AutoCloseable {
             public void punsubscribed(String pattern, long count) {
                 if (channels.roomPattern().equals(pattern)) {
                     roomReady.set(false);
+                    onUnavailable.run();
                 }
             }
 
