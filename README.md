@@ -1080,3 +1080,84 @@ Spotless·Checkstyle main/core/chat/test·세 JAR를 확인하며 증빙은
 `build/message-relay-verification/summary.json`과 각 task XML,
 `build/core-auth-integration/run-*/message-relay.json`·`pubsub-interruption.json`이다.
 Docker 이미지 재빌드·push/PR·운영 migration·운영 Redis/AWS/배포는 수행하지 않았다.
+
+
+## 퇴장·지역 이동·인증 폐기 전파 (P1 8단계)
+
+2026-10-27 사용자 요청 범위는 여러 Chat Task에 연결된 탭의 종료 전파다.
+7단계의 “후속8단계” 표현 중 전역 Redis marker/epoch 복구·자동 재개·배포 drain은 이번 범위에 포함하지 않는다.
+기존 기록은 당시 이력으로 보존한다. 연결 중 신규 자동 sync는 P2이며 기존 재연결 history/recovery를 유지한다.
+
+| 결정 | 구현과 판단 근거 |
+| --- | --- |
+| 일반 퇴장은 해당 탭만 종료 | DB view에 LEFT 사유를 기록하고 CHAT_VIEW_ENDED 참조를 전파한다. 마지막 탭일 때만 membership도 끝낸다. 다른 탭·다른 sid를 닫으면 기존 사용자 계약을 위반한다. |
+| 지역 이동·Core 인증 폐기는 해당 sid의 참여 종료 | 기존 REGION_CHANGED / SESSION_REVOKED 진입점에서 CHAT_MEMBERSHIP_ENDED를 생성한다. 새 membership ID로 재입장한 소켓은 늦은 구 알림으로 닫지 않는다. 다른 sid는 유지한다. |
+| 상태 변경과 알림 예약은 한 DB transaction | 종료·열람 구간 닫기·사유·room_seq·outbox를 함께 commit한다. outbox 저장이 실패하면 종료도 rollback한다. DB만 변경되고 전파 예약이 사라지는 틈을 막는다. |
+| Redis는 종료 사실의 알림 | 구독 Task는 현재 epoch·채널·등록 producer·DB outbox의 정확한 canonical body와 실제 종료 상태를 확인한다. 알림 자체로 인증·참여 권한을 생성하지 않는다. |
+| 알림 유실은 독립 DB 조회로 보완 | 기존 참여 coordinator의250ms 조회에서도 종료 사유를 읽고 로컬 소켓을 정리한다. 조회 결과와 현재 소켓 ID/소유권을 다시 비교해 재연결 직후의 새 소켓을 보존한다.250ms는 무부하 조회 주기이며 종료 SLO 보장이 아니다. |
+| 인원 알림은 최신 DB 스냅샷 전달 | CHAT_PRESENCE_CHANGED는 room_seq를 가진 hint다. 수신 시 최신 DB 인원·version을 읽으므로 늦은 알림의 오래된 숫자로 되돌리지 않는다. 메시지 저장/checkpoint마다 인원 outbox를 만들지 않는다. |
+
+Core AUTH_SESSION_REVOKED는 기존 Core producer allowlist·sid 검증·HTTP 확인 fallback을 그대로 사용한다.
+Chat 제어 소비자는 Core 이벤트를 대신 승인하지 않는다. Core 일시 장애는 기존1013 일시 중단이며
+SESSION_REVOKED 영구 종료로 바꾸지 않는다. 기존 ACCESS_RESTRICTED 종료 경로의 사유는 보존하지만
+새 관리자 제재 정책·CHAT_ACCESS_INVALIDATED 생산자는 추가하지 않는다.
+
+로컬 종료 시 view/presence뿐 아니라 인증 문맥·소켓 owner generation claim도 지운다.
+뒤늦은 WebSocket disconnect가 이미 종료된 DB 참여를 다시 변경하지 않으며 계정 history의 유효 구간은 보존한다.
+마지막 탭의 DB 사유 LEFT는 membership 이벤트에서 기존 스키마의 LAST_VIEW_LEFT로 전달한다.
+기존 wire4100 CHAT_LEFT / CHAT_LOGGED_OUT,4101 CHAT_BANNED와 공개 API 경로를 유지한다.
+활성 ban 조회는 deleted_at·created_at·expires_at을 함께 검사한다.
+
+메시지와 제어 참조는 기존 chat_message_outbox 및 방별 dispatch claim을 공유한다.
+한 room_seq에 view/member/presence가 함께 생길 수 있어 순서 인덱스를 비고유로 확장했다.
+같은 seq 내부의 알림 순서는 권한의 근거가 아니며 소비자는 DB와 정확한 대상 ID를 재검사한다.
+기존200ms poll·100개 round·5초 claim·재시도·24시간 만료·bounded worker/queue·실패 시1013/readiness DOWN을 공유한다.
+CHAT_VIEW_ENDED / CHAT_MEMBERSHIP_ENDED는 기존 control 채널,
+CHAT_PRESENCE_CHANGED는 기존 room 채널을 쓴다.16KiB 상한·엄격한 필드/UUID/정수·중복 JSON key 거부를 적용한다.
+메시지 원문·토큰·새 Redis 계정 또는 새 비밀키는 추가하지 않는다.
+중복 event ID 캐시는 Task당 최대10000개/10분이며 캐시 만료 뒤에도 DB 상태 검사로 범위를 제한한다.
+
+설정·전환·클라우드 협의:
+
+- CHAT_CONTROL_EVENTS_ENABLED 기본false. true에는 CHAT_MESSAGE_RELAY_ENABLED와 기존 distributed presence/Core auth/Redis가 필요하다.
+  CHAT_RUNTIME_ENABLED의 chat-isolated 전용·prod 거부를 유지한다. 운영 다중Task 활성화 완료가 아니다.
+- 추가형 V20261027153823__extend_chat_outbox_for_control_events.sql이 view/member end_reason,
+  outbox event_type/event_body·nullable message_id·인덱스와 CHECK를 추가한다. 기존 SQL과 history를 보존한다.
+  새 앱은 flag가 꺼져 있어도 end_reason 열을 사용하므로 migration이 먼저 필요하다.
+- 구7단계 worker는 제어 outbox를 읽을 수 없다. 채팅 중단 → 구 Chat 전부 종료 → 단일 migrator →
+  모든 Chat에 호환 버전/동일 설정 배포 → 격리 검증 후 개방 순서이며 구버전과 혼합 rolling 운영하지 않는다.
+  rollback도 확장 schema/제어 row를 이해하는 버전이 필요하다. 운영 migration은 수행하지 않았다.
+- 클라우드는 기존 Chat DB 테이블 쓰기 권한과 단일 migration 주체·인덱스 변경 비용/시간,
+  기존 Chat control/room PUBLISH·구독 ACL을 확인한다. Core Redis 권한이나 외부 /internal 경로는 확대하지 않는다.
+  새 도메인·라우팅·secret은 요구하지 않는다. 실제 TLS/계정 분리/운영 부하·종료 시간은 별도 검증 사항이다.
+
+검증 명령:
+
+```sh
+./gradlew chatControlEventsTest --no-daemon
+./gradlew chatMessageRelayTest --tests 'com.muse.coreauth.CoreAuthProcessTest' --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+전용25개는 실제 MySQL/Redis 도메인24개와 실제 Core·두 Chat JAR·TLS 프로세스1개다.
+기존7단계 경계에 더해 탭만 퇴장/마지막 membership 종료·중복 요청·다른 sid 보존·지역 목적지 만원이어도
+이전 sid 종료·Core 폐기와 history 보존·알림 유실 polling·새 membership/재연결 소켓 보존을 확인한다.
+VIEW/MEMBER outbox 이후 PRESENCE insert 실패를 주입해 전체 rollback을 검증한다.
+잘못된 채널/epoch/미등록 참조/미종료 DB 상태·잘못된 JSON을 거절하고 역순 presence는 최신 DB version을 쓴다.
+실제 프로세스는 REST 처리 Task와 소켓 소유 Task가 다른 퇴장·이동 및 늦은 중복 알림도 검사한다.
+운영1000연결·모든 장애/kill 조합·종료 지연 SLO를 검증한 것은 아니다.
+
+전체749개는719통과·7실패·23조건부 제외이며 이전7단계와 실패 이름7개가 동일하다.
+프로필 이미지 테스트의 AuthService fixture 누락과 그 후속 context 실패로 전체green으로 표시하지 않는다.
+Core 인증1개/Redis4개 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+전체 최초 XML은 build/control-events-verification/full-test에 보존한다.
+전용/호환/최종 채팅 회귀와 빌드 결과는 같은 폴더 summary.json 및 task XML에 기록한다.
+실제 프로세스 증빙은 build/core-auth-integration/run-*/control-events.json 및 기존 message-relay.json이다.
+Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 않는다.
+
+2026-10-27 최종 전용25개 전부 통과·제외0, 기존 메시지 relay 프로세스 호환1개 통과다.
+최종 채팅 회귀212개는208통과·4조건부 제외·실패0이다.
+기존 FE AJV6.15.0으로 세 종류의 정상/추가필드 거부 예시와 실제 프로세스의 DB event_body 세 종류를 검증했다.
+최초 대조에서 마지막 탭의 membership 사유가 기존 스키마와 다른 점을 찾아 LAST_VIEW_LEFT로 보완한 뒤
+전용25개를 재실행했다. FE 코드와 기존 스키마 필드/enum은 변경하지 않았다.
