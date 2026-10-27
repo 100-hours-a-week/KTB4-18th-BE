@@ -295,11 +295,48 @@ class CoreAuthProcessTest {
                     "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL",
                     Integer.class, survivor.view) == 0);
             Probe recovered = connect(polling, survivingSid, room, survivor.membership, survivor.view);
-            var history = request(polling, "GET", "/api/v1/chat-rooms/" + room + "/messages?membership_id="
-                    + survivor.membership + "&mode=history&size=10", token(survivingSid), null,
+            blockNext.set(false);
+            var history = request(PARTICIPATION ? subscribed : polling, "GET",
+                    "/api/v1/chat-rooms/" + room + "/messages?membership_id="
+                            + survivor.membership + "&mode=history&size=10",
+                    token(survivingSid), null,
                     Map.of("X-Chat-View-Session", recovered.view));
             assertEquals(200, history.statusCode(), history.body());
             assertEquals(1, json.readTree(history.body()).path("data").path("items").size());
+            if (PARTICIPATION) {
+                var recovery = request(subscribed, "GET", "/api/v1/chat-rooms/" + room + "/messages?membership_id="
+                        + survivor.membership + "&mode=recovery&size=10", token(survivingSid), null,
+                        Map.of("X-Chat-View-Session", recovered.view));
+                assertEquals(200, recovery.statusCode(), recovery.body());
+                assertEquals(1, json.readTree(recovery.body()).path("data").path("items").size());
+                String client = json.readTree(history.body()).path("data").path("items").get(0)
+                        .path("client_message_id").asText();
+                assertEquals(200, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
+                        + "/messages/by-client-id/" + client + "?membership_id=" + survivor.membership,
+                        token(survivingSid), null, Map.of("X-Chat-View-Session", recovered.view)).statusCode());
+                // A killed owner supplies no disconnect evidence: only its last checkpoint is readable.
+                polling.process().destroyForcibly();
+                assertTrue(polling.process().waitFor(5, TimeUnit.SECONDS));
+                await(() -> "OFFLINE".equals(jdbc.queryForObject(
+                        "SELECT state FROM chat_view_runtime WHERE view_id=?", String.class, recovered.view)));
+                assertEquals(1, jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM chat_view_intervals i
+                        WHERE view_session_id=? AND end_reason='RESTART'
+                            AND id=(SELECT MAX(latest.id) FROM chat_view_intervals latest
+                                WHERE latest.view_session_id=i.view_session_id)
+                            AND ends_at=verified_at AND end_message_id=verified_through_message_id
+                            AND end_room_seq=verified_through_room_seq
+                        """, Integer.class, recovered.view));
+                assertEquals(403, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
+                        + "/messages?membership_id=" + survivor.membership + "&mode=history&size=10",
+                        token(survivingSid), null, Map.of("X-Chat-View-Session", recovered.view)).statusCode());
+                Probe reclaimed = connect(subscribed, survivingSid, room, survivor.membership, survivor.view);
+                assertEquals(200, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
+                        + "/messages?membership_id=" + survivor.membership + "&mode=history&size=10",
+                        token(survivingSid), null, Map.of("X-Chat-View-Session", reclaimed.view)).statusCode());
+                Files.writeString(evidence.resolve("cross-task-read.json"),
+                        "{\"history\":true,\"recovery\":true,\"byClientId\":true,\"killedOwnerReclaimed\":true}");
+            }
             Files.writeString(evidence.resolve("result.json"),
                     json.writeValueAsString(Map.of("revocationMillis", revokeMillis,
                             "redisAndPolling", true, "redisWhileHttpBlocked", true, "tlsTrustAndHostname", true,
