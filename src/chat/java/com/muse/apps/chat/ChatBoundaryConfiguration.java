@@ -25,6 +25,7 @@ import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.chat.auth.ChatCoreAuthFilter;
 import com.muse.meomuneum.chat.auth.ChatCoreSessionVerifier;
 import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
+import com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle;
 import com.muse.meomuneum.global.config.CorsConfig;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.ActiveUserLookup;
@@ -60,8 +61,9 @@ public class ChatBoundaryConfiguration {
 
     @Bean
     public FilterRegistrationBean<ApplicationBoundaryFilter> chatBoundaryFilter(ObjectMapper mapper,
-            @Value("${chat.runtime.enabled:false}") boolean enabled) {
-        var registration = new FilterRegistrationBean<>(new ApplicationBoundaryFilter(true, () -> enabled, mapper));
+            @Value("${chat.runtime.enabled:false}") boolean enabled, ObjectProvider<ChatRuntimeLifecycle> lifecycles) {
+        var registration = new FilterRegistrationBean<>(new ApplicationBoundaryFilter(true,
+                () -> enabled && (lifecycles.getIfAvailable() == null || lifecycles.getObject().permitted()), mapper));
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
         return registration;
     }
@@ -96,7 +98,8 @@ public class ChatBoundaryConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.GET, "/actuator/health/liveness", "/actuator/health/readiness")
-                        .permitAll().requestMatchers("/ws", "/ws/**").permitAll().anyRequest().authenticated())
+                        .permitAll().requestMatchers("/actuator/**").denyAll()
+                        .requestMatchers("/ws", "/ws/**").permitAll().anyRequest().authenticated())
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint((request, response, failure) -> errors.write(request, response,
                                 SecurityErrorCode.ACCESS_UNAUTHORIZED))

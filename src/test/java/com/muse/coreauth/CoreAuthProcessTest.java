@@ -66,6 +66,8 @@ import com.sun.net.httpserver.HttpsServer;
 /** Packaged Core/Chat authentication with optional shared participation and product message relay checks. */
 @Testcontainers
 class CoreAuthProcessTest {
+    private static final boolean RUNTIME = Boolean.getBoolean("auth.integration.runtime");
+    private static final String METRICS = "synthetic-metrics-service-token-at-least-32";
     private static final boolean CONTROL = Boolean.getBoolean("auth.integration.control-events");
     private static final boolean RELAY = Boolean.getBoolean("auth.integration.message-relay");
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
@@ -73,6 +75,7 @@ class CoreAuthProcessTest {
     private static final String SERVICE = "auth-process-synthetic-service-secret-current";
     private static final String NEXT = "auth-process-synthetic-service-secret-next-key";
     private static final String REDIS_PASSWORD = "auth-process-redis-synthetic-password";
+    private static final int REDIS_PORT = redisPort();
     private static final String PRODUCER = "core:" + UUID.randomUUID();
     private static final String ORIGIN = "http://localhost:5174";
     @Container
@@ -80,6 +83,10 @@ class CoreAuthProcessTest {
             .withDatabaseName("core_auth").withUsername("auth_test").withPassword("auth-test-only-db-password");
     @Container
     private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:8.10.2").withExposedPorts(6379)
+            .withCreateContainerCmdModifier(command -> command.getHostConfig().withPortBindings(
+                    new com.github.dockerjava.api.model.PortBinding(
+                            com.github.dockerjava.api.model.Ports.Binding.bindIpAndPort("127.0.0.1", REDIS_PORT),
+                            new com.github.dockerjava.api.model.ExposedPort(6379))))
             .withCopyToContainer(Transferable
                     .of("""
                             user default off
@@ -87,7 +94,7 @@ class CoreAuthProcessTest {
                             user core-auth on >%s &auth-test:chat:control:v1 \
                             +hello +ping +quit +client|setinfo +client|setname +publish
                             user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
-                            +hello +ping +quit +publish +client|setinfo +client|setname \
+                            +hello +ping +quit +publish +info +client|setinfo +client|setname \
                             +subscribe +psubscribe +unsubscribe +punsubscribe \
                             ~auth-test:chat:state:* +eval +hget +hset +expire
                             """
@@ -209,6 +216,11 @@ class CoreAuthProcessTest {
             }
             if (CONTROL) {
                 chatEnv.put("CHAT_CONTROL_EVENTS_ENABLED", "true");
+            }
+            if (RUNTIME) {
+                recoveryCommand();
+                chatEnv.put("CHAT_LIFECYCLE_ENABLED", "true");
+                chatEnv.put("CHAT_METRICS_SERVICE_TOKEN", METRICS);
             }
             Node polling = start("chat", chatEnv, trust);
             var fastEnv = new HashMap<>(chatEnv);
@@ -335,6 +347,10 @@ class CoreAuthProcessTest {
             var redisProperties = new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
                     REDIS.getMappedPort(6379), "chat-auth", REDIS_PASSWORD, false,
                     java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1));
+            if (RUNTIME) {
+                runtimeChecks(jdbc, sessions, chatEnv, trust, polling, subscribed, survivingSid, region, room);
+                return;
+            }
             observer = new com.muse.meomuneum.chat.redis.ChatRedisConnection(redisProperties);
             var subscription = observer.openSubscription(
                     new com.muse.meomuneum.chat.redis.ChatRedisChannels(redisProperties),
@@ -458,6 +474,132 @@ class CoreAuthProcessTest {
             }
             member.shutdown();
         }
+    }
+
+    private static int redisPort() {
+        try (var socket = new java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())) {
+            return socket.getLocalPort();
+        } catch (java.io.IOException unavailable) {
+            throw new IllegalStateException("Redis fixture port unavailable");
+        }
+    }
+
+    private void recoveryCommand() throws Exception {
+        var log = evidence.resolve("recovery-" + UUID.randomUUID() + ".log");
+        var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
+                "-Dloader.main=com.muse.meomuneum.chat.runtime.ChatRecoveryCommand", "-cp",
+                System.getProperty("auth.integration.chat-jar"),
+                "org.springframework.boot.loader.launch.PropertiesLauncher");
+        builder.environment().clear();
+        builder.environment().putAll(Map.of("CHAT_DB_URL", MYSQL.getJdbcUrl(), "CHAT_DB_USERNAME", MYSQL.getUsername(),
+                "CHAT_DB_PASSWORD", MYSQL.getPassword(), "CHAT_REDIS_ENVIRONMENT", "auth-test",
+                "CHAT_REDIS_HOST", REDIS.getHost(), "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(),
+                "CHAT_REDIS_USERNAME", "chat-auth", "CHAT_REDIS_PASSWORD", REDIS_PASSWORD,
+                "CHAT_REDIS_SSL", "false", "CHAT_RECOVERY_CONFIRM", "chat-stopped"));
+        var command = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        try {
+            assertTrue(command.waitFor(30, TimeUnit.SECONDS));
+            assertEquals(0, command.exitValue(), "inspect recovery command log");
+        } finally {
+            command.destroyForcibly();
+        }
+    }
+
+    private void runtimeChecks(JdbcTemplate jdbc,
+            com.hazelcast.map.IMap<String, HazelcastAuthStateStore.AuthSession> sessions, Map<String, String> chatEnv,
+            Path trust, Node polling, Node subscribed, String survivingSid, long region, long room) throws Exception {
+        await(() -> {
+            try {
+                return request(polling, "GET", "/actuator/prometheus", METRICS, null, Map.of()).body()
+                        .contains("chat_message_store_duration_seconds_count");
+            } catch (Exception unavailable) {
+                return false;
+            }
+        });
+        assertEquals(401, request(polling, "GET", "/actuator/prometheus", null, null, Map.of()).statusCode());
+        assertEquals(401,
+                request(polling, "GET", "/actuator/prometheus", token(survivingSid), null, Map.of()).statusCode());
+        assertEquals(200, request(polling, "GET", "/actuator/prometheus", METRICS, null, Map.of()).statusCode());
+        Node terminating = start("chat", chatEnv, trust);
+        String drainSid = UUID.randomUUID().toString();
+        sessions.put(drainSid, session(drainSid));
+        Probe draining = join(terminating, drainSid, region, room);
+        Probe other = join(subscribed, survivingSid, region, room);
+        terminating.process().destroy();
+        assertEquals(1013, draining.closed.get(25, TimeUnit.SECONDS));
+        assertTrue(terminating.process().waitFor(30, TimeUnit.SECONDS));
+        assertFalse(other.closed.isDone());
+        assertEquals("OFFLINE", jdbc.queryForObject("SELECT state FROM chat_view_runtime WHERE view_id=?",
+                String.class, draining.view));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? "
+                + "AND ends_at=verified_at AND end_room_seq=verified_through_room_seq", Integer.class, draining.view));
+        Probe resumed = connect(subscribed, drainSid, room, draining.membership, draining.view);
+        assertEquals(200, request(polling, "GET", "/api/v1/chat-rooms/" + room + "/messages?membership_id="
+                + draining.membership + "&mode=history", token(drainSid), null,
+                Map.of("X-Chat-View-Session", resumed.view)).statusCode());
+        var adminProperties = new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
+                REDIS.getMappedPort(6379), "fixture-admin", REDIS_PASSWORD, false,
+                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1));
+        var channels = new com.muse.meomuneum.chat.redis.ChatRedisChannels(adminProperties);
+        try (var admin = new com.muse.meomuneum.chat.redis.ChatRedisConnection(adminProperties)) {
+            String marker = admin.commands().sync().hget(channels.runtimeMarkerKey(), "generation");
+            admin.commands().sync().del(channels.runtimeMarkerKey());
+            assertEquals(1013, resumed.closed.get(5, TimeUnit.SECONDS));
+            await(() -> status(subscribed, "/actuator/health/readiness") == 503);
+            assertEquals(200, status(subscribed, "/actuator/health/liveness"));
+            assertEquals(503, request(subscribed, "GET", "/api/v1/regions/" + region + "/chat-room",
+                    token(drainSid), null, Map.of()).statusCode());
+            admin.commands().sync().hset(channels.runtimeMarkerKey(), "generation", marker);
+            Thread.sleep(1200);
+            assertEquals(503, status(subscribed, "/actuator/health/readiness"));
+        }
+        stop(polling);
+        stop(subscribed);
+        long oldEpoch = jdbc.queryForObject("SELECT epoch FROM chat_runtime_control WHERE environment='auth-test'",
+                Long.class);
+        recoveryCommand();
+        assertEquals(oldEpoch + 1,
+                jdbc.queryForObject("SELECT epoch FROM chat_runtime_control WHERE environment='auth-test'",
+                        Long.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_receipts", Integer.class));
+        Node fresh = start("chat", chatEnv, trust);
+        Probe restored = connect(fresh, drainSid, room, draining.membership, draining.view);
+        assertEquals(200, status(fresh, "/actuator/health/readiness"));
+        try (var admin = new com.muse.meomuneum.chat.redis.ChatRedisConnection(adminProperties)) {
+            String prior = admin.commands().sync().hget(channels.runtimeMarkerKey(), "generation");
+            REDIS.getDockerClient().restartContainerCmd(REDIS.getContainerId()).exec();
+            assertEquals(1013, restored.closed.get(5, TimeUnit.SECONDS));
+            await(() -> status(fresh, "/actuator/health/readiness") == 503);
+            await(() -> admin.isConnected());
+            admin.commands().sync().hset(channels.runtimeMarkerKey(), "generation", prior);
+            assertEquals(503, status(fresh, "/actuator/health/readiness"));
+        }
+        stop(fresh);
+        recoveryCommand();
+        Node finalNode = start("chat", chatEnv, trust);
+        Probe finalView = connect(finalNode, drainSid, room, draining.membership, draining.view);
+        var history = request(finalNode, "GET", "/api/v1/chat-rooms/" + room + "/messages?membership_id="
+                + draining.membership + "&mode=history", token(drainSid), null,
+                Map.of("X-Chat-View-Session", finalView.view));
+        assertEquals(200, history.statusCode());
+        assertEquals(1, json.readTree(history.body()).path("data").path("items").size());
+        MYSQL.getDockerClient().pauseContainerCmd(MYSQL.getContainerId()).exec();
+        try {
+            Thread.sleep(1500);
+            assertEquals(503,
+                    request(finalNode, "GET", "/api/v1/regions/" + region + "/chat-room", token(drainSid), null,
+                            Map.of()).statusCode());
+            assertEquals(1013, finalView.closed.get(8, TimeUnit.SECONDS));
+            assertEquals(200, status(finalNode, "/actuator/health/liveness"));
+            assertEquals(503, status(finalNode, "/actuator/health/readiness"));
+        } finally {
+            MYSQL.getDockerClient().unpauseContainerCmd(MYSQL.getContainerId()).exec();
+        }
+        Files.writeString(evidence.resolve("runtime-lifecycle.json"), json.writeValueAsString(Map.of(
+                "sigtermClose", 1013, "otherTaskPreserved", true, "lastVerifiedOnly", true, "metricsProtected", true,
+                "markerLossClosed", true, "noAutomaticReopen", true, "offlineCommandEpoch", true,
+                "redisRestartClosed", true, "historyAndReceiptPreserved", true, "dbPauseClosed", true)));
     }
 
     private Node start(String role, Map<String, String> additions, Path trust) throws Exception {
