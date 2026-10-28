@@ -1161,3 +1161,120 @@ Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 
 기존 FE AJV6.15.0으로 세 종류의 정상/추가필드 거부 예시와 실제 프로세스의 DB event_body 세 종류를 검증했다.
 최초 대조에서 마지막 탭의 membership 사유가 기존 스키마와 다른 점을 찾아 LAST_VIEW_LEFT로 보완한 뒤
 전용25개를 재실행했다. FE 코드와 기존 스키마 필드/enum은 변경하지 않았다.
+
+## 장애·종료 처리와 기본 지표 (P1 10단계)
+
+2026-10-27 사용자는 Redis 전체 장애/상태 유실 후 **전용 복구 명령 실행 후 Chat 재기동**을 선택했다.
+기존 설계의 자동 복구 담당자 선출·앱 자동 재개는 이번 최소 P1에서 제외하고 과거 설계는 이력으로 보존한다.
+9단계 FE의1013/503·같은 membership/view 재연결·history/recovery를 그대로 사용한다.
+
+| 결정 | 구현과 판단 근거 |
+| --- | --- |
+| 장애 때 로컬 입구부터 차단 | command/PubSub 단절 callback은 원자 flag만 닫는다. 500ms 감시가 DB mode/epoch/Task lease와 Redis marker·run_id·실제 구독을 확인한다. 확인 결과는 요청 시작 기준 최대1초만 사용한다. ALB health 제외를 기다리거나 Lettuce IO 스레드에서 DB/소켓 정리를 하지 않는다. |
+| 연결 복귀만으로 자동 개방 금지 | marker 유실·Redis 재기동·DB 확인 실패·큐 장애로 닫힌 Task는 그대로 닫힌다. 같은 marker를 돌려놓아도 열지 않는다. 단일 Task의 일시 연결 실패는 정상 의존성을 확인한 새 Task로 교체하고, 전체 Redis 상태/실행 세대가 바뀌면 오프라인 복구를 먼저 수행한다. |
+| 정상 종료도 일시 중단 | ContextClosed에서 ingress/HTTP·WS 업그레이드·SEND·outbound를 차단하고, 웹서버보다 먼저 drain한다. 본인 Task 소유 view만 OFFLINE·generation 증가·소유권 해제, Task FENCED 후 WS1013으로 닫는다. 다른 Task·membership·LEFT·계정 history는 보존한다. |
+| 종료 시 검증되지 않은 구간 확대 금지 | SIGTERM은 클라이언트의 정상 disconnect와 다르다. 마지막 verified 경계로 열린 구간을 닫고, 새 30초 열람 유예나 fresh 인증 없는 최종 checkpoint를 만들지 않는다. 기존 클라이언트 disconnect의30초 정책은 유지한다. 최대 정상 checkpoint 주기 약5초의 미검증 꼬리는 보존 근거가 없다. |
+| 정리 실패도 종료 예산 준수 | 기본 drain20초(1~25초), shutdown phase 기본30초보다 작아야 한다. DB chunk/statement1초·tx2초, transport별 close 예외 격리. DB 잠금·단절/예산 초과 시 Task lease/verified 경계 기반 회수로 fallback하며 무한 대기하거나 완료를 꾸미지 않는다. timeout/failure 지표와 elapsed_ms 로그를 남긴다. |
+| 관측과 서비스 권한 분리 | Prometheus는 별도 서비스 token으로만 조회한다. 사용자 JWT/무인증은 거절한다. gauge scrape에서 DB/Redis를 조회하지 않으며, DB 표본 실패는 NaN·available0으로 표현한다. 지표 조회 실패 자체로 채팅을 중단하지 않는다. |
+
+설정은 `CHAT_LIFECYCLE_ENABLED=false`가 기본이며 true에는 기존 presence·Core auth·Redis·message relay·control events가 필요하다.
+기존 `CHAT_RUNTIME_ENABLED` chat-isolated 전용/prod 거부는 유지한다. 운영 활성화 승인이 아니다.
+`CHAT_DRAIN_TIMEOUT=20s`, 선택 `CHAT_METRICS_SERVICE_TOKEN`(32~256자 별도 비밀)과 용도는 .env.example을 따른다.
+metrics token이 비어 있으면 수집을 거절한다. JWT·Core 인증 Bearer·Redis 비밀번호를 재사용하지 않는다.
+Chat Hikari 연결 대기1초/검증500ms, MySQL connectTimeout1초/socketTimeout2초를 설정한다.
+실제 JDBC URL에서 충돌하는 timeout을 덮어쓰지 않도록 운영 주입값을 확인한다. Core 설정은 바꾸지 않는다.
+
+### 전환·장애 복구 절차
+
+추가형 `V20261027205623__add_chat_runtime_recovery_control.sql`은 control의 recovery token/15초 lease,
+Redis generation·server run_id를 추가한다. 기존 SQL/이력은 수정하지 않는다. migration 실행은 기존 단일 migrator다.
+
+1. 새 FE 호환성 확인 → 채팅 라우팅 중단 → 구 Chat Task 전부 종료 → migration 적용.
+2. Chat DB/Redis 자격증명을 받은 단일 운영 job에서 아래 명령을 실행한다. 실제 비밀은 환경 주입하며 명령 인자에 넣지 않는다.
+3. 명령 성공·DB RUNNING 및 marker를 확인한 뒤 동일 버전/설정의 새 Chat UUID를 기동한다. readiness를 확인한 후 라우팅을 개방한다.
+4. FE는 기존 참여/view의 현재 권한·정원을 다시 확인하고 fresh READY/cursor로 복원한다. 종료/폐기된 view나 sid는 되살리지 않는다.
+
+```sh
+CHAT_RECOVERY_CONFIRM=chat-stopped java \
+  -Dloader.main=com.muse.meomuneum.chat.runtime.ChatRecoveryCommand \
+  -cp meomuneum-chat.jar org.springframework.boot.loader.launch.PropertiesLauncher
+```
+
+명령은 `CHAT_DB_URL/USERNAME/PASSWORD`, `CHAT_REDIS_ENVIRONMENT/HOST/PORT/USERNAME/PASSWORD/SSL`,
+필요 시 `CHAT_REDIS_SSL_CA_CERTIFICATE`를 사용한다. TLS 기본true, timeout1초·요청 queue1024이며 정상 구독 ACK까지 검사한다.
+웹 앱·Flyway·Core/Hazelcast를 시작하지 않는다. 예시 명령을 이번 작업에서 운영 환경에 실행한 것은 아니다.
+
+복구는 DB control UPDATE lock으로 RUNNING→RECOVERING·epoch 증가·token/lease를 commit한다.
+기존 쓰기의 SHARE lock과 직렬화되고, 동시 명령은 live lease가 있으면 거절한다.
+중단된 명령의15초 lease가 만료되면 새 token/generation으로 **같은 epoch**의 미완료 chunk를 이어간다.
+각 chunk는 최대100 Task/100 view/1000 outbox를 정리하고 token/유효 lease를 검사한다.
+구 Task FENCED, 비종료 view는 새 epoch의 OFFLINE/새 generation, 미확인 열린 구간은 마지막 verified로 닫는다.
+기존 GRACE의 이미 기록된 허용 끝을 늘리지 않는다. 구epoch pending outbox는 EXPIRED지만 메시지·receipt·계정 전송/반복 정책은 보존한다.
+room_seq도 초기화하지 않고 새 Redis 세대 투영은 이후 DB 스냅샷으로 생성한다. 과거 membership을 온라인 인원으로 환산하지 않는다.
+
+정리가 끝나고 command·실제 PubSub 구독·run_id·새 marker가 준비되면 token 조건으로 RUNNING을 commit한다.
+DB lock 안에서 Redis 네트워크 호출을 하지 않는다. DB와 Redis를 원자 transaction으로 간주하지 않는다.
+구 token의 DB 쓰기/완료는 거절한다. lease 경계의 오래된 Redis marker 쓰기는 DB generation과 불일치해 Task를 닫는 결과만 낼 수 있으며,
+이 경우 라우팅을 닫고 명령을 다시 수행한다. 두 저장소의 불일치를 권한 승인으로 보상하지 않는다.
+명령 실패에는 stage/예외 종류만 기록하고 연결 정보·비밀을 붙이지 않는다. RECOVERING이면 개방하지 않는다.
+구 cursor/owner epoch는 거절하고 fresh snapshot을 사용한다. 복구 명령/Task의 모든 kill 지점을 검증했다고 표시하지 않는다.
+
+### 기본 지표와 클라우드 전달 사항
+
+기계 판독 계약은 [운영 endpoint 명세](api/chat-runtime-operations.openapi.json)를 참고한다.
+
+`GET /actuator/prometheus`는 `Authorization: Bearer <CHAT_METRICS_SERVICE_TOKEN>`으로만 조회한다.
+외부 ALB/CloudFront에서는 이 경로를 차단하고 내부 scraper SG에서만 수집해야 한다. health 상세와 `/actuator/**`의 나머지는 공개하지 않는다.
+기존 health 경로 `/actuator/health/readiness`, `/actuator/health/liveness`와 HTTP 포트는 유지한다.
+readiness는 외부 의존성을 포함하지만 liveness는 외부 장애 때문에 내리지 않는다.
+
+| 지표 | 의미 |
+| --- | --- |
+| chat.connections / chat.connections.close.failures | 이 Task의 등록된 WS 수·transport close 실패 누적(계정 정원/OS TCP 수와 구분) |
+| chat.runtime.accepting / failures | runtime gate 개방 여부·감시 실패 누적. 최종 요청은 Core 인증/참여 권한도 통과해야 한다. |
+| chat.runtime.drain.duration / timeouts / failures | 종료 정리 경과·예산 초과·DB/상태 정리 실패 |
+| chat.message.store.duration{outcome} | 저장 시도 시간, stored/deduplicated/rejected/unavailable. ACK나 모든 사용자 수신 지연을 의미하지 않는다. |
+| chat.redis.publish.duration{outcome} | PUBLISH 호출 시간, published/unavailable. subscriber 수는 배달 확인이 아니다. |
+| chat.outbox.pending / oldest.seconds | 현재 epoch pending 수·가장 오래된 대기 시간(DB UTC 기준),5초 표본 |
+| chat.db.sample.available / age.seconds | 표본 성공 여부·표본 시도 이후 경과. 실패/미수집 수치는 NaN이며 오래된0을 정상으로 보이지 않는다. |
+| chat.relay.publisher.queued / receiver.queued | 기존 bounded 작업 queue의 대기 수 |
+| 기존 chat.redis.* / chat.message.relay.* / chat.control.events.* | 연결·구독 준비, 전파/거절·실패와 제어 이벤트 수 |
+
+사용자·방·소켓·sid·메시지·token·예외 원문을 label에 넣지 않는다. 기본 JVM/HTTP/Hikari 지표도 사용한다.
+타이머는 monotonic 시계, DB 만료/age는 DB UTC다. ID 없는 구조화 로그로 runtime_closed/recovery stage/drain 결과를 확인한다.
+표본·worker·방별 locking 비용, 복구 chunk 시간·종료 budget 및 실제1000연결/처리량은 운영 전 공동 측정 대상이다.
+
+클라우드 팀에는 (1) 기존 Chat state key 범위에 `env:chat:state:runtime` HGET/HSET 및 Redis `+info` 권한(코드에서는 `INFO server`만 호출),
+(2) 별도 metrics token의 SSM/ECS 주입·내부 scrape 접근·외부 경로 차단,
+(3) 단일 migration/중단 복구 job 실행 주체와 DB 권한,
+(4) readiness 경로와 앱 drain20초·다른 shutdown phase30초/자원 종료 여유를 포함한 ALB/ECS 종료 예산을 전달한다.
+현재 ACL/TLS/SG·SSM/ALB/ECS 설정을 이 코드 작업으로 변경하거나 완료 확인한 것은 아니다.
+rollback도 이 schema·epoch·marker/제어 이벤트를 이해하는 호환 버전으로 수행하며 구 단일 앱으로 단순 재라우팅하지 않는다.
+
+### 검증
+
+```sh
+./gradlew chatRuntimeLifecycleTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+전용 시험은 실제 MySQL/Redis 상태/복구, 실제 Core·여러 Chat JAR·격리 TLS·SIGTERM·Redis 재기동·DB pause 및 소켓 실패 격리를 포함한다.
+무인증/사용자 JWT의 metrics 거절·별도 token 수집, 다른 Task 보존, 마지막 verified 경계,
+marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt 유지·DB 장애 liveness/readiness 분리,
+복구 중단/lease takeover/구 token 거절·DB 잠금 drain fallback·종료 timeout을 확인한다.
+실제 ALB/CloudFront·Fargate 종료·운영 인증/DB/Redis·물리 모바일·1000연결·SLO 승인은 별도다.
+증빙은 `build/runtime-lifecycle-verification/summary.json`, 최초 full XML/각 task XML,
+`build/core-auth-integration/run-*/runtime-lifecycle.json` 및 recovery/drain 로그다.
+전체 테스트에서 기존 프로필 이미지 AuthService fixture 실패7개는 이전 단계와 동일하며 전체green으로 표시하지 않는다.
+운영 migration/복구·AWS·이미지 재빌드·push/PR·FE 제품 변경은 수행하지 않는다.
+
+
+2026-10-27 최종 전용31개 전부통과·제외0(실제 MySQL/Redis 도메인29개·Core/여러Chat JAR 프로세스1개·소켓 종료 실패1개).
+기존 Core 인증1개/Redis4개 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+최초 full749개는719통과·기존 프로필 이미지 fixture7실패·23제외(이전8단계 full과 실패 이름 동일)다.
+이후 추가된 소켓 종료 회귀1개를 포함한 채팅213개는209통과·4제외·실패0이다. 최초 full XML도 보존한다.
+초기 시간 타입/metrics401 기대값·Redis 재기동 중 임시 포트 변경·Checkstyle 위반은 보완 후 전용/정적 검사 재실행으로 해소했다.
+최종 통합 시험의 DB pause는 격리 MySQL 컨테이너에만 적용하고 즉시 해제했다. 기존 개발 환경은 유지한다.
+컨테이너에서 복구 job을 실행할 때는 기존 Chat 이미지의 ENTRYPOINT를 java로 override하고 classpath를 `/app/app.jar`로 지정한다.
+실제 ECS job/라우팅/종료 시간 설정은 클라우드 팀과 적용·검증해야 한다.
