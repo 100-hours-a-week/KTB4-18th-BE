@@ -89,6 +89,16 @@ public class AuthExceptionHandler {
                 .body(ApiResponse.failure(exception.code()));
     }
 
+    @ExceptionHandler(AuthFlowException.class)
+    public ResponseEntity<ApiResponse<Void>> handleFlowFailure(AuthFlowException exception) {
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(exception.status())
+                .cacheControl(CacheControl.noStore());
+        if (exception.status() == HttpStatus.SERVICE_UNAVAILABLE) {
+            response.header(HttpHeaders.RETRY_AFTER, "1");
+        }
+        return response.body(ApiResponse.failure(exception.code()));
+    }
+
     @ExceptionHandler(AuthStateExpiredException.class)
     public ResponseEntity<ApiResponse<Void>> handleExpired() {
         return ResponseEntity.status(HttpStatus.GONE).cacheControl(CacheControl.noStore())

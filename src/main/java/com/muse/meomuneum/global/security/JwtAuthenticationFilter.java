@@ -8,11 +8,13 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -35,6 +37,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
+        this.authFlowService = authFlowService;
+    }
+
+    /** Test compatibility constructor; production always supplies the DB authority. */
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+            UserAuthenticationService userAuthenticationService) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null);
     }
 
     @Override
@@ -67,6 +76,34 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             claims = jwtTokenProvider.parseAccessToken(authorization.substring(BEARER_PREFIX.length()));
             userAuthenticationService.findActiveUser(claims.userId());
+            if (authFlowService == null) {
+                SecurityContextHolder.clearContext();
+                errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+                response.setHeader("Retry-After", "1");
+                return;
+            } else {
+                if (claims.sessionId() == null) {
+                    writeUnauthorizedResponse(request, response);
+                    return;
+                }
+                AuthFlowService.SessionDecision decision = authFlowService.checkSession(claims.userId(),
+                        claims.sessionId());
+                if (decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
+                    SecurityContextHolder.clearContext();
+                    errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+                    response.setHeader("Retry-After", "1");
+                    return;
+                }
+                if (decision != AuthFlowService.SessionDecision.ACTIVE) {
+                    writeUnauthorizedResponse(request, response);
+                    return;
+                }
+            }
+        } catch (DataAccessException exception) {
+            SecurityContextHolder.clearContext();
+            errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+            response.setHeader("Retry-After", "1");
+            return;
         } catch (AuthenticationFailedException exception) {
             writeUnauthorizedResponse(request, response);
             return;

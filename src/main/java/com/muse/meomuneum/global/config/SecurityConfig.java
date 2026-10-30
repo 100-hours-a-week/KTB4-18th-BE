@@ -1,5 +1,6 @@
 package com.muse.meomuneum.global.config;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -19,9 +20,11 @@ import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.CorsFilter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.LocalMockLoginNoStoreFilter;
@@ -44,6 +47,7 @@ public class SecurityConfig {
             SecurityContextRepository securityContextRepository,
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             UserAuthenticationService userAuthenticationService,
+            ObjectProvider<AuthFlowService> authFlowServiceProvider,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
             @Value("${auth.local-mock-login.enabled:false}") boolean localMockLoginEnabled,
@@ -62,6 +66,14 @@ public class SecurityConfig {
                 "/api/v1/users/me",
                 "/api/v1/users/me/**"
         };
+        RequestMatcher bearerOnlyBusinessMutation = request -> {
+            String method = request.getMethod();
+            boolean unsafe = HttpMethod.POST.matches(method) || HttpMethod.PUT.matches(method)
+                    || HttpMethod.PATCH.matches(method) || HttpMethod.DELETE.matches(method);
+            String authorization = request.getHeader("Authorization");
+            return unsafe && !request.getRequestURI().startsWith("/api/v1/auth/")
+                    && authorization != null && authorization.startsWith("Bearer ");
+        };
 
         http.cors(Customizer.withDefaults())
                 .securityContext(securityContext -> securityContext
@@ -69,7 +81,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .ignoringRequestMatchers(csrfIgnoredPaths))
+                        .ignoringRequestMatchers(csrfIgnoredPaths)
+                        .ignoringRequestMatchers(bearerOnlyBusinessMutation))
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> {
@@ -101,7 +114,8 @@ public class SecurityConfig {
                             errorResponseWriter.write(request, response, code);
                         }))
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService),
+                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService,
+                                authFlowServiceProvider.getIfAvailable()),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter),

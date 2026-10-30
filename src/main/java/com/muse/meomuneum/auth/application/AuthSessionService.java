@@ -21,6 +21,7 @@ import com.muse.meomuneum.auth.exception.AuthStateNotFoundException;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
+import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.RefreshTokenClaims;
@@ -39,12 +40,14 @@ public final class AuthSessionService {
     private final ApplicationEventPublisher events;
     private final HazelcastAuthStateStore authStateStore;
     private final RefreshReplayCipher replayCipher;
+    private final AuthFlowService authFlowService;
     private final AuthStateProperties authStateProperties;
 
     public AuthSessionService(JwtTokenProvider jwtTokenProvider, JwtProperties jwtProperties,
             RefreshTokenCookieFactory refreshTokenCookieFactory,
             UserAuthenticationService userAuthenticationService, ApplicationEventPublisher events,
             HazelcastAuthStateStore authStateStore, RefreshReplayCipher replayCipher,
+            AuthFlowService authFlowService,
             AuthStateProperties authStateProperties) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
@@ -53,6 +56,7 @@ public final class AuthSessionService {
         this.events = events;
         this.authStateStore = authStateStore;
         this.replayCipher = replayCipher;
+        this.authFlowService = authFlowService;
         this.authStateProperties = authStateProperties;
     }
 
@@ -60,7 +64,27 @@ public final class AuthSessionService {
         return centralizedRefresh(request, headers);
     }
 
+    public TokenResponse replayCommittedRefresh(String refreshToken, HttpHeaders headers) {
+        RefreshTokenClaims claims = parseRefreshToken(refreshToken);
+        User activeUser = user(claims.userId());
+        String accessToken = jwtTokenProvider.createAccessToken(activeUser, claims.sessionId());
+        refreshTokenCookieFactory.addRefreshTokenCookie(headers, refreshToken);
+        return new TokenResponse(accessToken, jwtProperties.accessTokenExpirationSeconds());
+    }
+
     public void revokeCurrentSession(HttpServletRequest request, HttpHeaders headers, Long expectedUserId) {
+        if (authFlowService != null) {
+            Optional<TokenClaims> accessLocator = getAccessTokenLocator(request);
+            if (accessLocator.isEmpty() || accessLocator.get().sessionId() == null
+                    || !expectedUserId.equals(accessLocator.get().userId())) {
+                throw new AuthenticationFailedException(AuthErrorCode.LOGOUT_SESSION_MISMATCH);
+            }
+            // AuthFlowService has already committed the canonical revocation. The outbox
+            // removes the AP copy without holding the account transaction open for Hazelcast.
+            refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
+            publishSessionRevocation(expectedUserId, accessLocator.get().sessionId());
+            return;
+        }
         try (var ignored = authStateStore.acquireRequestPermit()) {
             Optional<TokenClaims> accessLocator = getAccessTokenLocator(request);
             if (accessLocator.isEmpty() || accessLocator.get().sessionId() == null
@@ -98,7 +122,17 @@ public final class AuthSessionService {
     }
 
     public void logout(HttpServletRequest request, HttpHeaders headers) {
+        if (authFlowService != null) {
+            refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
+            return;
+        }
         centralizedLogout(request, headers);
+    }
+
+    public void publishSessionRevocation(Long userId, String sid) {
+        if (userId != null && sid != null) {
+            events.publishEvent(new ChatSessionLogoutEvent(userId, sid));
+        }
     }
 
     private TokenResponse centralizedRefresh(HttpServletRequest request, HttpHeaders headers) {
@@ -116,15 +150,32 @@ public final class AuthSessionService {
             RefreshTokenClaims claims = parseRefreshToken(presentedToken);
             var presentedHash = authStateStore.tokenHash(presentedToken);
             var presentedJtiHash = authStateStore.jtiHash(claims.tokenId());
+            if (authFlowService != null) {
+                authFlowService.assertActiveSession(claims.userId(), claims.sessionId());
+            }
             for (int attempt = 0; attempt < 5; attempt++) {
                 HazelcastAuthStateStore.AuthSession session = authStateStore.getSession(claims.sessionId());
+                if (session == null && authFlowService != null) {
+                    session = restoreCanonicalSession(claims, presentedToken);
+                } else if (session != null && authFlowService != null) {
+                    session = reconcileCanonicalSession(session, claims, presentedToken);
+                    if (session == null) {
+                        continue;
+                    }
+                }
                 if (session == null || session.status() != HazelcastAuthStateStore.SessionStatus.ACTIVE
                         || !session.userId().equals(claims.userId())) {
+                    if (authFlowService != null) {
+                        throw new AuthStateUnavailableException();
+                    }
                     throw invalidRefreshToken("refresh_session_missing");
                 }
                 Instant now = Instant.now();
                 if (!session.refreshIdleExpiresAt().isAfter(now)
                         || !session.refreshAbsoluteExpiresAt().isAfter(now)) {
+                    if (authFlowService != null) {
+                        throw new AuthStateUnavailableException();
+                    }
                     authStateStore.revokeSession(session.sid(), session.userId());
                     throw invalidRefreshToken("refresh_session_expired");
                 }
@@ -145,7 +196,14 @@ public final class AuthSessionService {
                     return replayRefreshResult(session, user(session.userId()), operationId,
                             session.encryptedReplayRefreshToken(), headers);
                 }
+                if (!currentToken && authFlowService != null
+                        && authFlowService.isConsumedRefreshToken(session.sid(), presentedHash)) {
+                    throw new AuthStateConflictException("AUTH_REFRESH_STALE");
+                }
                 if (!currentToken) {
+                    if (authFlowService != null) {
+                        throw new AuthStateUnavailableException();
+                    }
                     authStateStore.revokeSession(session.sid(), session.userId());
                     throw invalidRefreshToken("refresh_token_reused");
                 }
@@ -162,12 +220,82 @@ public final class AuthSessionService {
                         now.plusSeconds(authStateProperties.refreshReplayWindowSeconds()),
                         replayCipher.encrypt(nextRefreshToken), nextAccessClaims.expiresAt(), nextIdleExpiry);
                 if (authStateStore.replaceSession(session, updated)) {
+                    if (authFlowService != null) {
+                        authFlowService.recordConsumedRefreshToken(session.sid(), presentedHash,
+                                session.refreshAbsoluteExpiresAt());
+                    }
                     refreshTokenCookieFactory.addRefreshTokenCookie(headers, nextRefreshToken);
                     return new TokenResponse(nextAccessToken, jwtProperties.accessTokenExpirationSeconds());
                 }
             }
             throw new AuthStateUnavailableException();
         }
+    }
+
+    private HazelcastAuthStateStore.AuthSession restoreCanonicalSession(RefreshTokenClaims presentedClaims,
+            String presentedToken) {
+        var projection = authFlowService.currentRefreshSession(presentedClaims.sessionId(),
+                presentedClaims.userId(), replayCipher);
+        if (projection == null || !projection.sid().equals(presentedClaims.sessionId())
+                || !projection.userId().equals(presentedClaims.userId())) {
+            throw new AuthStateUnavailableException();
+        }
+        RefreshTokenClaims canonicalClaims = parseRefreshToken(projection.refreshToken());
+        if (!canonicalClaims.sessionId().equals(presentedClaims.sessionId())
+                || !canonicalClaims.userId().equals(presentedClaims.userId())
+                || !authStateStore.tokenHash(projection.refreshToken()).equals(
+                        authStateStore.tokenHash(presentedToken))) {
+            throw new AuthStateConflictException("AUTH_REFRESH_STALE");
+        }
+        User activeUser = user(projection.userId());
+        Instant accessExpiry = Instant.now().plusSeconds(jwtProperties.accessTokenExpirationSeconds());
+        HazelcastAuthStateStore.AuthSession restored = authStateStore.createSession(projection.userId(),
+                projection.sid(), canonicalClaims.tokenId(), authStateStore.tokenHash(projection.refreshToken()),
+                null, replayCipher.encrypt(projection.refreshToken()), accessExpiry,
+                projection.absoluteExpiry(), "Restored browser session");
+        if (restored == null || restored.status() != HazelcastAuthStateStore.SessionStatus.ACTIVE
+                || !restored.userId().equals(projection.userId())
+                || !restored.currentRefreshHash().equals(authStateStore.tokenHash(projection.refreshToken()))) {
+            throw new AuthStateUnavailableException();
+        }
+        return restored;
+    }
+
+    private HazelcastAuthStateStore.AuthSession reconcileCanonicalSession(
+            HazelcastAuthStateStore.AuthSession session, RefreshTokenClaims presentedClaims, String presentedToken) {
+        var projection = authFlowService.currentRefreshSession(presentedClaims.sessionId(),
+                presentedClaims.userId(), replayCipher);
+        if (projection == null || !projection.sid().equals(presentedClaims.sessionId())
+                || !projection.userId().equals(presentedClaims.userId())
+                || session.status() != HazelcastAuthStateStore.SessionStatus.ACTIVE
+                || !session.userId().equals(projection.userId())) {
+            throw new AuthStateUnavailableException();
+        }
+        RefreshTokenClaims canonicalClaims = parseRefreshToken(projection.refreshToken());
+        String canonicalHash = authStateStore.tokenHash(projection.refreshToken());
+        if (!canonicalClaims.sessionId().equals(presentedClaims.sessionId())
+                || !canonicalClaims.userId().equals(presentedClaims.userId())) {
+            throw new AuthStateUnavailableException();
+        }
+        if (!canonicalHash.equals(authStateStore.tokenHash(presentedToken))) {
+            throw new AuthStateConflictException("AUTH_REFRESH_STALE");
+        }
+        boolean currentProjection = canonicalClaims.tokenId() != null
+                && authStateStore.jtiHash(canonicalClaims.tokenId()).equals(session.currentJtiHash())
+                && canonicalHash.equals(session.currentRefreshHash());
+        boolean replayMetadataClear = session.previousJtiHash() == null
+                && session.previousRefreshHash() == null
+                && session.lastRefreshOperationId() == null
+                && session.replayUntil() == null
+                && session.encryptedReplayRefreshToken() == null;
+        if (currentProjection && replayMetadataClear) {
+            return session;
+        }
+
+        HazelcastAuthStateStore.AuthSession repaired = session.withCanonicalRefresh(
+                authStateStore.jtiHash(canonicalClaims.tokenId()), canonicalHash, Instant.now(),
+                projection.idleExpiry(), projection.absoluteExpiry());
+        return authStateStore.replaceSession(session, repaired) ? repaired : null;
     }
 
     private TokenResponse replayRefreshResult(HazelcastAuthStateStore.AuthSession session, User user,
@@ -205,7 +333,7 @@ public final class AuthSessionService {
                 if (session == null) {
                     throw new AuthenticationFailedException(AuthErrorCode.LOGOUT_SESSION_MISMATCH);
                 }
-                events.publishEvent(new ChatLogoutEvent(session.userId()));
+                events.publishEvent(new ChatSessionLogoutEvent(session.userId(), session.sid()));
             }
             refreshTokenCookieFactory.deleteRefreshTokenCookie(headers);
         }

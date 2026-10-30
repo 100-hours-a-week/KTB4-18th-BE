@@ -28,6 +28,8 @@ final class HazelcastLoginQueueTicketTransitions {
     private static final String BINDINGS = "login-queue-cookie-bindings-v2";
     private static final String ORDER = "login-queue-order-v2";
     private static final String SESSIONS = "auth-sessions-v2";
+    private static final String CREATE_OPS = "login-queue-create-operations-v2";
+    private static final String CANCEL_FENCES = "login-queue-ticket-cancel-fences-v1";
     private static final int RECOVERY_BATCH_SIZE = 100;
     private static final long TERMINAL_OBSERVATION_SECONDS = 900;
 
@@ -305,30 +307,60 @@ final class HazelcastLoginQueueTicketTransitions {
         if (ticketId == null) {
             return;
         }
-        IMap<String, HazelcastAuthStateStore.Ticket> tickets = hz.getMap(TICKETS);
-        for (int attempt = 0; attempt < 8; attempt++) {
-            HazelcastAuthStateStore.Ticket ticket = tickets.get(ticketId);
-            if (ticket == null || ticket.status() == HazelcastAuthStateStore.TicketStatus.CANCELLED
-                    || ticket.status() == HazelcastAuthStateStore.TicketStatus.EXPIRED
-                    || ticket.status() == HazelcastAuthStateStore.TicketStatus.CONSUMED) {
-                return;
-            }
-            if (ticket.status() == HazelcastAuthStateStore.TicketStatus.VERIFYING) {
-                throw new AuthStateConflictException("QUEUE_LOGIN_IN_PROGRESS");
-            }
-            HazelcastAuthStateStore.Ticket cancelled = ticket.withState(
-                    HazelcastAuthStateStore.TicketStatus.CANCELLED, null, null, null, null, null, null, null);
-            if (tickets.replace(ticketId, ticket, cancelled)) {
-                tickets.set(ticketId, cancelled, properties.queueTombstoneSeconds(),
-                        java.util.concurrent.TimeUnit.SECONDS);
-                admissionCoordinator.releaseBcryptPermit(ticket.ticketId(), ticket.bcryptPermitKey());
-                hz.<HazelcastAuthStateStore.QueueToken>getQueue(ORDER)
-                        .remove(new HazelcastAuthStateStore.QueueToken(ticket.ticketId(), ticket.enqueueGeneration()));
-                operations.releaseActiveTicket(ticketId);
-                return;
-            }
+        cancelTicketById(ticketId);
+    }
+
+    void cancelTicketById(String ticketId) {
+        if (ticketId == null || ticketId.isBlank()) {
+            return;
         }
-        throw new AuthStateUnavailableException();
+        HazelcastInstance hz = operations.requireHazelcast();
+        IMap<String, HazelcastAuthStateStore.Ticket> tickets = hz.getMap(TICKETS);
+        tickets.lock(ticketId);
+        try {
+            hz.<String, Boolean>getMap(CANCEL_FENCES).put(ticketId, Boolean.TRUE,
+                    properties.idempotencyIdleHorizonSeconds() + properties.queueTicketSeconds()
+                            + properties.queueTombstoneSeconds(),
+                    java.util.concurrent.TimeUnit.SECONDS);
+            IMap<String, HazelcastAuthStateStore.CreateOperation> createOps = hz.getMap(CREATE_OPS);
+            HazelcastAuthStateStore.CreateOperation operation = createOps.get(ticketId);
+            if (operation != null
+                    && operation.status() != HazelcastAuthStateStore.CreateOperationStatus.TERMINAL) {
+                createOps.replace(ticketId, operation, operation.withStatus(
+                        HazelcastAuthStateStore.CreateOperationStatus.TERMINAL, Instant.now()));
+            }
+            for (int attempt = 0; attempt < 8; attempt++) {
+                HazelcastAuthStateStore.Ticket ticket = tickets.get(ticketId);
+                if (ticket == null) {
+                    operations.releaseActiveTicket(ticketId);
+                    return;
+                }
+                if (ticket.status() == HazelcastAuthStateStore.TicketStatus.CANCELLED
+                        || ticket.status() == HazelcastAuthStateStore.TicketStatus.EXPIRED
+                        || ticket.status() == HazelcastAuthStateStore.TicketStatus.CONSUMED) {
+                    operations.releaseActiveTicket(ticketId);
+                    return;
+                }
+                if (ticket.status() == HazelcastAuthStateStore.TicketStatus.VERIFYING) {
+                    throw new AuthStateConflictException("QUEUE_LOGIN_IN_PROGRESS");
+                }
+                HazelcastAuthStateStore.Ticket cancelled = ticket.withState(
+                        HazelcastAuthStateStore.TicketStatus.CANCELLED, null, null, null, null, null, null, null);
+                if (tickets.replace(ticketId, ticket, cancelled)) {
+                    tickets.set(ticketId, cancelled, properties.queueTombstoneSeconds(),
+                            java.util.concurrent.TimeUnit.SECONDS);
+                    admissionCoordinator.releaseBcryptPermit(ticket.ticketId(), ticket.bcryptPermitKey());
+                    hz.<HazelcastAuthStateStore.QueueToken>getQueue(ORDER)
+                            .remove(new HazelcastAuthStateStore.QueueToken(ticket.ticketId(),
+                                    ticket.enqueueGeneration()));
+                    operations.releaseActiveTicket(ticketId);
+                    return;
+                }
+            }
+            throw new AuthStateUnavailableException();
+        } finally {
+            tickets.unlock(ticketId);
+        }
     }
 
     Ticket claimReadyTicket(String queueCookie, String loginOperationId) {

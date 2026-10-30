@@ -3,6 +3,7 @@ package com.muse.meomuneum.auth.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -21,11 +22,14 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
+import com.muse.meomuneum.auth.exception.AuthFlowException;
+import com.muse.meomuneum.auth.exception.AuthFlowExceptionHandler;
 import com.muse.meomuneum.auth.exception.AuthStateConflictException;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
@@ -112,6 +116,27 @@ class AuthControllerTest {
         mockMvc.perform(post("/api/v1/auth/logout")).andExpect(status().isNoContent());
 
         verify(authService).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
+    }
+
+    @Test
+    void supersededLogoutDoesNotExpireCookiesOrRunLocalCleanup() throws Exception {
+        AuthFlowService flowService = mock(AuthFlowService.class);
+        when(flowService.commitLogout(any(HttpServletRequest.class), any(HttpHeaders.class), any()))
+                .thenThrow(new AuthFlowException("AUTH_FLOW_EPOCH_STALE"));
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, csrfTokenService, flowService,
+                mock(com.muse.meomuneum.global.security.JwtTokenProvider.class),
+                mock(com.muse.meomuneum.auth.application.RefreshReplayCipher.class)))
+                .setControllerAdvice(new AuthExceptionHandler(), new AuthFlowExceptionHandler(),
+                        new GlobalExceptionHandler())
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/logout").header("Idempotency-Key",
+                "123e4567-e89b-42d3-a456-426614174000"))
+                .andExpect(status().isConflict())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+
+        verify(authService, never()).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
+        verify(flowService, never()).expireAnonymousCookies(any(HttpHeaders.class));
     }
 
     @Test

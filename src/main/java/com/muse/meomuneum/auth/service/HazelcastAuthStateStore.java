@@ -164,6 +164,10 @@ public class HazelcastAuthStateStore {
         delegate.cancelCurrentTicket(queueCookie);
     }
 
+    public void cancelTicketById(String ticketId) {
+        delegate.cancelTicketById(ticketId);
+    }
+
     public Ticket claimReadyTicket(String queueCookie, String loginOperationId) {
         return delegate.claimReadyTicket(queueCookie, loginOperationId);
     }
@@ -810,6 +814,14 @@ public class HazelcastAuthStateStore {
                     createdAt, Instant.now(), accessExpiry,
                     idleExpiry, refreshAbsoluteExpiresAt, revokedAt, ticketId, ownerClaimId,
                     provisioningLeaseUntil);
+        }
+
+        public AuthSession withCanonicalRefresh(String jti, String refreshHash, Instant refreshedAt,
+                Instant idleExpiry, Instant absoluteExpiry) {
+            return new AuthSession(userId, sid, userAgentSummary, SessionStatus.ACTIVE, jti, refreshHash,
+                    null, null, null, null, null, null, null, 0, null, null, generation + 1,
+                    createdAt, refreshedAt, accessExpiresAt, idleExpiry, absoluteExpiry, null,
+                    ticketId, ownerClaimId, provisioningLeaseUntil);
         }
 
         public AuthSession revoked() {

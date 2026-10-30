@@ -8,7 +8,10 @@ public enum SecurityErrorCode implements ErrorCode {
 
     ACCESS_UNAUTHORIZED("SECURITY_401", HttpStatus.UNAUTHORIZED, "unauthorized"), ACCESS_DENIED("SECURITY_403",
             HttpStatus.FORBIDDEN, "request rejected"), CSRF_DENIED("SECURITY_CSRF_403", HttpStatus.FORBIDDEN,
-                    "csrf validation failed"), MUSIC_FORBIDDEN("SECURITY_MUSIC_403", HttpStatus.FORBIDDEN, "forbidden");
+                    "csrf validation failed"), MUSIC_FORBIDDEN("SECURITY_MUSIC_403", HttpStatus.FORBIDDEN,
+                            "forbidden"), AUTH_ORIGIN_DENIED("AUTH_ORIGIN_DENIED", HttpStatus.FORBIDDEN,
+                                    "AUTH_ORIGIN_DENIED"), AUTH_STATE_UNAVAILABLE("AUTH_STATE_UNAVAILABLE",
+                                            HttpStatus.SERVICE_UNAVAILABLE, "AUTH_STATE_UNAVAILABLE");
 
     private final String code;
     private final String message;

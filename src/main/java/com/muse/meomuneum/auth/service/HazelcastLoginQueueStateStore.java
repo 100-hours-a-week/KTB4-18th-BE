@@ -81,6 +81,7 @@ final class HazelcastLoginQueueStateStore {
     private static final String SESSIONS = "auth-sessions-v2";
     private static final String LOGIN_SESSION_INDEX = "auth-login-session-index-v2";
     private static final String APPEND_FENCES = "login-queue-append-fences-v2";
+    private static final String CANCEL_FENCES = "login-queue-ticket-cancel-fences-v1";
     private static final int RECOVERY_BATCH_SIZE = 100;
     private static final int QUEUE_POSITION_MAP_BATCH_SIZE = 100;
     private static final long QUEUE_POSITION_SNAPSHOT_TTL_SECONDS = 30;
@@ -350,6 +351,23 @@ final class HazelcastLoginQueueStateStore {
 
     private CreateTicket createOrReuseTicketLocked(String suppliedCookie, String idempotencyKey, long order) {
         validateUuid(idempotencyKey);
+        HazelcastInstance hz = requireHazelcast();
+        String ticketId = hmac("ticket:" + idempotencyKey);
+        IMap<String, Ticket> ticketMap = hz.getMap(TICKETS);
+        ticketMap.lock(ticketId);
+        try {
+            if (Boolean.TRUE.equals(hz.<String, Boolean>getMap(CANCEL_FENCES).get(ticketId))) {
+                throw new AuthStateConflictException("QUEUE_TICKET_CANCELLED");
+            }
+            return createOrReuseTicketUnderLifecycleLock(suppliedCookie, idempotencyKey, order);
+        } finally {
+            ticketMap.unlock(ticketId);
+        }
+    }
+
+    private CreateTicket createOrReuseTicketUnderLifecycleLock(String suppliedCookie, String idempotencyKey,
+            long order) {
+        validateUuid(idempotencyKey);
         if (!admissionCoordinator.reservationsRestored()) {
             throw new AuthStateUnavailableException();
         }
@@ -534,6 +552,10 @@ final class HazelcastLoginQueueStateStore {
 
     public void cancelCurrentTicket(String queueCookie) {
         loginQueueStateStore.cancelCurrentTicket(queueCookie);
+    }
+
+    public void cancelTicketById(String ticketId) {
+        loginQueueStateStore.cancelTicketById(ticketId);
     }
 
     public Ticket claimReadyTicket(String queueCookie, String loginOperationId) {
