@@ -20,17 +20,22 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
 import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.chat.auth.ChatAuthOperation;
+import com.muse.meomuneum.chat.auth.ChatAuthUnavailableException;
+import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
 import com.muse.meomuneum.chat.message.service.ChatMessageDeliveryService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
 import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
+import com.muse.meomuneum.global.security.SessionPair;
 import com.muse.meomuneum.global.security.TokenClaims;
 
 @Component
 public class ChatStompInterceptor implements ChannelInterceptor {
 
+    private ChatSessionVerifier coreVerifier;
     private final JwtTokenProvider tokens;
     private final ChatRoomEntryService entry;
     private final Clock clock;
@@ -61,8 +66,67 @@ public class ChatStompInterceptor implements ChannelInterceptor {
         this(tokens, entry, clock, sockets, delivery, views, authSessions, null);
     }
 
+    @Autowired(required = false)
+    public void setCoreVerifier(ChatSessionVerifier verifier) {
+        coreVerifier = verifier;
+    }
+
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
+        if (coreVerifier == null) {
+            return process(message, channel);
+        }
+        StompHeaderAccessor headers = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+        if (headers == null || headers.getCommand() == null || headers.getCommand() == StompCommand.DISCONNECT) {
+            return message;
+        }
+        try {
+            SessionPair pair;
+            Instant tokenExpiry;
+            if (headers.getCommand() == StompCommand.CONNECT) {
+                String authorization = headers.getFirstNativeHeader("Authorization");
+                headers.removeNativeHeader("Authorization");
+                if (authorization == null || !authorization.startsWith("Bearer ")
+                        || headers.getSessionAttributes() == null) {
+                    throw new IllegalArgumentException("AUTH_REQUIRED");
+                }
+                TokenClaims claims = tokens.parseAccessToken(authorization.substring(7));
+                tokenExpiry = claims.expiresAt();
+                pair = new SessionPair(claims.userId(), claims.sessionId());
+                coreVerifier.fresh(pair.userId(), pair.sid());
+                headers.getSessionAttributes().put("chat.core.claims", claims);
+            } else {
+                var context = authSessions.context(headers.getSessionId())
+                        .orElseThrow(() -> new IllegalArgumentException("AUTH_REQUIRED"));
+                Identity identity = headers.getSessionAttributes() == null
+                        ? null
+                        : (Identity) headers.getSessionAttributes().get("chat.identity");
+                if (identity == null) {
+                    throw new IllegalArgumentException("AUTH_REQUIRED");
+                }
+                tokenExpiry = identity.expiresAt();
+                pair = new SessionPair(context.userId(), context.authSessionId());
+            }
+            try (var scope = new ChatAuthOperation(coreVerifier, pair, tokenExpiry)) {
+                return process(message, channel);
+            }
+        } catch (com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException
+                | ChatAuthUnavailableException unavailable) {
+            sockets.close(Set.of(headers.getSessionId()), 1013, "CHAT_SERVICE_UNAVAILABLE");
+            return null;
+        } catch (com.muse.meomuneum.auth.exception.AuthenticationFailedException | IllegalArgumentException invalid) {
+            sockets.close(Set.of(headers.getSessionId()), 4102, "AUTH_REQUIRED");
+            return null;
+        } catch (ChatRoomException invalid) {
+            if (invalid.getErrorCode() != ChatRoomErrorCode.AUTH_REQUIRED) {
+                throw invalid;
+            }
+            sockets.close(Set.of(headers.getSessionId()), 4102, "AUTH_REQUIRED");
+            return null;
+        }
+    }
+
+    private Message<?> process(Message<?> message, MessageChannel channel) {
         StompHeaderAccessor headers = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
         if (headers == null || headers.getCommand() == null || headers.getCommand() == StompCommand.DISCONNECT) {
             return message;
@@ -88,6 +152,9 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                     delivery.send(sender.userId(), sender.roomId(), sender.membershipId(), headers.getSessionId(),
                             headers.getDestination(),
                             message.getPayload() instanceof byte[] bytes ? bytes : new byte[0]);
+                } catch (com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException
+                        | ChatAuthUnavailableException unavailable) {
+                    sockets.close(Set.of(headers.getSessionId()), 1013, "CHAT_SERVICE_UNAVAILABLE");
                 } catch (RuntimeException unavailable) {
                     // Never let framework exception logging include a rejected SEND payload.
                     sockets.close(Set.of(headers.getSessionId()), 4103, "SEND_FAILED");
@@ -106,13 +173,13 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             if (attributes.containsKey("chat.identity")) {
                 throw new IllegalArgumentException("CHAT_MEMBERSHIP_REQUIRED");
             }
-            if (authorization == null || !authorization.startsWith("Bearer ")) {
+            Object verified = attributes.remove("chat.core.claims");
+            if (!(verified instanceof TokenClaims) && (authorization == null || !authorization.startsWith("Bearer "))) {
                 throw new IllegalArgumentException("AUTH_REQUIRED");
             }
-            TokenClaims claims = tokens.parseAccessToken(authorization.substring(7));
-            if (authFlowService != null) {
-                authFlowService.assertActiveSession(claims.userId(), claims.sessionId());
-            }
+            TokenClaims claims = verified instanceof TokenClaims validated
+                    ? validated
+                    : tokens.parseAccessToken(authorization.substring(7));
             ChatAuthSessionRegistry.Context authContext = authSessions.resolve(claims, requestedAuthSession);
             Long roomId = positiveId(headers.getFirstNativeHeader("room_id"));
             Long membershipId = positiveId(headers.getFirstNativeHeader("membership_id"));
@@ -135,14 +202,13 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             entry.connect(claims.userId(), authContext.authSessionId(), roomId, membershipId, headers.getSessionId());
             try {
                 views.connected(claims.userId(), roomId, membershipId, headers.getSessionId(),
-                        requestedViewId);
+                        requestedViewId, claims.sessionId());
             } catch (RuntimeException failure) {
                 sockets.close(Set.of(headers.getSessionId()), 4103, "CHAT_VIEW_UNAVAILABLE");
                 throw failure;
             }
-            Identity identity = new Identity(claims.userId(), claims.sessionId(), claims.expiresAt(), roomId,
-                    membershipId);
-            authSessions.register(headers.getSessionId(), authContext);
+            Identity identity = new Identity(claims.userId(), claims.expiresAt(), roomId, membershipId);
+            authSessions.register(headers.getSessionId(), authContext, claims.expiresAt());
             attributes.put("chat.identity", identity);
             identities.put(headers.getSessionId(), identity);
             headers.setUser((Principal) () -> claims.userId().toString());
@@ -187,6 +253,9 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             try {
                 entry.authorizeConnection(identity.userId(), identity.roomId(), identity.membershipId(),
                         sessionId);
+            } catch (com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException
+                    | ChatAuthUnavailableException unavailable) {
+                sockets.close(Set.of(sessionId), 1013, "CHAT_SERVICE_UNAVAILABLE");
             } catch (ChatRoomException exception) {
                 if (exception.getErrorCode() == ChatRoomErrorCode.CHAT_BANNED) {
                     entry.leaveAll(identity.userId(), 4101, "CHAT_BANNED|" + exception.getBannedUntil());

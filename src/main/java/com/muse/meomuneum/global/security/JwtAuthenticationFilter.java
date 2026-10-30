@@ -16,7 +16,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -31,11 +30,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
-    private final UserAuthenticationService userAuthenticationService;
-    private final AuthFlowService authFlowService;
+    private final ActiveUserLookup userAuthenticationService;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService, AuthFlowService authFlowService) {
+            ActiveUserLookup userAuthenticationService) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;

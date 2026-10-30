@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -12,6 +13,11 @@ import org.springframework.web.socket.WebSocketSession;
 @Component
 public class ChatSocketSessions {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    private final AtomicLong closeFailures = new AtomicLong();
+
+    public long closeFailures() {
+        return closeFailures.get();
+    }
 
     public void add(WebSocketSession session) {
         sessions.put(session.getId(), session);
@@ -21,14 +27,23 @@ public class ChatSocketSessions {
         sessions.remove(sessionId);
     }
 
+    public int size() {
+        return sessions.size();
+    }
+
+    public void closeAll(int code, String reason) {
+        close(Set.copyOf(sessions.keySet()), code, reason);
+    }
+
     public void close(Set<String> sessionIds, int code, String reason) {
         for (String id : sessionIds) {
             WebSocketSession session = sessions.remove(id);
             if (session != null) {
                 try {
                     session.close(new CloseStatus(code, reason));
-                } catch (IOException ignored) {
+                } catch (IOException | RuntimeException ignored) {
                     // Rights were revoked before closing; a broken transport cannot restore them.
+                    closeFailures.incrementAndGet();
                 }
             }
         }

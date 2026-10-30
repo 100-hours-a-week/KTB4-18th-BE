@@ -18,6 +18,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByIdAndDeletedAtIsNull(Long id);
 
+    @Query("SELECT user.id FROM User user WHERE user.id IN :ids AND user.deletedAt IS NULL")
+    java.util.Set<Long> findActiveIds(@Param("ids") List<Long> ids);
+
     boolean existsByNicknameAndIdNot(String nickname, Long id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

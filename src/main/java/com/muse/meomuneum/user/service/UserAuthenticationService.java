@@ -8,11 +8,12 @@ import org.springframework.stereotype.Service;
 
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.global.security.ActiveUserLookup;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.repository.UserRepository;
 
 @Service
-public class UserAuthenticationService {
+public class UserAuthenticationService implements ActiveUserLookup {
 
     private static final String DUMMY_PASSWORD_HASH = "$2y$10$SBVBLUI02S31J/CFRlWncuSz.VlzZged/4rQfB9KXFeF.6daJ/yze";
 

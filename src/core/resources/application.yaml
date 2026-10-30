@@ -1,0 +1,165 @@
+spring:
+  application:
+    name: meomuneum-core
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  datasource:
+    url: ${CORE_DB_URL}
+    username: ${CORE_DB_USERNAME}
+    password: ${CORE_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${CORE_DB_MAXIMUM_POOL_SIZE:10}
+  flyway:
+    # Only the designated migration executor may enable this.
+    enabled: ${CORE_FLYWAY_ENABLED:false}
+  lifecycle:
+    timeout-per-shutdown-phase: ${CORE_SHUTDOWN_TIMEOUT:30s}
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,authState
+
+server:
+  port: ${CORE_SERVER_PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: framework
+  tomcat:
+    threads:
+      max: 200
+  servlet:
+    session:
+      timeout: 15d
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${AUTH_COOKIE_SECURE:true}
+        path: /api/v1/auth
+
+auth:
+  cookie:
+    secure: ${AUTH_COOKIE_SECURE:true}
+    same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  jwt:
+    issuer: ${AUTH_JWT_ISSUER:project-api}
+    audience: ${AUTH_JWT_AUDIENCE:project-api}
+    secret: ${AUTH_JWT_SECRET}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
+  state:
+    # AP-1 queue reservations and BCrypt semaphores are process-local; set this to the actual deployment count.
+    backend-replica-count: ${AUTH_BACKEND_REPLICA_COUNT:}
+    hazelcast:
+      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:false}
+      members: ${AUTH_STATE_HAZELCAST_MEMBERS:}
+      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth}
+      invocation-timeout: ${AUTH_STATE_HAZELCAST_INVOCATION_TIMEOUT:1s}
+    expected-hazelcast-members: ${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:1}
+    hmac-key: ${AUTH_STATE_HMAC_KEY:}
+    replay-encryption-key: ${AUTH_STATE_REPLAY_ENCRYPTION_KEY:}
+    queue-cookie-name: MEO_QUEUE_V2
+    session-idle-seconds: ${AUTH_SESSION_IDLE_SECONDS:1209600}
+    session-absolute-seconds: ${AUTH_SESSION_ABSOLUTE_SECONDS:7776000}
+    queue-ticket-seconds: ${AUTH_QUEUE_TICKET_SECONDS:900}
+    ready-ticket-seconds: ${AUTH_QUEUE_READY_TICKET_SECONDS:60}
+    queue-tombstone-seconds: ${AUTH_QUEUE_TOMBSTONE_SECONDS:900}
+    queue-capacity: ${AUTH_QUEUE_CAPACITY:2000}
+    # AP-1 local cap; this is not a cluster-wide limit when BE replicas exceed one.
+    max-active-tickets: ${AUTH_MAX_ACTIVE_TICKETS:150}
+    max-device-sessions: ${AUTH_MAX_DEVICE_SESSIONS:10}
+    global-session-capacity: ${AUTH_STATE_SESSION_CAPACITY:100000}
+    revoked-session-retention-seconds: ${AUTH_STATE_REVOKED_SESSION_RETENTION_SECONDS:300}
+    refresh-replay-window-seconds: ${AUTH_REFRESH_REPLAY_WINDOW_SECONDS:60}
+    local-auth-concurrency: ${AUTH_LOCAL_AUTH_CONCURRENCY:64}
+    local-bcrypt-concurrency: ${AUTH_LOCAL_BCRYPT_CONCURRENCY:150}
+    operation-record-capacity: ${AUTH_STATE_OPERATION_RECORD_CAPACITY:4000}
+    idempotency-idle-horizon-seconds: ${AUTH_STATE_IDEMPOTENCY_IDLE_HORIZON_SECONDS:86400}
+    bcrypt-permit-lease-seconds: ${AUTH_BCRYPT_PERMIT_LEASE_SECONDS:120}
+    queue-cookie-seconds: ${AUTH_QUEUE_COOKIE_SECONDS:1800}
+    status-minimum-interval-seconds: ${AUTH_QUEUE_STATUS_INTERVAL_SECONDS:5}
+    queue-create-requests-per-minute: ${AUTH_QUEUE_CREATE_REQUESTS_PER_MINUTE:2000}
+  queue:
+    scheduler-interval: ${AUTH_QUEUE_SCHEDULER_INTERVAL:100ms}
+  bcrypt:
+    strength: ${AUTH_BCRYPT_STRENGTH:8}
+    permit-renew-interval: ${AUTH_BCRYPT_PERMIT_RENEW_INTERVAL:5s}
+
+recommendation:
+  provider: ${RECOMMENDATION_PROVIDER:ai}
+  image:
+    provider: ${RECOMMENDATION_IMAGE_PROVIDER:ai}
+    mock:
+      outcome: ${RECOMMENDATION_IMAGE_MOCK_OUTCOME:usable}
+    timeout: ${RECOMMENDATION_IMAGE_TIMEOUT:60s}
+  itunes:
+    country: ${RECOMMENDATION_ITUNES_COUNTRY:US}
+    timeout: ${RECOMMENDATION_ITUNES_TIMEOUT:8s}
+  ai:
+    base-url: ${RECOMMENDATION_AI_BASE_URL}
+    connect-timeout: ${RECOMMENDATION_AI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${RECOMMENDATION_AI_READ_TIMEOUT:120s}
+
+music:
+  search:
+    country: ${MUSIC_SEARCH_COUNTRY:US}
+
+kakao:
+  maps:
+    rest-api-key: ${KAKAO_REST_API_KEY:}
+
+speech:
+  transcription:
+    provider: ${SPEECH_TRANSCRIPTION_PROVIDER:ai}
+    audio:
+      ffmpeg-path: ${SPEECH_AUDIO_FFMPEG_PATH:ffmpeg}
+      processing-timeout: ${SPEECH_AUDIO_PROCESSING_TIMEOUT:15s}
+      temporary-directory: ${SPEECH_AUDIO_TEMPORARY_DIRECTORY:${java.io.tmpdir}}
+    ai:
+      base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL}
+      connect-timeout: ${SPEECH_TRANSCRIPTION_AI_CONNECT_TIMEOUT:3s}
+      read-timeout: ${SPEECH_TRANSCRIPTION_AI_READ_TIMEOUT:70s}
+
+location:
+  token:
+    secret: ${LOCATION_TOKEN_SECRET}
+  reverse-geocoding:
+    base-url: ${LOCATION_REVERSE_GEOCODING_BASE_URL}
+    rest-api-key: ${LOCATION_KAKAO_REST_API_KEY:}
+    connect-timeout: ${LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
+
+
+core:
+  chat-auth:
+    enabled: ${CORE_CHAT_AUTH_ENABLED:false}
+    service-token-current: ${CHAT_AUTH_SERVICE_TOKEN_CURRENT:}
+    service-token-next: ${CHAT_AUTH_SERVICE_TOKEN_NEXT:}
+    redis-enabled: ${CORE_AUTH_REDIS_ENABLED:false}
+    producer-id: ${CORE_AUTH_PRODUCER_ID:}
+chat:
+  redis:
+    environment: ${CORE_AUTH_REDIS_ENVIRONMENT:}
+    host: ${CORE_AUTH_REDIS_HOST:localhost}
+    port: ${CORE_AUTH_REDIS_PORT:6379}
+    username: ${CORE_AUTH_REDIS_USERNAME:default}
+    password: ${CORE_AUTH_REDIS_PASSWORD:}
+    ssl: ${CORE_AUTH_REDIS_SSL:true}
+    connect-timeout: 1s
+    command-timeout: 1s
+    request-queue-size: 1024
+    ssl-ca-certificate: ${CORE_AUTH_REDIS_CA_CERTIFICATE:}

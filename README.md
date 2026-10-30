@@ -639,3 +639,642 @@ FE의 마스킹 ACK 호환성 변경이 선행되어야 한다. 기존 자동 �
 
 목록·예문·검사 순서·배포/복구 기준은 [탐지 정책](api/chat-moderation-policy.md),
 실제 검증 결과는 [마스킹 검증 기록](api/chat-masking-verification.md)을 참고한다.
+
+## Redis 연결·구독 기반 (P1 2단계)
+
+`feature/chat-redis-foundation`은 최신 `dev`의 지역 채팅에 Redis 연결 기반을 추가한다.
+제품 메시지의 서버 간 전달, 공유 정원·참여 상태, Core 인증 연동과 Chat 앱 분리는 후속 작업이다.
+현재 제품의 정원·연결 권한은 여전히 로컬 상태에 의존하므로 이 단계만으로 여러 서버를 운영하지 않는다.
+MySQL을 최종 원장으로 두고 Redis를 투영·캐시·이벤트 전달에 사용하는 계약을 따른다.
+
+| 환경 변수 | 기본값 / 의미 |
+| --- | --- |
+| `CHAT_REDIS_ENABLED` | `false`; 비활성일 때 연결과 전용 health bean을 생성하지 않음 |
+| `CHAT_REDIS_ENVIRONMENT` | 활성화 시 필수 환경 namespace |
+| `CHAT_REDIS_HOST`, `CHAT_REDIS_PORT` | `localhost`, `6379` |
+| `CHAT_REDIS_USERNAME`, `CHAT_REDIS_PASSWORD` | `default`, 활성화 시 비밀번호 필수; 앱별 명명 ACL 권장 |
+| `CHAT_REDIS_SSL` | `true`; 인증서·호스트명 검증, 자동 평문 전환 없음 |
+| `CHAT_REDIS_SSL_CA_CERTIFICATE` | 선택 PEM CA 파일 경로; 지정 시 TLS 필수 |
+| `CHAT_REDIS_CONNECT_TIMEOUT`, `CHAT_REDIS_COMMAND_TIMEOUT` | 각각 `1s` |
+| `CHAT_REDIS_REQUEST_QUEUE_SIZE` | `1024`; 허용 범위 1~65536 |
+
+운영 비밀값은 배포 환경에서 주입한다. `.env.example`을 Spring이 자동으로 읽지는 않는다.
+EC2 Docker Redis의 TLS 제공 여부는 클라우드 팀과 확인해야 한다. 사설 CA는 신뢰 파일로 제공하고
+인증서 검증을 우회하지 않는다. 운영 Core/Chat ACL 계정 분리와 Core 네트워크 허용도 별도 조치가 필요하다.
+
+명령 연결과 Pub/Sub 연결을 분리한다. `chatRedis` health와 `chat.redis.connected` 지표는 명령 연결,
+`chatRedisSubscriptions`와 `chat.redis.subscriptions.ready`는 실제 구독 ACK 준비 상태다.
+구독이 없거나 끊기면 구독 health는 DOWN이며 재접속 후 방·제어 구독 ACK를 모두 받아야 UP이다.
+기존 제품 readiness group에 이 항목을 자동 추가하지 않는다. 후속 relay가 관리 구독을 생성하고
+복구·배포 계약과 함께 readiness에 연결해야 한다. 사용자 연결 정리·전송 중단도 후속 작업이다.
+
+환경별 채널은 `<env>:chat:room:*`, `<env>:chat:control:v1`이다.
+Redis ACL의 `PSUBSCRIBE`는 실제 패턴과 같은 채널 권한을 요구하므로 두 패턴을 명시한다.
+Chat은 방·제어 발행/구독과 제한된 키·Lua 권한, Core는 제어 발행만 허용하는 분리를 검증한다.
+상태 키 생성기는 `<env>:chat:state:{room:<id>}:e:<epoch>:<component>` 형식만 제공한다.
+epoch 발급·원자 상태 전이·복구 알고리즘은 아직 구현하지 않았다.
+
+끊긴 연결의 신규 명령은 즉시 거절하고 명령 큐와 대기 시간을 제한한다.
+이미 전송된 명령의 성공 여부나 Pub/Sub 유실까지 보장하지 않으므로 후속 제품 로직에는
+멱등 처리와 MySQL 기반 복구가 필요하다. 종료 시 관리 구독·명령 연결·클라이언트를 정리한다.
+
+```sh
+./gradlew test --tests '*ChatRedisConfigurationTest' --no-daemon
+./gradlew chatRedisFoundationTest --no-daemon
+```
+
+명시적 통합 task는 Docker가 필요하며 기본 Redis 이미지는 `redis:8.10.2`다.
+`-PchatRedisImage=redis:<version>`으로 검증 이미지를 바꿀 수 있다.
+격리 MySQL 9.7.0·Redis와 실제 두 JVM으로 합성 이벤트 양방향 전달, 환경 격리,
+Redis 중단·재구독·정상 종료를 확인한다. 명명 ACL·Lua·권한 거부,
+합성 TLS의 CA 신뢰·호스트명 검증과 `noeviction` 메모리 초과 후 복구도 시험한다.
+테스트용 probe·인증서·비밀번호는 제품 JAR 및 운영 환경에 주입하지 않는다.
+이 검증은 실제 제품의 다중 서버 REST/STOMP나 운영 TLS·부하·배포 검증을 뜻하지 않는다.
+Redis 기반만 되돌릴 때는 활성화를 해제한다. 이번 단계에는 DB migration이 없다.
+
+2026-10-23 검증에서 Redis 전용 4개 전부, 채팅 회귀 201개 중 197개가 통과했다
+(채팅 조건부 제외 4개, 실패 0개). Spotless·Checkstyle main/test·bootJar도 통과했다.
+전체 테스트는 738개 중 705통과·10실패·23조건부 제외다. 실패 10개는 프로필 이미지 테스트의
+`AuthService` 구성 누락, 약관·동시 가입 테스트이며 변경 전 `dev` 7406ba5에서도 동일하게 재현했다.
+격리 검증 기록은 `build/redis-foundation-reintegration/summary.json`에 보존한다.
+
+## Core·Chat 독립 앱·이미지 (P1 3단계)
+
+같은 저장소의 `core`·`chat` 소스셋을 독립 컴파일한다. 공유 계약·모델은 기존 소스에서 재사용하며
+각 JAR에는 선택된 역할의 클래스·리소스·라이브러리만 들어간다. 기존 단일 앱 `bootJar`·`bootRun`은
+전환 전 회귀/실행 경로로 유지한다. 새 앱과 기존 단일 앱을 운영 DB에서 함께 실행하지 않는다.
+
+| 구분 | Core | Chat |
+| --- | --- | --- |
+| 진입점 | `com.muse.apps.core.CoreApplication` | `com.muse.apps.chat.ChatApplication` |
+| 산출물 | `build/libs/meomuneum-core.jar` | `build/libs/meomuneum-chat.jar` |
+| 소유 API | 인증·사용자·추천·음악·지도·위치 발급 | `/ws`, `/api/v1/chat-rooms/**`, `/api/v1/regions/{id}/chat-room` |
+| 배치/초기화 | 기존 인증 스케줄러 | 채팅 초기화·checkpoint·보관 기간 정리 |
+| 제외 | 채팅 런타임·WebSocket·마스킹 라이브러리 (4단계부터 인증 알림용 Lettuce 포함) | Core 서비스/컨트롤러·Hazelcast·AI·역지오코딩 클라이언트·Flyway |
+| 이미지 | `Dockerfile.core`, FFmpeg 포함 | `Dockerfile.chat`, FFmpeg 제외 |
+
+Core의 위치 토큰 발급과 Chat의 토큰 검증은 같은 계약을 쓴다. 세션 ID 형식 검사는 공통 코드로
+옮겨 Core가 채팅 연결 registry에 의존하지 않게 했다. JWT 필터의 사용자 확인도 읽기 인터페이스로
+분리해 Chat에서 로그인/BCrypt 서비스를 만들지 않는다. 공통 오류 응답의 예외 타입은 재사용한다.
+공개 REST/STOMP 필드·destination·기존 이력/재연결 정책·DB schema는 변경하지 않는다.
+
+```sh
+./gradlew coreBootJar chatBootJar bootJar --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest --no-daemon
+./gradlew appSeparationTest --no-daemon
+# 각 앱 실행 (필요한 환경 변수 주입 후):
+./gradlew coreBootRun --no-daemon
+./gradlew chatBootRun --no-daemon
+```
+
+앱별 설정은 `src/core/resources/application.yaml`, `src/chat/resources/application.yaml`이다.
+기존 단일 앱의 `application-dev/test/prod.yaml`을 새 앱에 복사하지 않아 역할별 DB 설정을 덮어쓰거나
+Chat에서 Core 비밀값을 요구하지 않는다. `.env.example`은 변수 예시이며 자동으로 로딩하지 않는다.
+
+| 설정 | 설명 |
+| --- | --- |
+| `CORE_DB_URL/USERNAME/PASSWORD`, `CHAT_DB_URL/USERNAME/PASSWORD` | 같은 schema의 앱별 접속 정보; 실제 DB 계정/권한 분리는 클라우드 조치 |
+| `CORE_DB_MAXIMUM_POOL_SIZE`, `CHAT_DB_MAXIMUM_POOL_SIZE` | 각각 기본 10; Core + Chat Task 수 × pool + migration/운영 여유분을 협의 |
+| `CORE_SERVER_PORT`, `CHAT_SERVER_PORT` | 각각 기본 8080; 같은 호스트에서는 서로 다른 포트 지정 |
+| `CORE_SHUTDOWN_TIMEOUT`, `CHAT_SHUTDOWN_TIMEOUT` | 각각 기본 30s; 프레임워크 종료 유예이며 WS drain 실측 완료를 뜻하지 않음 |
+| `AUTH_JWT_SECRET`, `LOCATION_TOKEN_SECRET`, JWT issuer/audience·허용 Origin | 양 앱의 토큰 계약 일치; Chat은 Hazelcast/AI 비밀값을 받지 않음 |
+| `CORE_FLYWAY_ENABLED` | 기본 false; 합의한 단일 migration 실행 주체만 명시적으로 활성화 |
+| `CHAT_RUNTIME_ENABLED` | 기본 false; 남은 공유 상태·복구 P1 완료 전 운영 진입 차단 |
+
+Chat은 Flyway 라이브러리·migration SQL을 패키징하지 않고 Hibernate `validate`만 수행한다.
+Core는 migration 원본을 보존하되 평상시 자동 실행을 하지 않는다. 두 앱은 이미 준비된 schema에
+접속해야 한다. DB 계정/권한·migration 실행 주체·SSM 매핑은 이번 코드 변경으로 생성되지 않는다.
+
+`GET /actuator/health/liveness`와 `/actuator/health/readiness`만 인증 없이 health를 확인할 수 있다.
+Core readiness는 기존 `authState` 조건을 유지한다. Chat readiness는 DB·런타임 활성화를 확인하고,
+기본 상태에서는 liveness 200·readiness 503과 채팅 경로 503을 반환한다. 이때 채팅 초기화·배치를
+생성하지 않는다. 상대 앱의 경로는 인증 처리 전에 404로 거절한다.
+
+현재 Chat 런타임 활성화는 **격리 검증 전용**이다. `CHAT_RUNTIME_ENABLED=true`와 `chat-isolated`
+profile을 함께 지정해야 하며 `prod`와 함께 사용하면 DB 연결 전에 기동을 거절한다.
+기존 JWT/사용자 확인만으로 Core의 폐기 sid를 확인했다고 간주하지 않기 위한 임시 전환 경계다.
+4단계에서 내부 인증 readiness를 연결했다. 이 활성화 제한의 교체와 Redis 실제 구독·공유 상태
+복구 조건은 남은 P1에서 연결해야 한다. 현 단계만으로 다중 Chat Task를 운영하지 않는다.
+
+```sh
+# 커밋된 소스로 빌드한다. 플랫폼은 ECS runtimePlatform과 맞춘다.
+docker build -f Dockerfile.core --build-arg BUILD_GIT_COMMIT="$(git rev-parse HEAD)" -t meomuneum-core:app-separation-check .
+docker build -f Dockerfile.chat --build-arg BUILD_GIT_COMMIT="$(git rev-parse HEAD)" -t meomuneum-chat:app-separation-check .
+./gradlew appSeparationTest -PappSplitImages=true --no-daemon
+```
+
+두 이미지는 JDK 25 builder/JRE 25 runtime과 UID/GID 10001을 사용한다. Java를 exec 형식으로
+실행해 종료 신호를 전달한다. `.dockerignore`는 소스·빌드 설정만 허용하며 `.git`, `.env`, 로컬
+`tools/`·문서·검증 결과를 build context에서 제외한다. 빌드 커밋과 소스 SHA를 JAR에 기록한다.
+이미지 검증은 위 로컬 태그와 Docker가 필요하다. 새 library/서비스의 자격 증명을 운영에서 가져오지 않는다.
+
+`appSeparationTest`는 격리 MySQL 9.7.0을 단일 시험 migrator로 준비하고 실제 JAR 프로세스를 실행한다.
+Core의 채팅 미초기화·API 경계·위치 토큰 발급, 차단 Chat의 부작용 없음, 단일 활성 Chat의
+REST 입장·STOMP 실제 구독/저장 ACK·세션 쿠키 미생성을 확인한다. Core 종료 후 Chat 유지 시험은
+앱 프로세스 분리 확인이며 Core 장애 중 인증 허용 정책을 확정하거나 검증한 것은 아니다.
+이미지 옵션은 컨테이너 기동·health·비루트 실행·Core FFmpeg/Chat 미포함을 추가 확인한다.
+실제 로그인/폐기·Redis 제품 전파·다중 서버 정원·운영 부하·ALB/ECS 배포는 후속 검증이다.
+
+전환은 후속 P1 구현·검증과 클라우드 협의가 끝난 뒤 짧은 채팅 중단을 두고 진행한다.
+기존 채팅 처리 중단과 연결/열람 경계 정리 → 단일 주체 migration → 새 Core/Chat 준비 → 라우팅 개방과
+smoke 확인을 맞춘다. 동시에 채팅 상태를 쓰는 구/신 앱이나 인증 Task 수 가정을 깨는 배포를 피한다.
+클라우드 팀에는 이미지/플랫폼, 경로 목록, 앱별 secret/DB pool, 두 health 경로와 실제 drain 측정값을 전달한다.
+롤백은 후속 데이터 변경과 호환되는 버전으로만 수행한다. 이번 단계 자체에는 DB migration이 없다.
+
+2026-10-26 최종 검증: 앱/JAR/이미지 통합 3개와 Redis 기반 회귀 4개 전부 통과·제외 0개.
+분리 Chat에서 실제 단절·동일 view 재연결 뒤 history/recovery의 저장 메시지 복원까지 확인했다.
+Spotless·Checkstyle main/core/chat/test·기존 및 분리 JAR 생성이 통과했다.
+일반 test는 738개 중 705통과·10실패·23조건부 제외이며 채팅은 197통과·4조건부 제외·실패0이다.
+실패 10개의 테스트 이름과 원인은 이전에 변경 전 dev에서도 재현한 프로필 이미지·약관·가입 실패와 같다.
+로컬 Linux arm64 이미지로 검증했으며 ECS 대상 플랫폼·운영 인증·AWS 배포 결과로 표시하지 않는다.
+증빙은 `build/app-separation-verification/`과 `build/app-separation/run-*/`에 보존한다.
+
+
+## Core 인증 연동 (P1 4단계)
+
+Core가 인증 원장(Hazelcast 세션 + 활성 사용자 DB)을 소유하고 Chat은 내부 API로 확인한다.
+Chat에 Hazelcast 클러스터·refresh 쿠키·로그인 서비스를 복제하지 않는다. JWT 서명/만료와 위치 토큰
+검증은 유지하고, **서명된 JWT라도 Core에서 폐기된 sid는 허용하지 않는다**.
+공개 REST 필드·STOMP destination·DB schema와 migration은 변경하지 않는다.
+
+| 변경 | 동작과 판단 근거 |
+| --- | --- |
+| Core 내부 검증 | `POST /internal/v1/auth/sessions/validate`; 1~100개의 `(user_id,sid)`를 엄격하게 검증. 사용자 소유·ACTIVE·idle/absolute 만료·활성 계정을 함께 확인해야 폐기/탈퇴가 반영된다. |
+| 서비스 인증 | 사용자 JWT와 별도인 32~256바이트 Bearer 현재/다음 키. TLS 인증서/호스트명 검증, 내부 경로 외부 차단은 클라우드에서 적용한다. 양 키의 동시 수용으로 순차 교체한다. |
+| 비용 상한 | 요청 32KiB·응답 64KiB·중복 sid/알 수 없는 필드 거절, bounded executor/queue·rate limit·전체 1초 deadline. Chat은 자동 재시도/redirect를 하지 않는다. |
+| REST·CONNECT | 매 요청 Core fresh 확인; 같은 pair의 진행 중 요청만 합친다. 기존 캐시를 사용해 새 요청의 Core 장애를 숨기지 않는다. |
+| 기존 연결 | 요청 시작 monotonic 시각 기준 `min(4초, 남은 세션 수명)`만 허용. 2초마다 최대100개씩 확인, 250ms watchdog. 긴 GC/대기 후에도 유효기간을 늘리지 않는다. |
+| 권한 검사 | SUBSCRIBE/SEND·DB transaction 시작/commit·메시지 전송 및 실행 대기열에서 꺼낼 때 재확인. JWT 자체의 만료도 검사한다. 이미 commit된 데이터나 OS에 전달한 frame을 회수하는 보장은 아니다. |
+| 폐기 전파 | Core의 실제 sid 폐기 지점에서 generation을 포함한 이벤트를 발행. Redis 제어 채널 알림은 빠른 경로이고 HTTP 주기 확인이 유실을 보완한다. 늦게 도착한 ACTIVE 응답은 폐기를 되돌리지 못한다. |
+| sid별 정리 | 해당 sid의 소켓부터 종료한 뒤 view/참여 정리; DB 실패는 재시도한다. 같은 계정의 다른 sid와 계정 history는 유지한다. 기존 단일 앱도 같은 sid 이벤트를 처리한다. |
+| 장애 구분 | INACTIVE는 REST401/소켓4100 계열의 인증 종료. Core 통신/서비스 키 오류·timeout은 REST503·기존 연결1013·readiness DOWN이며 영구 LEFT로 기록하지 않는다. 복구 후 기존 history/recovery로 재연결한다. |
+
+내부 API는 [OpenAPI](api/chat-core-auth.openapi.json), 이벤트 계약은 [JSON Schema](api/chat-core-auth-events.schema.json)에 기록했다. 인증 외 이벤트는 후속 P1 계약이며 이번 구현 범위가 아니다.
+모든 내부 API 응답은 `Cache-Control: no-store`다. 오류 상세·Bearer·비밀번호·sid를 로그/오류 본문으로
+전달하지 않는다. 사용자 INACTIVE 응답은 원래 요청 순서/쌍을 보존하며 저장소 실패는 전체503이다.
+Core 검증은 읽기 전용이며 refresh를 회전하거나 수명을 연장하지 않는다.
+
+폐기 이벤트는 `<env>:chat:control:v1`에 `AUTH_SESSION_REVOKED`로 발행한다.
+`schema_version=1`, UUID event_id, `core:<UUID>` producer_id, UTC occurred_at 및
+payload의 user_id/sid/session_generation/reason만 허용하고 epoch/토큰을 포함하지 않는다.
+Chat은 설정된 Core producer allowlist와 16KiB 상한을 검사한다.
+현재 발행 reason은 `SESSION_REVOKED`이며 로그아웃·개별 세션 삭제·비밀번호 변경·refresh 재사용의
+공통 revoke 경로를 사용한다. 정상 refresh 회전은 폐기 알림을 발행하지 않는다.
+자동 세션 만료와 사용자 비활성화는 Core HTTP 확인으로 차단한다.
+Core Redis 연결은 첫 알림 때 비동기로 열며 publish 실패가 Core 기동/로그아웃 성공을 되돌리지 않는다.
+
+| 앱 | 필수 설정/활성화 |
+| --- | --- |
+| Core 내부 API | `CORE_CHAT_AUTH_ENABLED=true`, `CHAT_AUTH_SERVICE_TOKEN_CURRENT`; 교체 중 `CHAT_AUTH_SERVICE_TOKEN_NEXT` |
+| Chat 검증 | `CHAT_CORE_AUTH_ENABLED=true`, `CORE_INTERNAL_BASE_URL` (HTTPS), `CORE_AUTH_SERVICE_TOKEN` (Core 현재/다음 키와 일치) |
+| Core 빠른 알림 | `CORE_AUTH_REDIS_ENABLED=true`, `CORE_AUTH_PRODUCER_ID`, `CORE_AUTH_REDIS_ENVIRONMENT/HOST/PORT/USERNAME/PASSWORD/SSL/CA_CERTIFICATE` |
+| Chat 알림 구독 | 기존 `CHAT_REDIS_ENABLED=true` 및 TLS/ACL 설정, `CHAT_AUTH_REDIS_ENABLED=true`, 쉼표로 구분한 `CORE_AUTH_PRODUCER_IDS` |
+
+기본값은 모두 비활성이다. 기존 앱·3단계 실행 경로와 호환되도록 전환을 명시적으로 선택한다.
+HTTP plaintext는 `chat-isolated`의 loopback/localhost 시험만 허용한다. 사설 CA는 Chat JVM trust store로
+제공한다. 내부 서비스 키는 JWT·위치 토큰·Redis 비밀번호와 구분하고 SSM/ECS에서 주입한다.
+교체 순서는 Core current+next 수용 → 모든 Chat next 적용/확인 → Core current 교체/old 제거다.
+Core/Chat Redis 사용자도 분리해 Core는 해당 제어 채널 PUBLISH만, Chat은 필요한 채널 구독만 허용한다.
+현재 클라우드가 보고한 plaintext/default 공유 Redis만으로 이 조건이 충족됐다고 보지 않는다.
+
+```sh
+./gradlew test --tests 'com.muse.meomuneum.chat.auth.*' --no-daemon
+# Docker + Testcontainers 필요. 운영 자격 증명/데이터를 사용하지 않는다.
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+인증 단위/계약 테스트 11개가 strict schema·키 교체·상한·전체 deadline·늦은 응답 경쟁·transaction
+rollback·전송 대기열 가드를 확인한다. `coreAuthIntegrationTest`는 실제 Core/Chat JAR 프로세스,
+실제 Hazelcast 세션, 격리 MySQL9.7.0/Redis8.10.2와 합성 TLS relay를 사용한다.
+실제 Core logout 후 두 Chat을 동시에 관찰해, 한쪽은 Core HTTP를 막은 상태에서 Redis 알림으로,
+다른 쪽은 알림 구독 없이 polling으로 종료되는 것을 확인했다. 다른 sid는 유지됐다.
+TLS 신뢰/호스트명 거부·현재/다음 키·정상 refresh 후 기존 access JWT·Core503/401을 서비스503으로
+구분·장애1013·readiness DOWN·재연결 history 복원을 포함한다.
+최종 격리 시험의 두 연결 종료까지 2,112ms였다. 이는 운영 부하에서의 5초 SLO 실측이 아니다.
+증빙은 `build/core-auth-integration/run-1793015716538/result.json`과 각 역할 로그에 보존한다.
+
+Core readiness의 기존 authState는 유지하며 Chat readiness에 `coreSessionAuth`를 추가했다.
+남은 공유 정원·owner/epoch·제품 메시지 relay·Redis 복구·drain이 완료되지 않았으므로
+`CHAT_RUNTIME_ENABLED`의 격리 환경 제한과 prod 거부를 유지한다. 두 Chat으로 수행한 시험은
+인증 전파만 검증한 것으로 전체 제품의 다중 서버 정합성/운영 개방 완료를 뜻하지 않는다.
+클라우드 후속 사항은 내부 API TLS/신뢰 CA·서비스 키 주입/교체·외부 `/internal/*` 차단,
+Core Redis SG 접근·TLS 및 앱별 ACL, 운영 부하에서의 deadline/5초 차단 측정이다.
+
+최종 일반 회귀는 749개 중 719통과·7실패·23조건부 제외다. 실패 7개는 변경 전 dev에서도 재현한
+프로필 이미지 테스트의 `AuthService` fixture 누락과 동일하며 새 실패는 없다. 기존에 실패했던
+약관/가입 3개는 이번 실행에서 통과했다. 채팅 회귀 212개는 208통과·4조건부 제외·실패0이다.
+인증 통합1개·Redis4개 전부 통과했고 앱 분리 검증은 JAR2개 통과·이미지1개 조건부 제외다.
+이번 단계는 실제 역할 JAR로 검증했으며 3단계 Docker 이미지 재빌드/운영 배포를 수행하지 않았다.
+증빙과 기존 dev 실패 이름 대조는 `build/core-auth-verification/summary.json` 및 XML에 보존한다.
+
+
+## 전역 정원·참여 상태 (P1 5단계)
+
+여러 Chat Task가 같은 방을 처리할 때 로컬 Map의 인원을 합산하지 않고 **MySQL 원장의 유효 view를
+계정별로 중복 제거**해 정원을 판단한다. Redis는 공유 투영이며 자리·권한을 승인하지 않는다.
+Redis의 유실/오래된 snapshot이 계정 정원1000을 늘리는 근거가 되지 않도록 하기 위한 선택이다.
+
+| 항목 | 구현·판단 근거 |
+| --- | --- |
+| DB 원장 | 추가형 migration의 `chat_runtime_control`, `chat_runtime_tasks`, `chat_room_runtime`, `chat_view_runtime`. 기존 membership/view/history는 유지하고 과거 membership을 접속자로 복원하지 않는다. |
+| 정원 확보 | READ COMMITTED에서 control → Task UUID순 SHARE → user → room ID순 UPDATE 잠금. 방 잠금 후 유효 view의 DISTINCT user를 조회하고 같은 transaction에서 예약을 저장한다. 별도 account-seat 물리 테이블을 중복 원장으로 두지 않는다. |
+| 상태 | RESERVED/CONNECTED/GRACE/OFFLINE/LEFT. 유효 예약·유예30초와 유효 CONNECTED가 계정 한 자리, 실제 구독 준비가 끝난 CONNECTED만 화면 인원이다. DB UTC의 `now < deadline`을 사용한다. |
+| 소켓/소유권 | REST에서 받은 view로 어느 Task에도 CONNECT할 수 있다. JWT sid와 membership sid를 직접 비교하고, 유효 owner가 있는 view의 중복 claim을 거절한다. Task UUID·소켓 token·증가 owner_generation을 기록하고 DB 잠금 안에서 현재 소유권을 재확인한다. |
+| 단절/재연결 | 정상 관측한 단절만30초 GRACE와 owner release. 이전 소켓의 지연 disconnect는 새 claim을 변경하지 않는다. 만료/OFFLINE에서 새 입장 자리를 다시 검사한다. |
+| 탭/sid 격리 | 탭 퇴장은 그 view만 LEFT. 지역 이동·로그아웃은 해당 sid만 종료한다. 목적지가 만원이어도 확인된 이전 방 퇴장을 commit하며 다른 sid는 유지한다. |
+| Task lease | DB heartbeat5초/lease15초와 요청 시작 기준 보수적 로컬14초 deadline. 만료한 동일 Task ID는 되살리지 않고 새 UUID로 등록한다. 만료 Task를 FENCED로 바꾸며 해당 열린 구간은 마지막 verified 경계로 닫는다. |
+| 만료 | 1초 정리 작업이 물리적으로 늦어져도 deadline/lease가 지난 view는 정원 계산에서 즉시 제외한다. 만료 후 재연결이 과거 부재 구간을 연장하지 않는다. |
+| Redis 투영 | 환경/room hash tag/epoch namespace에 인원·view 상태를 기록한다. 방과 view의 DB version을 각각 Lua CAS해 역순 갱신을 막고24시간 TTL을 사용한다. 원문 메시지·인증 토큰·소켓 객체는 넣지 않는다. |
+| 실패 | 잠금/statement 초기1초·transaction2초 예산과 commit 전 Task/인증 확인. timeout은 전체 rollback 후503. DB commit 후 투영 실패는 예약을 가짜 rollback하지 않고 Task를 차단·소켓1013/readiness DOWN으로 처리한다. |
+
+설정은 Chat의 `CHAT_DISTRIBUTED_PRESENCE_ENABLED=true`로 명시적으로 선택한다(기본false).
+`CHAT_CORE_AUTH_ENABLED=true`, `CHAT_REDIS_ENABLED=true`와 namespace·접속 정보가 필요하다.
+`CHAT_RUNTIME_ENABLED`의 **chat-isolated 전용·prod 거부를 유지**하므로 이번 작업만으로 운영 Task를
+증설하지 않는다. 기존 단일 앱과 분산 모드가 같은 채팅 DB 상태를 동시에 수정하지 않게 한다.
+공개 REST 경로/필드·STOMP destination은 유지한다. 분산 모드 CONNECT에는 최신 REST 입장에서 발급한
+`view_session_id`가 필요하며 다른 탭의 view를 임의로 선택하지 않는다.
+
+새 Task는 다른 정상 Task의 열린 구간을 재시작으로 닫지 않는다. 주기 checkpoint는 DB 소유권/lease를
+확인한 transaction에서만 수행한다. 분산 모드 조회는 임의로 now까지 checkpoint하지 않고 마지막
+검증 경계를 사용한다. **다른 Task로 배정된 REST history/recovery의 현재 view 권한 확인, 메시지와
+구간의 room_seq 경계 매핑·전파는 후속6/7단계다.** 이번 room_seq는 상태/투영 버전이며 완성된
+분산 메시지 순서 계약으로 표시하지 않는다. Redis 상태 유실의 전역 epoch 복구·outbox/relay·drain도
+후속이다. DB/Redis 실패로 차단된 Task는 이 단계에서 자동 개방하지 않으며 재기동/후속 복구 절차가 필요하다.
+
+새 SQL은 `V20261027002610__create_chat_participation_runtime.sql`이다. 기존 적용 SQL은 변경하지 않는다.
+실제 운영 적용 전에 지정한 단일 migrator·Chat 계정의 네 테이블 CRUD/locking read 권한·DB 연결 수를
+클라우드와 맞춘다. Core는 migration 원본을 패키징하지만 평소 Flyway=false, Chat은 migration을 실행하지 않는다.
+전환은 채팅 중단·구 처리 종료 → 단일 migration → 새 앱 확인 순서다. rollback도 채팅을 중단하고
+새 영속 상태와 호환되는 버전으로 수행한다. 테이블 삭제나 구 단일 서버로 단순 재라우팅은 자동 수행하지 않는다.
+
+Redis Chat ACL은 기존 권한에 환경별 `~<env>:chat:state:*`와 `EVAL/HGET/HSET/EXPIRE`가 필요하다.
+Core는 상태 key 권한을 받지 않는다. TLS·앱별 사용자/secret·Core 망 허용 등 기존 클라우드 준비 사항은
+여전히 별도이며 보고된 default 공유/plaintext 구성으로 충족됐다고 보지 않는다.
+
+```sh
+# Docker + Testcontainers, 합성 자격 증명/격리 DB만 사용한다.
+./gradlew chatParticipationTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+`chatParticipationTest`는 실제 MySQL9.7.0/Redis8.10.2로 상태 전이·999→마지막 자리 동시 경합,
+동일 계정 중복 제거·다른 sid 거절·탭 퇴장·이동 목적지 만실·만료 경계·옛 소켓/Task 차단,
+실제 DB lock timeout rollback·commit 후 투영 실패·실제 Lua 역순/키 유실을 검증한다.
+추가로 실제 Core/두 Chat JAR를 TLS로 연결해 REST/WS 교차 배정·live view 이후 새 Task 기동·폐기/장애/history
+복구를 확인한다. 계정 상태999개 fixture와 동시 요청 검증이며 실제1000 WebSocket 부하/SLO 시험은 아니다.
+
+2026-10-27 최종 검증: 전역 참여7개 + 실제 Core/Chat 프로세스1개 = `chatParticipationTest`8개 전부 통과.
+기존 인증 통합1개·Redis4개 전부 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+전체 회귀749개는718통과·8실패·23조건부 제외였다. 실패는 이전 dev에서도 재현한 프로필 이미지
+AuthService fixture 누락7개와 인증 scheduler 진단 로그 집계1개다. 후자는 분리 재실행에서 통과했으며
+그때 함께 실행한 채팅212개도208통과·4조건부 제외·실패0이었다. 전체 회귀 최초 실패를 삭제하거나
+전체green으로 표시하지 않는다. 인증 서비스/해당 진단 테스트 소스는 이번에 변경하지 않았다.
+최종 Spotless·Checkstyle main/core/chat/test·세 JAR 생성 통과. 증빙은
+`build/participation-verification/summary.json`과 full-test/targeted-regression/각 전용 task XML이다.
+이번 Docker 이미지 재빌드·push·운영 migration·AWS/배포는 수행하지 않았다.
+
+
+## 탭 소유권·열람 구간·복구 분산 처리 (P1 6단계)
+
+REST와 WebSocket이 서로 다른 Chat Task에 배정돼도 같은 권한·열람 경계를 사용한다.
+로컬 소켓 등록부는 실제 연결을 찾는 용도로 유지하고, **현재 view의 권한과 과거 열람 범위는 MySQL 원장**에서
+확인한다. 원격 REST 요청이 소켓 소유자의 접속 증거를 대신 만들지 않도록 하기 위한 선택이다.
+아래 내용은 앞선5단계 문서의 후속6단계 설명을 갱신한다. 제품 메시지 relay는 여전히7단계다.
+
+| 변경 | 동작과 판단 근거 |
+| --- | --- |
+| 현재 탭 소유권 | Task UUID·소켓 token·claim 때 캡처한 generation을 함께 검증한다. REST는 현재 view의 계정/membership/sid/epoch/CONNECTED·소유 Task lease를 공유 DB에서 확인한다. 다른 Task의 로컬 소켓 등록이 없다는 이유로 정상 조회를 거절하지 않는다. |
+| 방 순서와 시간 | 메시지 저장·구독·checkpoint·종료가 기존 control/Task/user/room 잠금 순서와 같은 transaction을 사용한다. 메시지에는 room_seq와 DB UTC를 부여한다. ID가 발급된 시점과 commit 순서의 역전, Task 시계 차이로 부재 구간이 열리는 것을 막는다. |
+| 열람 구간 | 소유자만 checkpoint를 갱신한다. 원격 조회는 열린 구간의 마지막 verified 경계까지만 읽는다. 기존5초 checkpoint 때문에 최신 메시지의 REST 노출이 그 주기만큼 늦을 수 있으며, REST 조회가 이를 임의로 확장하지 않는다. |
+| history/recovery | history는 같은 계정·방의 과거 유효 구간 합집합이므로 재로그인 후에도 복원한다. recovery는 현재 view의 구간만 사용한다. 과거 구간을 읽으려 해도 현재 탭/sid의 정상 권한은 먼저 필요하다. 다른 탭·sid의 현재 권한으로 대체하지 않는다. |
+| 고정 페이지 | 최초 조회 시 DB snapshot에 열람 구간·room_seq·as_of를 복사한다. 다음 페이지 중 다른 탭의 checkpoint가 갱신돼도 그 snapshot 범위가 늘지 않는다. 각 페이지는 현재 권한·DB 만료·24시간 보존 범위를 다시 검사한다. |
+| cursor | 서명에 기존 필드와 snapshot ID/epoch/generation을 포함하고 DB snapshot과 대조한다. 다른 계정/방/view/mode, 이전 generation/epoch, 만료 snapshot은 거절한다. 분산 snapshot의 만료는 DB UTC가 기준이며 JVM 시각으로 대체하지 않는다. |
+| 단절과 강제 종료 | 관측한 단절만30초 유예를 만든다. 기한과 같은 시각은 만료다. Task 강제 종료처럼 단절 증거가 없으면 lease 만료 후 마지막 verified 경계에서 닫고 OFFLINE으로 둔다. 다른 Task의 새 claim은 새 generation/구간으로 시작하며 부재를 소급해서 열지 않는다. |
+| 늦은 전송 | outbound enqueue/handler에서 현재 소유권과 메시지 room_seq가 현재 구독 구간에 속하는지 재확인한다. unsubscribe 후 새 구독으로 늦게 도착한 과거 frame을 전달하지 않는다. |
+| 물리 삭제 | 메시지가24시간 정리돼도 기존 verified ID 경계가 역행하지 않는다. 실제 메시지 내용은 기존 테이블에만 저장하고 순서 테이블에는 식별자만 기록한다. |
+
+공개 REST 경로·응답 필드·STOMP destination은 유지한다. cursor는 opaque 값이지만 **분산 모드 전환 또는
+새 소유권 획득 후에는 이전 cursor를 이어 쓰지 않고 재연결 ready/fresh 조회로 시작**해야 한다.
+연결 유지 중 신규 FE 자동 누락 복구/sync는 P2이며 이번에 추가하지 않았다.
+
+추가형 migration은 `V20261027131057__add_distributed_chat_read_boundaries.sql`이다.
+기존 migration/열람 구간은 삭제하거나 다시 작성하지 않고, interval에 환경/epoch/owner/순서 경계를 추가한다.
+`chat_message_order`는 방 메시지 순서, `chat_query_snapshots`와 `chat_query_snapshot_ranges`는 고정 페이지 범위를
+저장한다. snapshot은24시간 뒤 만료되며 Task별60초 정리 작업이 한 번에 최대1000개 header와 하위 범위를 삭제한다.
+정리가 늦어져도 조회 경로의 만료 검사가 권한을 연장하지 않는다.
+
+설정은 기존 `CHAT_DISTRIBUTED_PRESENCE_ENABLED=true`를 사용한다. 기본false·Core 인증/Redis 의존과
+`CHAT_RUNTIME_ENABLED`의 chat-isolated 전용·prod 거부를 유지한다. 이 단계만으로 운영 다중 Task를 개방하지 않는다.
+분산 receipt/정책/outbox/PubSub 제품 전파, Redis 유실의 전역 epoch 복구, 배포 drain은 남은 P1 작업이다.
+
+클라우드 협의와 전환 절차:
+
+1. 채팅 일시 중단 → 기존 처리 Task 종료 → 지정한 단일 migrator로 새 SQL 적용 → 새 앱 격리 검증 순서를 지킨다.
+   구 단일 앱과 새 분산 앱이 같은 상태를 동시에 쓰지 않는다. Chat 앱 자체는 Flyway를 실행하지 않는다.
+2. Chat DB 계정에 새 세 테이블 CRUD와 기존 interval/room runtime 추가 열의 읽기·쓰기/locking 권한이 필요하다.
+   snapshot의 페이지 수·구간 수에 따른 DB 저장량/청소 속도·풀 예산을 확인한다. 읽기도 권한 잠금과 snapshot 쓰기가
+   필요하므로 read replica/읽기 전용 DB 계정으로 보내지 않는다.
+3. 최초 room 잠금에서 기존 메시지를 ID순 room_seq에 매핑하고 기존 interval ID 경계를 연결한다.
+   원래 ID/시각/종료 경계는 유지하며 매핑 완료 표시와 같은 transaction으로 commit한다.
+   방별 메시지/구간 수가 큰 경우 기존1초 statement/2초 transaction 예산 안에 들어오는지 전환 전 측정한다.
+   초과하면 rollback·서비스503이며 자동으로 권한을 넓히거나 예산을 무제한 늘리지 않는다.
+4. rollback도 채팅을 중단하고 새 DB 상태와 호환되는 버전을 선택한다. 테이블 삭제나 구 cursor 재사용으로 우회하지 않는다.
+
+검증 명령은 앞선5단계와 같다. `chatParticipationTest`는 실제 MySQL/Redis 도메인13개와 실제 Core/두 Chat JAR의
+프로세스1개로 구성된다. 원격 history/recovery/by-client-id, 원격 checkpoint 금지, 고정 페이지·다른 epoch/generation·
+DB 만료·JVM 시계 차이, 재로그인 계정 합집합·부재·24시간, 메시지 commit/구독 경합, 지연 outbound,
+기존 구간 매핑·물리 삭제 후 경계 보존, Task lease 만료 복구를 포함한다.
+격리 fixture와 제한된 경합 시험이며 운영1000 WebSocket 부하/SLO·운영 migration 완료를 의미하지 않는다.
+
+
+2026-10-27 검증 결과: 전용 분산 시험14개, 기존 Core 인증1개·Redis4개는 전부 통과했고,
+앱 분리 JAR2개 통과·이미지1개는 조건부 제외다. 실제 소유 Chat 프로세스를 강제 종료해
+lease 만료→마지막 verified 경계 폐쇄/OFFLINE→조회403→다른 Task 재연결/조회200도 확인했다.
+전체 회귀749개는717통과·9실패·23제외였다. 이전 단계에서도 재현한 프로필 이미지 AuthService
+fixture 누락7개와 Hazelcast 진단 로그 집계/채팅 차단 각1개이며, 후자2개를 포함한 분리 재실행은
+213개 중209통과·4제외·실패0이었다. 최초 전체 실패를 보존하고 전체green으로 표시하지 않는다.
+관련 없는 인증/프로필 이미지 소스는 수정하지 않았다. Spotless·Checkstyle main/core/chat/test·세 JAR를
+검증하며 증빙은 `build/distributed-view-verification/summary.json`과 각 task XML,
+`build/core-auth-integration/run-*/cross-task-read.json`에 보존한다.
+Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 않았다.
+
+
+## 메시지 저장·Redis 전파 (P1 7단계)
+
+여러 Task에서 전송해도 메시지·정책·재시도 결과가 일치하도록 DB를 기준으로 처리한다.
+**DB commit은 저장 성공, Redis publish는 참조 알림 발행**이다. 어느 쪽도 모든 사용자의 수신 완료를 의미하지 않는다.
+발신 Task도 직접 방송하지 않고 다른 Task와 같은 Pub/Sub 경로로 `CHAT_MESSAGE`를 받는다.
+개인 `CHAT_ACK`만 원 요청 소켓에 보내므로 다른 탭의 ACK로 전송 상태를 잘못 바꾸지 않는다.
+
+| 항목 | 구현과 판단 근거 |
+| --- | --- |
+| 원자적 저장 | 기존 control/Task/user/room 잠금 안에서 메시지·room_seq·전송 제한·receipt·outbox를 같은 transaction으로 commit한다. Redis·Core·WS 네트워크 호출은 DB transaction 밖에서 수행한다. rollback이면 정책 횟수와 전파 알림도 남지 않는다. |
+| 재시도 | 환경/user/client UUID receipt를 조회해 같은 membership·방·trim한 원문 HMAC이면 원래 message_id로 ACK한다. 카운터·메시지·outbox를 다시 생성하지 않는다. 내용/문맥 충돌은 CLIENT_ID_CONFLICT, 보존 만료는 RETRY_UNAVAILABLE이다. 현재 socket 권한은 재시도에도 필요하다. |
+| 전송 제한 | 계정 전역1초 간격과 membership별 동일 원문 세 번째 거절을 DB로 유지한다. 다른 Task·재시작·정상 재연결·키 교체로 초기화하지 않는다. 분산 모드에서 임의의 짧은 minimum-interval 설정은 거절한다. |
+| 내용 지문 | 원문과 무키 SHA digest는 영속 저장하지 않는다. 별도 HMAC-SHA256 key ring의 ID와 fingerprint만 저장하며 공개 메시지에는 마스킹 결과만 저장한다. 마스킹 결과가 같아도 서로 다른 원문은 다른 지문이다. |
+| outbox claim | 방별 DB token·5초 lease로 가장 이른 pending room_seq를 claim하고 DB commit 후 발행한다. 발행 직전 token/만료/epoch/Task를 재확인하며 성공 표시는 같은 token 조건으로만 한다. 늦은 이전 worker가 새 claim을 완료하거나 해제하지 못한다. |
+| 재발행 | poll200ms·회당 최대100건·bounded worker/queue. 실패는0.5→1→2→최대5초와 jitter로 다시 시도한다. 발행 후 성공 표시 전 장애는 같은 event_id 재발행이 가능하다. 구독자 수0은 발행 성공일 수 있으며 사용자 수신 성공으로 해석하지 않는다. |
+| 참조 이벤트 | 기존 schema_version=1의 CHAT_MESSAGE_CREATED를 사용한다. event_id/producer/UTC occurred_at/epoch/room_id/room_seq/message_id만 보내고 본문·nickname·토큰은 보내지 않는다. 수신은16KiB·필드·중복 JSON키·UUID·safe integer·채널 일치·지원 버전을 엄격히 검사한다. |
+| 발행자 검증 | DB Task 등록과 같은 환경/epoch가 동적 Chat producer allowlist다. committed outbox의 event_id/producer/방/순서/메시지/시각과 모두 일치해야 한다. 종료된 발행 Task가 남긴 commit 알림을 다른 worker가 발행할 수 있어 원 발행자의 현재 ACTIVE 여부로 과거 저장을 지우지 않는다. Redis ACL이 서비스 인증 경계이며 producer 문자열 자체는 인증 수단이 아니다. |
+| 수신 권한 | Task마다 마스킹된 DTO를 한 번 읽고, 로컬 후보 socket의 최신 DB 권한을 묶음 조회한다. 활성 계정/제재·현재 epoch/소유권/lease·CONNECTED·구독 시작 순서·Core 확인·JWT 만료를 검사한다. 로컬 처리 직렬화와 기존 outbound guard가 실제 적재/handler 때도 재검사한다. |
+| 중복·역순 | 최대10000항목·10분의 로컬 event/message LRU로 중복을 줄이고 최종 화면 병합은 기존 message_id를 사용한다. 더 높은 room_seq를 먼저 받았어도 낮은 순서의 다른 메시지를 버리지 않는다. room_seq 차이를 누락 메시지 수로 해석하지 않는다. |
+| 실패 | 명령 또는 Pub/Sub 단절을 알림 callback에서 즉시 latch해 새 동작/적재를 막는다. readiness DOWN·WS1013으로 정리하며 큐 포화도 조용히 버리지 않고 서비스 중단으로 처리한다. 재접속 ACK만으로 자동 재개하지 않는다. 전역 marker/epoch 복구·자동 재개는 후속8단계다. |
+
+추가형 `V20261027142734__create_chat_message_delivery_state.sql`은 `chat_send_policy`,
+`chat_send_repetitions`, `chat_message_receipts`, `chat_message_outbox`와 방별 dispatch token/deadline을 추가한다.
+기존 migration·원문·열람 구간을 변경하지 않는다. receipt는 메시지의24시간 보존까지 유지하며,
+끝난 membership의 반복 지문·만료 receipt/outbox를60초마다 최대1000개씩 정리한다.
+메시지가 만료되거나 epoch가 지난 pending 알림은 EXPIRED로 끝내고 메시지 본문을 DLQ에 복제하지 않는다.
+새 snapshot/조회 권한을 부여하거나 계정 전송 정책을 복구 때 초기화하지 않는다.
+
+설정·호환성·클라우드 전달 사항:
+
+- `CHAT_MESSAGE_RELAY_ENABLED=true`는 기존 distributed presence/Core auth/Redis가 준비된 격리 Chat에서만 사용한다.
+  기본false와 기존 chat-isolated 전용·prod 거부를 유지한다. 전체 P1/운영 다중Task 개방 완료가 아니다.
+- `CHAT_MESSAGE_FINGERPRINT_KEYS`는 `key-id:base64-secret`을 쉼표로 연결한1~8개 key ring이다.
+  각 secret은32바이트 이상이며 첫 항목이 새 기록에 사용된다. JWT/서비스 Bearer/Redis 비밀번호와 별도다.
+  `.env.example`에는 실제 키를 넣지 않는다. 클라우드는 별도 SSM SecureString/ECS 주입·동일 ring 배포를 준비한다.
+- 키 교체는 모든 Task에 기존+새 키 검증 능력을 먼저 배포한 뒤 새 키를 첫 항목으로 승격한다.
+  구키는 해당 receipt가 모두 만료되고 해당 지문을 가진 membership이 모두 끝나며 구키를 쓰는 Task도 종료된 뒤 제거한다.
+  미보유 key ID가 남아 있으면 시작 또는 SEND를 거절한다. 원문 없이 기존 지문을 새 키로 변환하거나 반복 제한을 초기화하지 않는다.
+- Chat DB 계정에 새 네 테이블 CRUD와 room runtime dispatch 열/locking 권한이 필요하다.
+  Chat Redis ACL에는 기존 채널 범위의 PUBLISH가 추가로 필요하다. Core에 Chat 방/상태 권한을 확대하지 않는다.
+- 공개 REST·STOMP 경로와 기존 `type/data`, ACK의 `membership_id/message`를 유지하고 선택 필드
+  `deduplicated`만 추가한다. [wire schema](api/chat-message-delivery.schema.json)와 기존 Redis schema를 따른다.
+  저장 ACK 유실 시 같은 UUID를 유지한다. client UUID가 충돌하는 기존 메시지에 새 receipt를 추정 생성하지 않으며,
+  현재 권한을 통과한 기존 by-client-id/history로 확인한다.
+- 전환은 채팅 중단·구 Task 종료 → 단일 migrator → 동일 key ring·ACL 준비 → 격리 검증 순서다.
+  구 단일 앱과 동시에 같은 상태를 쓰거나 구 로컬 정책으로 재라우팅하지 않는다. rollback은 새 DB 상태와 호환되는 버전으로 수행한다.
+- 방별 DB 저장/claim 비용, 수신 Task당 조회 및 socket별 outbound 재검사, 큐/청소 처리량·DB 풀/연결 예산을
+  운영 부하로 측정해야 한다. 이 단계의 제한된 경합 시험은 실제1000소켓·운영 처리량/SLO 검증이 아니다.
+- 분산 퇴장·제재/상태 알림, 전역 epoch 복구·배포 drain은 후속 P1이다. 기존 DB 권한/소유권·인증 polling은 유지한다.
+  연결 유지 중 누락 자동 sync는 P2이며 기존 재연결 history/recovery를 사용한다.
+
+검증 명령:
+
+```sh
+./gradlew chatMessageRelayTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+`chatMessageRelayTest`는 실제 MySQL/Redis 도메인19개와 실제 Core/두 Chat JAR/TLS 프로세스1개다.
+같은 UUID의 두 Task 경합·owner 변경 재시도·다른 내용/문맥 충돌·계정 간격/세 번째 반복·HMAC 키 교체,
+저장 중 및 outbox insert 실패 rollback·commit 후 pending 보존·claim lease 만료/이전 token 거절·재시도/만료,
+실제 Redis 중복·역순·잘못된 참조/구epoch·새 구독 부재 경계를 검증한다.
+실제 두 Chat은 발신/상대 Task WS 전달·원 소켓 ACK·다른 Task 재시도 ACK·Core 폐기/장애·소유 Task 강제 종료/history,
+명령 PING 정상 중 Pub/Sub만 강제 종료→1013/readiness DOWN을 검증한다.
+분산 모드 저장·만료 정리도 DB UTC를 사용하며 Task 시계가48시간 빨라도 유효 메시지를 조기 삭제하지 않는다.
+SQL 오류 주입용 trigger는 binlog를 끈 격리 테스트 DB에서만 사용한다. 운영 DB 설정을 바꾸지 않는다.
+
+
+2026-10-27 최종 검증: 메시지 전용20개 전부 통과·제외0. 기존 Core 인증1개·Redis4개 전부 통과,
+앱 분리 JAR2개 통과·이미지1개 조건부 제외다. 전체 회귀749개는719통과·7실패·23조건부 제외였다.
+실패7개는6단계 보존 증빙과 이름이 동일한 프로필 이미지 AuthService fixture 누락/동일 context 실패다.
+최종 채팅 회귀212개는208통과·4조건부 제외·실패0이다. 전체green으로 표시하지 않고 최초 full XML도 보존한다.
+초기 trigger fixture 권한·하네스 임시 포트 경합·코드 줄 길이 실패는 보완 후 재실행으로 해소했다.
+wire schema는 기존 FE의 AJV6.15.0으로 compile하고 정상4/오류1 예시를 확인했으며 FE 코드는 수정하지 않았다.
+Spotless·Checkstyle main/core/chat/test·세 JAR를 확인하며 증빙은
+`build/message-relay-verification/summary.json`과 각 task XML,
+`build/core-auth-integration/run-*/message-relay.json`·`pubsub-interruption.json`이다.
+Docker 이미지 재빌드·push/PR·운영 migration·운영 Redis/AWS/배포는 수행하지 않았다.
+
+
+## 퇴장·지역 이동·인증 폐기 전파 (P1 8단계)
+
+2026-10-27 사용자 요청 범위는 여러 Chat Task에 연결된 탭의 종료 전파다.
+7단계의 “후속8단계” 표현 중 전역 Redis marker/epoch 복구·자동 재개·배포 drain은 이번 범위에 포함하지 않는다.
+기존 기록은 당시 이력으로 보존한다. 연결 중 신규 자동 sync는 P2이며 기존 재연결 history/recovery를 유지한다.
+
+| 결정 | 구현과 판단 근거 |
+| --- | --- |
+| 일반 퇴장은 해당 탭만 종료 | DB view에 LEFT 사유를 기록하고 CHAT_VIEW_ENDED 참조를 전파한다. 마지막 탭일 때만 membership도 끝낸다. 다른 탭·다른 sid를 닫으면 기존 사용자 계약을 위반한다. |
+| 지역 이동·Core 인증 폐기는 해당 sid의 참여 종료 | 기존 REGION_CHANGED / SESSION_REVOKED 진입점에서 CHAT_MEMBERSHIP_ENDED를 생성한다. 새 membership ID로 재입장한 소켓은 늦은 구 알림으로 닫지 않는다. 다른 sid는 유지한다. |
+| 상태 변경과 알림 예약은 한 DB transaction | 종료·열람 구간 닫기·사유·room_seq·outbox를 함께 commit한다. outbox 저장이 실패하면 종료도 rollback한다. DB만 변경되고 전파 예약이 사라지는 틈을 막는다. |
+| Redis는 종료 사실의 알림 | 구독 Task는 현재 epoch·채널·등록 producer·DB outbox의 정확한 canonical body와 실제 종료 상태를 확인한다. 알림 자체로 인증·참여 권한을 생성하지 않는다. |
+| 알림 유실은 독립 DB 조회로 보완 | 기존 참여 coordinator의250ms 조회에서도 종료 사유를 읽고 로컬 소켓을 정리한다. 조회 결과와 현재 소켓 ID/소유권을 다시 비교해 재연결 직후의 새 소켓을 보존한다.250ms는 무부하 조회 주기이며 종료 SLO 보장이 아니다. |
+| 인원 알림은 최신 DB 스냅샷 전달 | CHAT_PRESENCE_CHANGED는 room_seq를 가진 hint다. 수신 시 최신 DB 인원·version을 읽으므로 늦은 알림의 오래된 숫자로 되돌리지 않는다. 메시지 저장/checkpoint마다 인원 outbox를 만들지 않는다. |
+
+Core AUTH_SESSION_REVOKED는 기존 Core producer allowlist·sid 검증·HTTP 확인 fallback을 그대로 사용한다.
+Chat 제어 소비자는 Core 이벤트를 대신 승인하지 않는다. Core 일시 장애는 기존1013 일시 중단이며
+SESSION_REVOKED 영구 종료로 바꾸지 않는다. 기존 ACCESS_RESTRICTED 종료 경로의 사유는 보존하지만
+새 관리자 제재 정책·CHAT_ACCESS_INVALIDATED 생산자는 추가하지 않는다.
+
+로컬 종료 시 view/presence뿐 아니라 인증 문맥·소켓 owner generation claim도 지운다.
+뒤늦은 WebSocket disconnect가 이미 종료된 DB 참여를 다시 변경하지 않으며 계정 history의 유효 구간은 보존한다.
+마지막 탭의 DB 사유 LEFT는 membership 이벤트에서 기존 스키마의 LAST_VIEW_LEFT로 전달한다.
+기존 wire4100 CHAT_LEFT / CHAT_LOGGED_OUT,4101 CHAT_BANNED와 공개 API 경로를 유지한다.
+활성 ban 조회는 deleted_at·created_at·expires_at을 함께 검사한다.
+
+메시지와 제어 참조는 기존 chat_message_outbox 및 방별 dispatch claim을 공유한다.
+한 room_seq에 view/member/presence가 함께 생길 수 있어 순서 인덱스를 비고유로 확장했다.
+같은 seq 내부의 알림 순서는 권한의 근거가 아니며 소비자는 DB와 정확한 대상 ID를 재검사한다.
+기존200ms poll·100개 round·5초 claim·재시도·24시간 만료·bounded worker/queue·실패 시1013/readiness DOWN을 공유한다.
+CHAT_VIEW_ENDED / CHAT_MEMBERSHIP_ENDED는 기존 control 채널,
+CHAT_PRESENCE_CHANGED는 기존 room 채널을 쓴다.16KiB 상한·엄격한 필드/UUID/정수·중복 JSON key 거부를 적용한다.
+메시지 원문·토큰·새 Redis 계정 또는 새 비밀키는 추가하지 않는다.
+중복 event ID 캐시는 Task당 최대10000개/10분이며 캐시 만료 뒤에도 DB 상태 검사로 범위를 제한한다.
+
+설정·전환·클라우드 협의:
+
+- CHAT_CONTROL_EVENTS_ENABLED 기본false. true에는 CHAT_MESSAGE_RELAY_ENABLED와 기존 distributed presence/Core auth/Redis가 필요하다.
+  CHAT_RUNTIME_ENABLED의 chat-isolated 전용·prod 거부를 유지한다. 운영 다중Task 활성화 완료가 아니다.
+- 추가형 V20261027153823__extend_chat_outbox_for_control_events.sql이 view/member end_reason,
+  outbox event_type/event_body·nullable message_id·인덱스와 CHECK를 추가한다. 기존 SQL과 history를 보존한다.
+  새 앱은 flag가 꺼져 있어도 end_reason 열을 사용하므로 migration이 먼저 필요하다.
+- 구7단계 worker는 제어 outbox를 읽을 수 없다. 채팅 중단 → 구 Chat 전부 종료 → 단일 migrator →
+  모든 Chat에 호환 버전/동일 설정 배포 → 격리 검증 후 개방 순서이며 구버전과 혼합 rolling 운영하지 않는다.
+  rollback도 확장 schema/제어 row를 이해하는 버전이 필요하다. 운영 migration은 수행하지 않았다.
+- 클라우드는 기존 Chat DB 테이블 쓰기 권한과 단일 migration 주체·인덱스 변경 비용/시간,
+  기존 Chat control/room PUBLISH·구독 ACL을 확인한다. Core Redis 권한이나 외부 /internal 경로는 확대하지 않는다.
+  새 도메인·라우팅·secret은 요구하지 않는다. 실제 TLS/계정 분리/운영 부하·종료 시간은 별도 검증 사항이다.
+
+검증 명령:
+
+```sh
+./gradlew chatControlEventsTest --no-daemon
+./gradlew chatMessageRelayTest --tests 'com.muse.coreauth.CoreAuthProcessTest' --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+전용25개는 실제 MySQL/Redis 도메인24개와 실제 Core·두 Chat JAR·TLS 프로세스1개다.
+기존7단계 경계에 더해 탭만 퇴장/마지막 membership 종료·중복 요청·다른 sid 보존·지역 목적지 만원이어도
+이전 sid 종료·Core 폐기와 history 보존·알림 유실 polling·새 membership/재연결 소켓 보존을 확인한다.
+VIEW/MEMBER outbox 이후 PRESENCE insert 실패를 주입해 전체 rollback을 검증한다.
+잘못된 채널/epoch/미등록 참조/미종료 DB 상태·잘못된 JSON을 거절하고 역순 presence는 최신 DB version을 쓴다.
+실제 프로세스는 REST 처리 Task와 소켓 소유 Task가 다른 퇴장·이동 및 늦은 중복 알림도 검사한다.
+운영1000연결·모든 장애/kill 조합·종료 지연 SLO를 검증한 것은 아니다.
+
+전체749개는719통과·7실패·23조건부 제외이며 이전7단계와 실패 이름7개가 동일하다.
+프로필 이미지 테스트의 AuthService fixture 누락과 그 후속 context 실패로 전체green으로 표시하지 않는다.
+Core 인증1개/Redis4개 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+전체 최초 XML은 build/control-events-verification/full-test에 보존한다.
+전용/호환/최종 채팅 회귀와 빌드 결과는 같은 폴더 summary.json 및 task XML에 기록한다.
+실제 프로세스 증빙은 build/core-auth-integration/run-*/control-events.json 및 기존 message-relay.json이다.
+Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 않는다.
+
+2026-10-27 최종 전용25개 전부 통과·제외0, 기존 메시지 relay 프로세스 호환1개 통과다.
+최종 채팅 회귀212개는208통과·4조건부 제외·실패0이다.
+기존 FE AJV6.15.0으로 세 종류의 정상/추가필드 거부 예시와 실제 프로세스의 DB event_body 세 종류를 검증했다.
+최초 대조에서 마지막 탭의 membership 사유가 기존 스키마와 다른 점을 찾아 LAST_VIEW_LEFT로 보완한 뒤
+전용25개를 재실행했다. FE 코드와 기존 스키마 필드/enum은 변경하지 않았다.
+
+## 장애·종료 처리와 기본 지표 (P1 10단계)
+
+2026-10-27 사용자는 Redis 전체 장애/상태 유실 후 **전용 복구 명령 실행 후 Chat 재기동**을 선택했다.
+기존 설계의 자동 복구 담당자 선출·앱 자동 재개는 이번 최소 P1에서 제외하고 과거 설계는 이력으로 보존한다.
+9단계 FE의1013/503·같은 membership/view 재연결·history/recovery를 그대로 사용한다.
+
+| 결정 | 구현과 판단 근거 |
+| --- | --- |
+| 장애 때 로컬 입구부터 차단 | command/PubSub 단절 callback은 원자 flag만 닫는다. 500ms 감시가 DB mode/epoch/Task lease와 Redis marker·run_id·실제 구독을 확인한다. 확인 결과는 요청 시작 기준 최대1초만 사용한다. ALB health 제외를 기다리거나 Lettuce IO 스레드에서 DB/소켓 정리를 하지 않는다. |
+| 연결 복귀만으로 자동 개방 금지 | marker 유실·Redis 재기동·DB 확인 실패·큐 장애로 닫힌 Task는 그대로 닫힌다. 같은 marker를 돌려놓아도 열지 않는다. 단일 Task의 일시 연결 실패는 정상 의존성을 확인한 새 Task로 교체하고, 전체 Redis 상태/실행 세대가 바뀌면 오프라인 복구를 먼저 수행한다. |
+| 정상 종료도 일시 중단 | ContextClosed에서 ingress/HTTP·WS 업그레이드·SEND·outbound를 차단하고, 웹서버보다 먼저 drain한다. 본인 Task 소유 view만 OFFLINE·generation 증가·소유권 해제, Task FENCED 후 WS1013으로 닫는다. 다른 Task·membership·LEFT·계정 history는 보존한다. |
+| 종료 시 검증되지 않은 구간 확대 금지 | SIGTERM은 클라이언트의 정상 disconnect와 다르다. 마지막 verified 경계로 열린 구간을 닫고, 새 30초 열람 유예나 fresh 인증 없는 최종 checkpoint를 만들지 않는다. 기존 클라이언트 disconnect의30초 정책은 유지한다. 최대 정상 checkpoint 주기 약5초의 미검증 꼬리는 보존 근거가 없다. |
+| 정리 실패도 종료 예산 준수 | 기본 drain20초(1~25초), shutdown phase 기본30초보다 작아야 한다. DB chunk/statement1초·tx2초, transport별 close 예외 격리. DB 잠금·단절/예산 초과 시 Task lease/verified 경계 기반 회수로 fallback하며 무한 대기하거나 완료를 꾸미지 않는다. timeout/failure 지표와 elapsed_ms 로그를 남긴다. |
+| 관측과 서비스 권한 분리 | Prometheus는 별도 서비스 token으로만 조회한다. 사용자 JWT/무인증은 거절한다. gauge scrape에서 DB/Redis를 조회하지 않으며, DB 표본 실패는 NaN·available0으로 표현한다. 지표 조회 실패 자체로 채팅을 중단하지 않는다. |
+
+설정은 `CHAT_LIFECYCLE_ENABLED=false`가 기본이며 true에는 기존 presence·Core auth·Redis·message relay·control events가 필요하다.
+기존 `CHAT_RUNTIME_ENABLED` chat-isolated 전용/prod 거부는 유지한다. 운영 활성화 승인이 아니다.
+`CHAT_DRAIN_TIMEOUT=20s`, 선택 `CHAT_METRICS_SERVICE_TOKEN`(32~256자 별도 비밀)과 용도는 .env.example을 따른다.
+metrics token이 비어 있으면 수집을 거절한다. JWT·Core 인증 Bearer·Redis 비밀번호를 재사용하지 않는다.
+Chat Hikari 연결 대기1초/검증500ms, MySQL connectTimeout1초/socketTimeout2초를 설정한다.
+실제 JDBC URL에서 충돌하는 timeout을 덮어쓰지 않도록 운영 주입값을 확인한다. Core 설정은 바꾸지 않는다.
+
+### 전환·장애 복구 절차
+
+추가형 `V20261027205623__add_chat_runtime_recovery_control.sql`은 control의 recovery token/15초 lease,
+Redis generation·server run_id를 추가한다. 기존 SQL/이력은 수정하지 않는다. migration 실행은 기존 단일 migrator다.
+
+1. 새 FE 호환성 확인 → 채팅 라우팅 중단 → 구 Chat Task 전부 종료 → migration 적용.
+2. Chat DB/Redis 자격증명을 받은 단일 운영 job에서 아래 명령을 실행한다. 실제 비밀은 환경 주입하며 명령 인자에 넣지 않는다.
+3. 명령 성공·DB RUNNING 및 marker를 확인한 뒤 동일 버전/설정의 새 Chat UUID를 기동한다. readiness를 확인한 후 라우팅을 개방한다.
+4. FE는 기존 참여/view의 현재 권한·정원을 다시 확인하고 fresh READY/cursor로 복원한다. 종료/폐기된 view나 sid는 되살리지 않는다.
+
+```sh
+CHAT_RECOVERY_CONFIRM=chat-stopped java \
+  -Dloader.main=com.muse.meomuneum.chat.runtime.ChatRecoveryCommand \
+  -cp meomuneum-chat.jar org.springframework.boot.loader.launch.PropertiesLauncher
+```
+
+명령은 `CHAT_DB_URL/USERNAME/PASSWORD`, `CHAT_REDIS_ENVIRONMENT/HOST/PORT/USERNAME/PASSWORD/SSL`,
+필요 시 `CHAT_REDIS_SSL_CA_CERTIFICATE`를 사용한다. TLS 기본true, timeout1초·요청 queue1024이며 정상 구독 ACK까지 검사한다.
+웹 앱·Flyway·Core/Hazelcast를 시작하지 않는다. 예시 명령을 이번 작업에서 운영 환경에 실행한 것은 아니다.
+
+복구는 DB control UPDATE lock으로 RUNNING→RECOVERING·epoch 증가·token/lease를 commit한다.
+기존 쓰기의 SHARE lock과 직렬화되고, 동시 명령은 live lease가 있으면 거절한다.
+중단된 명령의15초 lease가 만료되면 새 token/generation으로 **같은 epoch**의 미완료 chunk를 이어간다.
+각 chunk는 최대100 Task/100 view/1000 outbox를 정리하고 token/유효 lease를 검사한다.
+구 Task FENCED, 비종료 view는 새 epoch의 OFFLINE/새 generation, 미확인 열린 구간은 마지막 verified로 닫는다.
+기존 GRACE의 이미 기록된 허용 끝을 늘리지 않는다. 구epoch pending outbox는 EXPIRED지만 메시지·receipt·계정 전송/반복 정책은 보존한다.
+room_seq도 초기화하지 않고 새 Redis 세대 투영은 이후 DB 스냅샷으로 생성한다. 과거 membership을 온라인 인원으로 환산하지 않는다.
+
+정리가 끝나고 command·실제 PubSub 구독·run_id·새 marker가 준비되면 token 조건으로 RUNNING을 commit한다.
+DB lock 안에서 Redis 네트워크 호출을 하지 않는다. DB와 Redis를 원자 transaction으로 간주하지 않는다.
+구 token의 DB 쓰기/완료는 거절한다. lease 경계의 오래된 Redis marker 쓰기는 DB generation과 불일치해 Task를 닫는 결과만 낼 수 있으며,
+이 경우 라우팅을 닫고 명령을 다시 수행한다. 두 저장소의 불일치를 권한 승인으로 보상하지 않는다.
+명령 실패에는 stage/예외 종류만 기록하고 연결 정보·비밀을 붙이지 않는다. RECOVERING이면 개방하지 않는다.
+구 cursor/owner epoch는 거절하고 fresh snapshot을 사용한다. 복구 명령/Task의 모든 kill 지점을 검증했다고 표시하지 않는다.
+
+### 기본 지표와 클라우드 전달 사항
+
+기계 판독 계약은 [운영 endpoint 명세](api/chat-runtime-operations.openapi.json)를 참고한다.
+
+`GET /actuator/prometheus`는 `Authorization: Bearer <CHAT_METRICS_SERVICE_TOKEN>`으로만 조회한다.
+외부 ALB/CloudFront에서는 이 경로를 차단하고 내부 scraper SG에서만 수집해야 한다. health 상세와 `/actuator/**`의 나머지는 공개하지 않는다.
+기존 health 경로 `/actuator/health/readiness`, `/actuator/health/liveness`와 HTTP 포트는 유지한다.
+readiness는 외부 의존성을 포함하지만 liveness는 외부 장애 때문에 내리지 않는다.
+
+| 지표 | 의미 |
+| --- | --- |
+| chat.connections / chat.connections.close.failures | 이 Task의 등록된 WS 수·transport close 실패 누적(계정 정원/OS TCP 수와 구분) |
+| chat.runtime.accepting / failures | runtime gate 개방 여부·감시 실패 누적. 최종 요청은 Core 인증/참여 권한도 통과해야 한다. |
+| chat.runtime.drain.duration / timeouts / failures | 종료 정리 경과·예산 초과·DB/상태 정리 실패 |
+| chat.message.store.duration{outcome} | 저장 시도 시간, stored/deduplicated/rejected/unavailable. ACK나 모든 사용자 수신 지연을 의미하지 않는다. |
+| chat.redis.publish.duration{outcome} | PUBLISH 호출 시간, published/unavailable. subscriber 수는 배달 확인이 아니다. |
+| chat.outbox.pending / oldest.seconds | 현재 epoch pending 수·가장 오래된 대기 시간(DB UTC 기준),5초 표본 |
+| chat.db.sample.available / age.seconds | 표본 성공 여부·표본 시도 이후 경과. 실패/미수집 수치는 NaN이며 오래된0을 정상으로 보이지 않는다. |
+| chat.relay.publisher.queued / receiver.queued | 기존 bounded 작업 queue의 대기 수 |
+| 기존 chat.redis.* / chat.message.relay.* / chat.control.events.* | 연결·구독 준비, 전파/거절·실패와 제어 이벤트 수 |
+
+사용자·방·소켓·sid·메시지·token·예외 원문을 label에 넣지 않는다. 기본 JVM/HTTP/Hikari 지표도 사용한다.
+타이머는 monotonic 시계, DB 만료/age는 DB UTC다. ID 없는 구조화 로그로 runtime_closed/recovery stage/drain 결과를 확인한다.
+표본·worker·방별 locking 비용, 복구 chunk 시간·종료 budget 및 실제1000연결/처리량은 운영 전 공동 측정 대상이다.
+
+클라우드 팀에는 (1) 기존 Chat state key 범위에 `env:chat:state:runtime` HGET/HSET 및 Redis `+info` 권한(코드에서는 `INFO server`만 호출),
+(2) 별도 metrics token의 SSM/ECS 주입·내부 scrape 접근·외부 경로 차단,
+(3) 단일 migration/중단 복구 job 실행 주체와 DB 권한,
+(4) readiness 경로와 앱 drain20초·다른 shutdown phase30초/자원 종료 여유를 포함한 ALB/ECS 종료 예산을 전달한다.
+현재 ACL/TLS/SG·SSM/ALB/ECS 설정을 이 코드 작업으로 변경하거나 완료 확인한 것은 아니다.
+rollback도 이 schema·epoch·marker/제어 이벤트를 이해하는 호환 버전으로 수행하며 구 단일 앱으로 단순 재라우팅하지 않는다.
+
+### 검증
+
+```sh
+./gradlew chatRuntimeLifecycleTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+전용 시험은 실제 MySQL/Redis 상태/복구, 실제 Core·여러 Chat JAR·격리 TLS·SIGTERM·Redis 재기동·DB pause 및 소켓 실패 격리를 포함한다.
+무인증/사용자 JWT의 metrics 거절·별도 token 수집, 다른 Task 보존, 마지막 verified 경계,
+marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt 유지·DB 장애 liveness/readiness 분리,
+복구 중단/lease takeover/구 token 거절·DB 잠금 drain fallback·종료 timeout을 확인한다.
+실제 ALB/CloudFront·Fargate 종료·운영 인증/DB/Redis·물리 모바일·1000연결·SLO 승인은 별도다.
+증빙은 `build/runtime-lifecycle-verification/summary.json`, 최초 full XML/각 task XML,
+`build/core-auth-integration/run-*/runtime-lifecycle.json` 및 recovery/drain 로그다.
+전체 테스트에서 기존 프로필 이미지 AuthService fixture 실패7개는 이전 단계와 동일하며 전체green으로 표시하지 않는다.
+운영 migration/복구·AWS·이미지 재빌드·push/PR·FE 제품 변경은 수행하지 않는다.
+
+
+2026-10-27 최종 전용31개 전부통과·제외0(실제 MySQL/Redis 도메인29개·Core/여러Chat JAR 프로세스1개·소켓 종료 실패1개).
+기존 Core 인증1개/Redis4개 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+최초 full749개는719통과·기존 프로필 이미지 fixture7실패·23제외(이전8단계 full과 실패 이름 동일)다.
+이후 추가된 소켓 종료 회귀1개를 포함한 채팅213개는209통과·4제외·실패0이다. 최초 full XML도 보존한다.
+초기 시간 타입/metrics401 기대값·Redis 재기동 중 임시 포트 변경·Checkstyle 위반은 보완 후 전용/정적 검사 재실행으로 해소했다.
+최종 통합 시험의 DB pause는 격리 MySQL 컨테이너에만 적용하고 즉시 해제했다. 기존 개발 환경은 유지한다.
+컨테이너에서 복구 job을 실행할 때는 기존 Chat 이미지의 ENTRYPOINT를 java로 override하고 classpath를 `/app/app.jar`로 지정한다.
+실제 ECS job/라우팅/종료 시간 설정은 클라우드 팀과 적용·검증해야 한다.

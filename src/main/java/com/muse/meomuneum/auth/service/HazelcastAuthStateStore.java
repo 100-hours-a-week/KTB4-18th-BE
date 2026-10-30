@@ -12,16 +12,25 @@ import java.util.concurrent.Semaphore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
 import com.muse.meomuneum.auth.config.AuthStateProperties;
 import com.muse.meomuneum.auth.queue.AuthQueueDiagnostics;
+import com.muse.meomuneum.global.security.AuthSessionRevokedEvent;
 
 @Service
 public class HazelcastAuthStateStore {
     private final HazelcastLoginQueueStateStore delegate;
+    private ApplicationEventPublisher events = ignored -> {
+    };
+
+    @Autowired
+    public void setRevocationEvents(ApplicationEventPublisher publisher) {
+        events = publisher;
+    }
     protected static final long OPERATION_CLAIM_LEASE_SECONDS = 30;
 
     public HazelcastAuthStateStore(ObjectProvider<HazelcastInstance> hazelcastProvider,
@@ -372,7 +381,15 @@ public class HazelcastAuthStateStore {
     }
 
     public AuthSession revokeSession(String sid, Long expectedUserId) {
-        return delegate.revokeSession(sid, expectedUserId);
+        AuthSession revoked = delegate.revokeSession(sid, expectedUserId);
+        if (revoked != null && revoked.status() == SessionStatus.REVOKED) {
+            try {
+                events.publishEvent(new AuthSessionRevokedEvent(revoked.userId(), revoked.sid(), revoked.generation()));
+            } catch (RuntimeException unavailable) {
+                // Auth state is already committed. Fresh validation is the fallback for lost notifications.
+            }
+        }
+        return revoked;
     }
 
     public List<AuthSession> activeSessions(Long userId) {

@@ -25,7 +25,8 @@ repositories {
 
 spotless {
 	java {
-		target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+		target 'src/main/java/**/*.java', 'src/core/java/**/*.java',
+			'src/chat/java/**/*.java', 'src/test/java/**/*.java'
 		eclipse().configFile('config/eclipse-java-formatter.xml')
 		removeUnusedImports()
 		importOrder('java', 'javax', 'jakarta', 'org', 'com', '')
@@ -53,6 +54,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
 	implementation 'com.hazelcast:hazelcast:5.7.0'
+	implementation 'io.lettuce:lettuce-core'
 	implementation 'org.flywaydb:flyway-mysql'
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -76,6 +78,22 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 	exclude '**/ChatRecoveryProcessIntegrationTest.class'
+	exclude '**/ChatRedisFoundationProcessTest.class'
+	exclude '**/ChatRedisSecurityIntegrationTest.class'
+}
+
+// Explicit integration gate: Docker is required; a missing daemon must fail this task.
+tasks.register('chatRedisFoundationTest', Test) {
+	dependsOn 'classes'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/ChatRedisFoundationProcessTest.class'
+	include '**/ChatRedisSecurityIntegrationTest.class'
+	systemProperty 'chat.foundation.classpath', sourceSets.test.runtimeClasspath.asPath
+	systemProperty 'chat.foundation.redis-image', providers.gradleProperty('chatRedisImage').getOrElse('redis:8.10.2')
+	systemProperty 'user.timezone', 'UTC'
+	outputs.upToDateWhen { false }
 }
 
 // Separate JVM lifecycle tests deliberately kill only the server process they create.
@@ -105,6 +123,11 @@ tasks.register('prepareMusicRecordLocalMigrations', Sync) {
 		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
 		include 'V20261016090922__add_auth_session_to_chat_memberships.sql'
 		include 'V20261020213622__increase_chat_room_capacity.sql'
+		include 'V20261027002610__create_chat_participation_runtime.sql'
+		include 'V20261027131057__add_distributed_chat_read_boundaries.sql'
+		include 'V20261027142734__create_chat_message_delivery_state.sql'
+		include 'V20261027153823__extend_chat_outbox_for_control_events.sql',
+			'V20261027205623__add_chat_runtime_recovery_control.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925201908__seed_map_dots_from_catalog.sql'
 	}
@@ -129,6 +152,11 @@ tasks.register('prepareMusicRecordSignupLocalMigrations', Sync) {
 		include 'V20261013024123__create_chat_view_sessions_and_intervals.sql'
 		include 'V20261016090922__add_auth_session_to_chat_memberships.sql'
 		include 'V20261020213622__increase_chat_room_capacity.sql'
+		include 'V20261027002610__create_chat_participation_runtime.sql'
+		include 'V20261027131057__add_distributed_chat_read_boundaries.sql'
+		include 'V20261027142734__create_chat_message_delivery_state.sql'
+		include 'V20261027153823__extend_chat_outbox_for_control_events.sql',
+			'V20261027205623__add_chat_runtime_recovery_control.sql'
 		include 'V20260925174748__create_map_dots_and_music_records_tables.sql'
 		include 'V20260925192738__align_terms_column_lengths.sql'
 		include 'V20260925192745__publish_required_ai_personal_terms.sql'
@@ -154,7 +182,8 @@ def buildIdentityFiles = {
 			'gradle/wrapper/gradle-wrapper.properties']
 			.findAll { file(it).isFile() }
 			.each { sourceFile -> filesByPath[project.relativePath(file(sourceFile))] = file(sourceFile) }
-	['src/main/java', 'src/main/resources', 'src/test/java'].each { sourceDir ->
+	['src/main/java', 'src/main/resources', 'src/core/java', 'src/core/resources',
+		'src/chat/java', 'src/chat/resources', 'src/test/java'].each { sourceDir ->
 		def directory = file(sourceDir)
 		if (directory.isDirectory()) {
 			fileTree(directory).files.each { sourceFile ->
@@ -176,12 +205,203 @@ def buildSourceSha256 = {
 	HexFormat.of().formatHex(digest.digest())
 }
 
+def buildGitCommit = providers.environmentVariable('BUILD_GIT_COMMIT').orElse(provider {
+	file('.git').exists() ? providers.exec {
+		commandLine 'git', 'rev-parse', 'HEAD'
+	}.standardOutput.asText.get().trim() : 'unknown'
+})
+
 tasks.named('bootJar') {
+	mainClass = 'com.muse.meomuneum.MeomuneumBackendApplication'
 	manifest {
 		attributes(
-				'Build-Git-Commit': providers.exec {
-					commandLine 'git', 'rev-parse', 'HEAD'
-				}.standardOutput.asText.get().trim(),
+				'Build-Git-Commit': buildGitCommit.get(),
 				'Build-Source-SHA256': buildSourceSha256())
 	}
+}
+
+// Role-specific source sets compile independently: an omitted app dependency fails compilation.
+sourceSets {
+	core {
+		java {
+			srcDirs = ['src/main/java', 'src/core/java']
+			exclude 'com/muse/meomuneum/MeomuneumBackendApplication.java'
+			exclude { element ->
+				!element.directory && element.path.startsWith('com/muse/meomuneum/chat/') &&
+						!element.path.startsWith('com/muse/meomuneum/chat/region/') &&
+						!(element.path.startsWith('com/muse/meomuneum/chat/redis/') &&
+								!element.path.endsWith('/ChatRedisConfiguration.java'))
+			}
+		}
+		resources {
+			srcDirs = ['src/core/resources']
+		}
+	}
+	chat {
+		java {
+			srcDirs = ['src/main/java', 'src/chat/java']
+			include 'com/muse/apps/chat/**', 'com/muse/meomuneum/chat/**'
+			include 'com/muse/meomuneum/global/exception/**', 'com/muse/meomuneum/global/logging/**'
+			include 'com/muse/meomuneum/global/response/**', 'com/muse/meomuneum/global/web/**'
+			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims', 'JwtAuthenticationFilter',
+				'SecurityErrorResponseWriter', 'SecurityErrorCode', 'RequestOriginValidationFilter',
+				'AuthSessionIds', 'ActiveUserLookup', 'SessionPair', 'SessionDecision',
+				'InternalSessionProtocol', 'AuthSessionRevokedEvent', 'AuthRevocationProtocol'].each { name ->
+				include "com/muse/meomuneum/global/security/${name}.java"
+			}
+			['CorsConfig', 'JwtProperties'].each { name ->
+				include "com/muse/meomuneum/global/config/${name}.java"
+			}
+			include 'com/muse/meomuneum/location/security/**'
+			include 'com/muse/meomuneum/location/config/LocationTokenProperties.java'
+			['LocationException', 'LocationErrorCode'].each { name ->
+				include "com/muse/meomuneum/location/exception/${name}.java"
+			}
+			include 'com/muse/meomuneum/user/domain/**', 'com/muse/meomuneum/user/repository/UserRepository.java'
+			include 'com/muse/meomuneum/auth/exception/AuthErrorCode.java'
+			include 'com/muse/meomuneum/auth/exception/AuthenticationFailedException.java'
+			// Existing shared advice signatures; no music service/controller enters Chat.
+			include 'com/muse/meomuneum/music/exception/MusicMetadataException.java'
+			include 'com/muse/meomuneum/musicrecord/exception/MusicRecordException.java'
+		}
+		resources.srcDirs = ['src/chat/resources']
+	}
+}
+
+['core', 'chat'].each { role ->
+	configurations.named("${role}Implementation") { extendsFrom configurations.implementation }
+	configurations.named("${role}CompileOnly") { extendsFrom configurations.compileOnly }
+	configurations.named("${role}RuntimeOnly") { extendsFrom configurations.runtimeOnly }
+	configurations.named("${role}AnnotationProcessor") { extendsFrom configurations.annotationProcessor }
+	["${role}CompileClasspath", "${role}RuntimeClasspath"].each { configurationName ->
+		configurations.named(configurationName) {
+			if (role == 'core') {
+				exclude group: 'io.github.vaneproject', module: 'badwordfiltering'
+				exclude group: 'org.springframework.boot', module: 'spring-boot-starter-websocket'
+				exclude group: 'org.springframework', module: 'spring-websocket'
+				exclude group: 'org.springframework', module: 'spring-messaging'
+				exclude group: 'org.apache.tomcat.embed', module: 'tomcat-embed-websocket'
+			} else {
+				exclude group: 'com.hazelcast', module: 'hazelcast'
+				exclude group: 'com.twelvemonkeys.imageio', module: 'imageio-webp'
+				exclude group: 'org.springframework.boot', module: 'spring-boot-starter-flyway'
+				exclude group: 'org.springframework.boot', module: 'spring-boot-flyway'
+				exclude group: 'org.flywaydb'
+			}
+		}
+	}
+	def roleSourceSet = sourceSets[role]
+	def roleMainClass = "com.muse.apps.${role}.${role.capitalize()}Application"
+	tasks.register("${role}BootJar", org.springframework.boot.gradle.tasks.bundling.BootJar) {
+		group = 'build'
+		dependsOn "${role}Classes"
+		archiveFileName = "meomuneum-${role}.jar"
+		mainClass = roleMainClass
+		targetJavaVersion = java.targetCompatibility
+		classpath = roleSourceSet.runtimeClasspath
+		manifest.attributes('Build-App': role, 'Build-Git-Commit': buildGitCommit.get(),
+				'Build-Source-SHA256': buildSourceSha256())
+	}
+	tasks.register("${role}BootRun", org.springframework.boot.gradle.tasks.run.BootRun) {
+		group = 'application'
+		dependsOn "${role}Classes"
+		mainClass = roleMainClass
+		classpath = roleSourceSet.runtimeClasspath
+	}
+}
+
+tasks.named('processCoreResources') {
+	from('src/main/resources') {
+		include 'db/**', 'map-zones.json', 'hazelcast-auth-state-member.yaml'
+	}
+}
+
+tasks.named('processChatResources') {
+	from('src/main/resources') { include 'chat/**' }
+}
+
+
+tasks.named('test') { exclude '**/AppSeparationProcessTest.class' }
+tasks.register('appSeparationTest', Test) {
+	dependsOn 'coreBootJar', 'chatBootJar'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/AppSeparationProcessTest.class'
+	systemProperty 'app.split.images', providers.gradleProperty('appSplitImages').getOrElse('false')
+	systemProperty 'app.split.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+	systemProperty 'app.split.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+	outputs.upToDateWhen { false }
+}
+
+// Cross-app authentication uses real packaged processes and isolated Hazelcast/MySQL/Redis.
+tasks.named('test') { exclude '**/CoreAuthProcessTest.class' }
+tasks.register('coreAuthIntegrationTest', Test) {
+	dependsOn 'coreBootJar', 'chatBootJar'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/CoreAuthProcessTest.class'
+	systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+	systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+	outputs.upToDateWhen { false }
+}
+
+// Isolated DB/Redis concurrency tests and packaged Core/two-Chat participation checks.
+tasks.named('test') { exclude '**/ChatParticipationMySqlTest.class' }
+tasks.register('chatParticipationTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}
+
+// Product message propagation with real DB/Redis and two packaged Chat processes.
+tasks.register('chatMessageRelayTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}
+
+// Exact cross-Task view/sid terminal references and independent DB cleanup fallback.
+tasks.register('chatControlEventsTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.control-events', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}
+
+// Runtime failure gates, offline recovery, SIGTERM drain and protected metrics.
+tasks.register('chatRuntimeLifecycleTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/ChatParticipationMySqlTest.class', '**/CoreAuthProcessTest.class', '**/ChatSocketShutdownTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.control-events', 'true'
+    systemProperty 'auth.integration.runtime', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
 }

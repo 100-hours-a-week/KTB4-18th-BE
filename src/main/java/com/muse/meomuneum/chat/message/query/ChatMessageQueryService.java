@@ -1,14 +1,19 @@
 package com.muse.meomuneum.chat.message.query;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -27,6 +32,13 @@ import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 
 @Service
 public class ChatMessageQueryService {
+    private DistributedChatMessageQueryService distributed;
+
+    @Autowired(required = false)
+    public void setDistributed(DistributedChatMessageQueryService service) {
+        distributed = service;
+    }
+
     private final ChatPresenceRegistry presence;
     private final ChatViewLifecycle views;
     private final ChatSessionAccessPolicy sessionAccess;
@@ -49,6 +61,11 @@ public class ChatMessageQueryService {
     }
 
     public Map<String, Object> ready(String socketId, String viewId, long lastReceivedId) {
+        if (distributed != null) {
+            var context = views.context(socketId);
+            return distributed.ready(context.userId(), context.roomId(), context.membershipId(), viewId,
+                    lastReceivedId);
+        }
         return presence.exclusive(() -> transactions.execute(status -> {
             ChatViewLifecycle.Context context = views.context(socketId);
             List<ChatViewInterval> ranges = views.authorize(context.userId(), context.roomId(), context.membershipId(),
@@ -65,6 +82,9 @@ public class ChatMessageQueryService {
     public ChatMessagePage query(Long userId, Long roomId, Long membershipId, String viewId,
             String mode, String token, int size) {
         validateModeAndSize(mode, size);
+        if (distributed != null) {
+            return distributed.query(userId, roomId, membershipId, viewId, mode, token, size);
+        }
         return presence.exclusive(() -> transactions.execute(status -> {
             boolean history = "history".equals(mode);
             List<ChatViewInterval> ranges = history
@@ -100,6 +120,9 @@ public class ChatMessageQueryService {
     }
 
     public ChatMessageResponse byClientId(Long userId, Long roomId, Long membershipId, String viewId, String clientId) {
+        if (distributed != null) {
+            return distributed.byClientId(userId, roomId, membershipId, viewId, clientId);
+        }
         try {
             if (!UUID.fromString(clientId).toString().equalsIgnoreCase(clientId)) {
                 throw new ChatQueryException(false);
@@ -110,7 +133,7 @@ public class ChatMessageQueryService {
         return presence.exclusive(() -> transactions.execute(status -> {
             List<ChatViewInterval> ranges = views.authorizeAccount(userId, roomId, membershipId, viewId).intervals();
             MapSqlParameterSource params = parameters(roomId, ranges, snapshot(ranges));
-            params.addValue("user", userId).addValue("client", clientId.toLowerCase(java.util.Locale.ROOT));
+            params.addValue("user", userId).addValue("client", clientId.toLowerCase(Locale.ROOT));
             List<ChatMessageResponse> found = jdbc.query(select() + permitted(ranges) +
                     " AND m.user_id = :user AND m.client_message_id = :client", params, (row, index) -> response(row));
             if (found.isEmpty()) {
@@ -146,7 +169,7 @@ public class ChatMessageQueryService {
         return params;
     }
 
-    private ChatMessageResponse response(java.sql.ResultSet row) throws java.sql.SQLException {
+    private ChatMessageResponse response(ResultSet row) throws SQLException {
         return new ChatMessageResponse(row.getLong("id"), row.getString("client_message_id"), row.getLong("room_id"),
                 row.getLong("user_id"), row.getString("nickname"), row.getString("content"),
                 row.getTimestamp("created_at").toLocalDateTime().atOffset(ZoneOffset.UTC));
@@ -222,7 +245,7 @@ public class ChatMessageQueryService {
     }
 
     private long snapshot(List<ChatViewInterval> ranges) {
-        return ranges.stream().map(ChatViewInterval::endMessageId).filter(java.util.Objects::nonNull)
+        return ranges.stream().map(ChatViewInterval::endMessageId).filter(Objects::nonNull)
                 .mapToLong(Long::longValue).max().orElse(0);
     }
 

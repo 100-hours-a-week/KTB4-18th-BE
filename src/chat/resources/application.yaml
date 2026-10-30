@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: meomuneum-chat
+  datasource:
+    url: ${CHAT_DB_URL}
+    username: ${CHAT_DB_USERNAME}
+    password: ${CHAT_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${CHAT_DB_MAXIMUM_POOL_SIZE:10}
+      connection-timeout: 1000
+      validation-timeout: 500
+      data-source-properties:
+        connectTimeout: 1000
+        socketTimeout: 2000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  lifecycle:
+    timeout-per-shutdown-phase: ${CHAT_SHUTDOWN_TIMEOUT:30s}
+server:
+  port: ${CHAT_SERVER_PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: framework
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db,chatRuntime,coreSessionAuth,participation
+        liveness:
+          include: livenessState
+auth:
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  jwt:
+    issuer: ${AUTH_JWT_ISSUER:project-api}
+    audience: ${AUTH_JWT_AUDIENCE:project-api}
+    secret: ${AUTH_JWT_SECRET}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
+location:
+  token:
+    secret: ${LOCATION_TOKEN_SECRET}
+chat:
+  lifecycle:
+    enabled: ${CHAT_LIFECYCLE_ENABLED:false}
+    drain-timeout: ${CHAT_DRAIN_TIMEOUT:20s}
+    metrics-token: ${CHAT_METRICS_SERVICE_TOKEN:}
+  control-events:
+    enabled: ${CHAT_CONTROL_EVENTS_ENABLED:false}
+  message-relay:
+    enabled: ${CHAT_MESSAGE_RELAY_ENABLED:false}
+    fingerprint-keys: ${CHAT_MESSAGE_FINGERPRINT_KEYS:}
+  distributed-presence:
+    enabled: ${CHAT_DISTRIBUTED_PRESENCE_ENABLED:false}
+  core-auth:
+    enabled: ${CHAT_CORE_AUTH_ENABLED:false}
+    base-url: ${CORE_INTERNAL_BASE_URL:}
+    service-token: ${CORE_AUTH_SERVICE_TOKEN:}
+    redis-enabled: ${CHAT_AUTH_REDIS_ENABLED:false}
+    producer-ids: ${CORE_AUTH_PRODUCER_IDS:}
+  # Temporary activation for isolated verification only; shared state and recovery remain later steps.
+  runtime:
+    enabled: ${CHAT_RUNTIME_ENABLED:false}
+  redis:
+    enabled: ${CHAT_REDIS_ENABLED:false}
+    environment: ${CHAT_REDIS_ENVIRONMENT:}
+    host: ${CHAT_REDIS_HOST:localhost}
+    port: ${CHAT_REDIS_PORT:6379}
+    username: ${CHAT_REDIS_USERNAME:default}
+    password: ${CHAT_REDIS_PASSWORD:}
+    ssl: ${CHAT_REDIS_SSL:true}
+    connect-timeout: ${CHAT_REDIS_CONNECT_TIMEOUT:1s}
+    command-timeout: ${CHAT_REDIS_COMMAND_TIMEOUT:1s}
+    request-queue-size: ${CHAT_REDIS_REQUEST_QUEUE_SIZE:1024}
+    ssl-ca-certificate: ${CHAT_REDIS_SSL_CA_CERTIFICATE:}
+  message-cleanup:
+    enabled: ${CHAT_MESSAGE_CLEANUP_ENABLED:true}
+  message-policy:
+    minimum-interval: ${CHAT_MESSAGE_MINIMUM_INTERVAL:1s}
+    detection-enabled: ${CHAT_PERSONAL_CONTENT_DETECTION_ENABLED:true}
