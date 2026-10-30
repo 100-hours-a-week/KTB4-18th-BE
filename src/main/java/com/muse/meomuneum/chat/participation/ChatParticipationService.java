@@ -1098,8 +1098,11 @@ public final class ChatParticipationService {
                 if (jdbc.queryForObject("SELECT COUNT(*) FROM chat_rooms WHERE id=?", Integer.class, room) != 1) {
                     throw error(ChatRoomErrorCode.CHAT_ROOM_NOT_FOUND);
                 }
-                jdbc.update("INSERT IGNORE INTO chat_room_runtime(environment,room_id) VALUES (?,?)", environment,
-                        room);
+                // Take X immediately on an existing row; IGNORE can deadlock during the S-to-X upgrade below.
+                jdbc.update("""
+                        INSERT INTO chat_room_runtime(environment,room_id) VALUES (?,?)
+                        ON DUPLICATE KEY UPDATE room_id=room_id
+                        """, environment, room);
                 jdbc.queryForObject("""
                         SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=? FOR UPDATE
                         """, Long.class, environment, room);
