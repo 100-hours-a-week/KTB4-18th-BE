@@ -5,6 +5,10 @@ spring:
     password: ${TEST_DB_PASSWORD}
 
 auth:
+  mutation-gate-open: true
+  state:
+    hmac-key: test-only-auth-state-hmac-key-at-least-32-bytes-2026
+    replay-encryption-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
   cors:
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5174,http://127.0.0.1:5174}
   jwt:

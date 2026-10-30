@@ -35,7 +35,7 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         if (STATE_CHANGING_METHODS.contains(request.getMethod().toUpperCase(Locale.ROOT))
                 && !hasAllowedOrigin(request)) {
-            errorResponseWriter.write(request, response, SecurityErrorCode.ACCESS_DENIED);
+            errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_ORIGIN_DENIED);
             return;
         }
         filterChain.doFilter(request, response);

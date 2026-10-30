@@ -60,6 +60,10 @@ public final class QueuedLoginService {
     }
 
     public TokenResponse login(LoginRequest request, HttpServletRequest servletRequest, HttpHeaders headers) {
+        return centralizedLogin(request, servletRequest, headers).response();
+    }
+
+    public LoginResult loginWithTicket(LoginRequest request, HttpServletRequest servletRequest, HttpHeaders headers) {
         return centralizedLogin(request, servletRequest, headers);
     }
 
@@ -87,7 +91,7 @@ public final class QueuedLoginService {
         }
     }
 
-    private TokenResponse centralizedLogin(LoginRequest request, HttpServletRequest servletRequest,
+    private LoginResult centralizedLogin(LoginRequest request, HttpServletRequest servletRequest,
             HttpHeaders headers) {
         String queueCookie = getOptionalCookie(servletRequest, authStateProperties.queueCookieName()).orElse(null);
         String correlationId = servletRequest.getHeader("X-Auth-Queue-Correlation");
@@ -146,10 +150,8 @@ public final class QueuedLoginService {
                 authStateStore.bindAuthenticatedUser(claimedTicket, user.getId());
                 return null;
             });
-            loginStage(ticket, correlationId, "OLD_SESSION_REVOKE", () -> {
-                revokeExistingBrowserSession(servletRequest);
-                return null;
-            });
+            // The canonical flow activation transaction revokes the previously attached sid.
+            // Hazelcast cleanup is emitted through the outbox after that database commit.
             String sid = ticket.sid();
             String refreshToken = loginStage(ticket, correlationId, "REFRESH_TOKEN_ISSUE",
                     () -> jwtTokenProvider.createRefreshToken(user, sid));
@@ -184,8 +186,9 @@ public final class QueuedLoginService {
                 queueCookieFactory.set(headers, queueCookie, 900);
                 return null;
             });
-            return loginStage(ticket, correlationId, "LOGIN_RESPONSE",
+            TokenResponse response = loginStage(ticket, correlationId, "LOGIN_RESPONSE",
                     () -> new TokenResponse(accessToken, jwtProperties.accessTokenExpirationSeconds()));
+            return new LoginResult(response, claimedTicket.ticketId());
         } catch (RuntimeException exception) {
             if (ticket != null) {
                 long recoveryStarted = System.nanoTime();
@@ -212,6 +215,9 @@ public final class QueuedLoginService {
                 authStateStore.releaseBcryptPermit(ticket.ticketId(), ticket.bcryptPermitKey());
             }
         }
+    }
+
+    public record LoginResult(TokenResponse response, String ticketId) {
     }
 
     private <T> T loginStage(HazelcastAuthStateStore.Ticket ticket, String correlationId, String stage,
@@ -266,23 +272,6 @@ public final class QueuedLoginService {
         return TimeUnit.NANOSECONDS.toMillis(Math.max(0, System.nanoTime() - startedNanos));
     }
 
-    private void revokeExistingBrowserSession(HttpServletRequest request) {
-        Optional<RefreshTokenClaims> prior;
-        try {
-            prior = getRefreshTokenLogoutLocator(request);
-        } catch (AuthenticationFailedException ignored) {
-            return;
-        }
-        if (prior.isEmpty()) {
-            return;
-        }
-        HazelcastAuthStateStore.AuthSession current = authStateStore.getSession(prior.get().sessionId());
-        if (current != null && current.status() == HazelcastAuthStateStore.SessionStatus.ACTIVE
-                && current.userId().equals(prior.get().userId())) {
-            authStateStore.revokeSession(current.sid(), current.userId());
-        }
-    }
-
     private String deviceLabel(String userAgent) {
         if (userAgent == null || userAgent.isBlank()) {
             return "Unknown device";
@@ -312,17 +301,6 @@ public final class QueuedLoginService {
         }
         return Arrays.stream(request.getCookies()).filter(cookie -> name.equals(cookie.getName()))
                 .map(cookie -> cookie.getValue()).filter(value -> !value.isBlank()).findFirst();
-    }
-
-    private Optional<RefreshTokenClaims> getRefreshTokenLogoutLocator(HttpServletRequest request) {
-        return getOptionalCookie(request, "refresh_token").map(token -> {
-            try {
-                return jwtTokenProvider.parseRefreshTokenForLogout(token);
-            } catch (AuthenticationFailedException exception) {
-                throw new com.muse.meomuneum.auth.exception.AuthenticationFailedException(
-                        com.muse.meomuneum.auth.exception.AuthErrorCode.LOGOUT_SESSION_MISMATCH);
-            }
-        });
     }
 
     private User user(Long userId) {
