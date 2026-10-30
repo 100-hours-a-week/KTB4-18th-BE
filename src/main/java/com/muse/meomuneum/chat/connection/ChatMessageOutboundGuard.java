@@ -66,13 +66,14 @@ public class ChatMessageOutboundGuard implements ExecutorChannelInterceptor {
             var context = authSessions == null
                     ? Optional.<ChatAuthSessionRegistry.Context>empty()
                     : authSessions.context(socket);
+            long started = System.nanoTime();
             try {
                 if (context.isEmpty() || !(message.getHeaders().get("chatRoomId") instanceof Long room)
                         || !participation.permitsMessage(context.get().userId(), socket, room, id)) {
                     return null;
                 }
             } catch (RuntimeException unavailable) {
-                participation.failClosed();
+                participation.failClosed("outbound_permission", unavailable, started);
                 return null;
             }
         }

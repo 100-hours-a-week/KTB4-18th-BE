@@ -104,7 +104,7 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
                 metrics.failed();
                 log.warn("event=chat_runtime_closed exception={}", unavailable.getClass().getSimpleName());
             }
-            participation.failClosed();
+            participation.failClosed("runtime_check", unavailable, started);
         }
     }
 

@@ -155,6 +155,7 @@ public final class ChatMessageRelay implements AutoCloseable {
                                 continue;
                             }
                             boolean sent = false;
+                            RuntimeException publishFailure = null;
                             long started = System.nanoTime();
                             try {
                                 // Subscriber count is not a user delivery receipt.
@@ -163,6 +164,7 @@ public final class ChatMessageRelay implements AutoCloseable {
                                 sent = true;
                                 published.incrementAndGet();
                             } catch (RuntimeException unavailable) {
+                                publishFailure = unavailable;
                                 failures.incrementAndGet();
                             }
                             if (metrics != null) {
@@ -170,21 +172,21 @@ public final class ChatMessageRelay implements AutoCloseable {
                             }
                             outbox.complete(claim, sent);
                             if (!sent) {
-                                failClosed();
+                                failClosed(publishFailure);
                                 return;
                             }
                         }
                     }
                 } catch (RuntimeException unavailable) {
                     failures.incrementAndGet();
-                    failClosed();
+                    failClosed(unavailable);
                 } finally {
                     publishing.set(false);
                 }
             });
         } catch (RuntimeException full) {
             publishing.set(false);
-            failClosed();
+            failClosed(full);
         }
     }
 
@@ -206,11 +208,11 @@ public final class ChatMessageRelay implements AutoCloseable {
                     }
                 } catch (RuntimeException unavailable) {
                     failures.incrementAndGet();
-                    failClosed();
+                    failClosed(unavailable);
                 }
             });
         } catch (RuntimeException full) {
-            failClosed();
+            failClosed(full);
         }
     }
 
@@ -239,11 +241,11 @@ public final class ChatMessageRelay implements AutoCloseable {
                     });
                 } catch (RuntimeException unavailable) {
                     failures.incrementAndGet();
-                    failClosed();
+                    failClosed(unavailable);
                 }
             });
         } catch (RuntimeException full) {
-            failClosed(); // A dropped queue item is a service interruption, not successful delivery.
+            failClosed(full); // A dropped queue item is a service interruption, not successful delivery.
         }
     }
 
@@ -327,8 +329,12 @@ public final class ChatMessageRelay implements AutoCloseable {
     }
 
     private void failClosed() {
+        failClosed(null);
+    }
+
+    private void failClosed(RuntimeException failure) {
         blocked.set(true);
-        participation.failClosed();
+        participation.failClosed("message_relay", failure, System.nanoTime());
     }
 
     private static ThreadPoolExecutor executor(String name, int workers, int queue) {

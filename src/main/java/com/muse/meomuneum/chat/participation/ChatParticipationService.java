@@ -69,6 +69,7 @@ public final class ChatParticipationService {
     private final ChatRoomReadBoundaryStore boundaries;
     private final Map<String, Long> claims = new ConcurrentHashMap<>();
     private final String taskId = UUID.randomUUID().toString();
+    private final ChatParticipationDiagnostics diagnostics;
     private final Set<Long> touchedRooms = ConcurrentHashMap.newKeySet();
     private volatile long epoch;
     private volatile long localLease;
@@ -119,6 +120,7 @@ public final class ChatParticipationService {
         this.events = events;
         this.sockets = sockets;
         this.environment = environment;
+        this.diagnostics = new ChatParticipationDiagnostics(environment, taskId);
         this.boundaries = new ChatRoomReadBoundaryStore(this.jdbc, environment);
     }
 
@@ -547,6 +549,7 @@ public final class ChatParticipationService {
         if (!available()) {
             return false;
         }
+        long started = System.nanoTime();
         try {
             Integer count = jdbc.queryForObject("SELECT COUNT(*) " + VIEW_JOINS + """
                     JOIN chat_runtime_control c ON c.environment=v.environment
@@ -556,7 +559,7 @@ public final class ChatParticipationService {
                     claims.getOrDefault(socket, -1L), epoch);
             return count != null && count == 1;
         } catch (RuntimeException unavailable) {
-            failClosed();
+            failClosed("socket_validation", unavailable, started);
             return false;
         }
     }
@@ -565,10 +568,11 @@ public final class ChatParticipationService {
         if (!available()) {
             return 0;
         }
+        long started = System.nanoTime();
         try {
             return snapshot(room).connected();
         } catch (RuntimeException unavailable) {
-            failClosed();
+            failClosed("connected_count", unavailable, started);
             return 0;
         }
     }
@@ -578,7 +582,7 @@ public final class ChatParticipationService {
             return;
         }
         if (!available()) {
-            failClosed();
+            failClosed("heartbeat_unavailable", null, System.nanoTime());
             return;
         }
         long started = System.nanoTime();
@@ -596,19 +600,20 @@ public final class ChatParticipationService {
             });
             localLease = started + TimeUnit.SECONDS.toNanos(14);
         } catch (RuntimeException unavailable) {
-            failClosed();
+            failClosed("heartbeat", unavailable, started);
         }
     }
 
     /** Lazy count filtering is authoritative even if physical OFFLINE cleanup is delayed. */
     public Set<String> validSockets() {
+        long started = System.nanoTime();
         if (!available() || jdbc.queryForObject("""
                 SELECT COUNT(*) FROM chat_runtime_control c JOIN chat_runtime_tasks t
                     ON t.environment=c.environment AND t.epoch=c.epoch
                 WHERE c.environment=? AND c.epoch=? AND c.mode='RUNNING' AND t.task_id=?
                     AND t.state='ACTIVE' AND t.lease_until>UTC_TIMESTAMP(6)
                 """, Integer.class, environment, epoch, taskId) != 1) {
-            failClosed();
+            failClosed("valid_sockets_guard", null, started);
             throw new ChatParticipationUnavailableException();
         }
         return Set.copyOf(jdbc.queryForList("SELECT v.socket_token " + VIEW_JOINS
@@ -620,6 +625,7 @@ public final class ChatParticipationService {
         if (!available()) {
             return;
         }
+        long started = System.nanoTime();
         try {
             transactions.executeWithoutResult(status -> {
                 control();
@@ -678,7 +684,7 @@ public final class ChatParticipationService {
                 });
             }
         } catch (RuntimeException unavailable) {
-            failClosed();
+            failClosed("expired_participation_sweep", unavailable, started);
         }
     }
 
@@ -696,13 +702,18 @@ public final class ChatParticipationService {
         T result;
         try {
             result = transactions.execute(status -> {
+                tx.stage = "transaction_configuration";
                 jdbc.execute("SET SESSION innodb_lock_wait_timeout=1");
+                tx.stage = "control_lock";
                 control();
                 // Small P1 task set: ordered SHARE locks also pin any old owner lease during a transition.
+                tx.stage = "task_locks";
                 jdbc.queryForList("""
                         SELECT task_id FROM chat_runtime_tasks WHERE environment=? ORDER BY task_id FOR SHARE
                         """, String.class, environment);
+                tx.stage = "task_guard";
                 requireTask();
+                tx.stage = "user_lock";
                 List<Long> users = jdbc.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, user);
                 if (users.isEmpty()) {
                     throw error(ChatRoomErrorCode.USER_NOT_FOUND);
@@ -710,24 +721,32 @@ public final class ChatParticipationService {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void beforeCommit(boolean readOnly) {
+                        tx.stage = "commit_budget";
                         if (System.nanoTime() - tx.started >= TimeUnit.SECONDS.toNanos(2)) {
                             throw new ChatParticipationUnavailableException();
                         }
+                        tx.stage = "commit_task_guard";
                         requireTask();
+                        tx.stage = "commit_auth_guard";
                         ChatAuthOperation.check();
                     }
                 });
+                tx.stage = "transition_action";
                 T applied = action.apply(tx);
+                tx.stage = "control_outbox";
                 for (long room : tx.presence) {
                     recordControl("CHAT_PRESENCE_CHANGED", room, tx.version(room),
                             Map.of("room_id", room, "room_seq", tx.version(room)));
                 }
                 return applied;
             });
-        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection
-                | ChatParticipationUnavailableException rejected) {
+        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection rejected) {
+            throw rejected;
+        } catch (ChatParticipationUnavailableException rejected) {
+            diagnostics.transactionFailed(tx.stage, rejected, tx.started);
             throw rejected;
         } catch (RuntimeException unavailable) {
+            diagnostics.transactionFailed(tx.stage, unavailable, tx.started);
             throw new ChatParticipationUnavailableException();
         }
         tx.changed.forEach(this::project);
@@ -960,20 +979,29 @@ public final class ChatParticipationService {
     }
 
     private void project(long room) {
+        long started = System.nanoTime();
+        String stage = "projection_snapshot";
         try {
             touchedRooms.add(room);
             var snapshot = snapshot(room);
+            stage = "redis_projection";
             projection.write(snapshot);
+            stage = "presence_event";
             events.publishEvent(
                     new ChatPresenceChangedEvent(room, snapshot.connected(), snapshot.version(), null, null));
         } catch (RuntimeException unavailable) {
-            failClosed();
+            failClosed(stage, unavailable, started);
             throw new ChatParticipationUnavailableException();
         }
     }
 
     public void failClosed() {
+        failClosed("external_guard", null, System.nanoTime());
+    }
+
+    public void failClosed(String stage, Throwable failure, long started) {
         failed = true;
+        diagnostics.closed(stage, failure, started);
         sockets.closeAll(1013, "CHAT_SERVICE_UNAVAILABLE");
     }
 
@@ -1055,6 +1083,7 @@ public final class ChatParticipationService {
 
     private final class Transition {
         private final long started = System.nanoTime();
+        private String stage = "transaction_start";
         private final Set<Long> changed = new LinkedHashSet<>();
         private final Set<Long> presence = new LinkedHashSet<>();
 
@@ -1064,12 +1093,16 @@ public final class ChatParticipationService {
         }
 
         private void lock(List<Long> rooms) {
+            stage = "room_lock_and_boundaries";
             rooms.stream().distinct().sorted().forEach(room -> {
                 if (jdbc.queryForObject("SELECT COUNT(*) FROM chat_rooms WHERE id=?", Integer.class, room) != 1) {
                     throw error(ChatRoomErrorCode.CHAT_ROOM_NOT_FOUND);
                 }
-                jdbc.update("INSERT IGNORE INTO chat_room_runtime(environment,room_id) VALUES (?,?)", environment,
-                        room);
+                // Take X immediately on an existing row; IGNORE can deadlock during the S-to-X upgrade below.
+                jdbc.update("""
+                        INSERT INTO chat_room_runtime(environment,room_id) VALUES (?,?)
+                        ON DUPLICATE KEY UPDATE room_id=room_id
+                        """, environment, room);
                 jdbc.queryForObject("""
                         SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=? FOR UPDATE
                         """, Long.class, environment, room);

@@ -129,6 +129,50 @@ class ChatParticipationMySqlTest {
     }
 
     @Test
+    void concurrentRoomInitializationAndReuseAdmitEveryAccountWithoutLockUpgradeDeadlock() throws Exception {
+        String environment = "room-lock-upgrade";
+        var first = service(environment, snapshot -> {
+        });
+        var second = service(environment, snapshot -> {
+        });
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_runtime WHERE environment=?",
+                Integer.class, environment));
+        long previousVersion = 0;
+        for (int wave = 0; wave < 2; wave++) {
+            var ready = new CountDownLatch(1);
+            List<Long> users = IntStream.range(0, 10).mapToObj(i -> user()).toList();
+            try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+                var attempts = IntStream.range(0, users.size()).mapToObj(i -> pool.submit(() -> {
+                    assertTrue(ready.await(5, TimeUnit.SECONDS));
+                    long user = users.get(i);
+                    return (i % 2 == 0 ? first : second)
+                            .join(user, UUID.randomUUID().toString(), room, claims(user));
+                })).toList();
+                ready.countDown();
+                for (var attempt : attempts) {
+                    assertTrue(attempt.get(10, TimeUnit.SECONDS).created());
+                }
+            }
+            assertEquals(10 * (wave + 1), first.snapshot(room).occupied());
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_runtime WHERE environment=?",
+                    Integer.class, environment));
+            assertTrue(jdbc.queryForObject("""
+                    SELECT boundary_initialized FROM chat_room_runtime WHERE environment=? AND room_id=?
+                    """, Boolean.class, environment, room));
+            long version = jdbc.queryForObject("""
+                    SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=?
+                    """, Long.class, environment, room);
+            if (wave > 0) {
+                // Reinitialization must retain the committed boundary and version, then add ten joins.
+                assertEquals(previousVersion + 10, version);
+            }
+            previousVersion = version;
+        }
+        assertTrue(first.available());
+        assertTrue(second.available());
+    }
+
+    @Test
     void lastSeatRaceCountsAccountsOnceAcrossInstancesAndRedisCannotGrantCapacity() throws Exception {
         String environment = "race";
         var seedService = service(environment, snapshot -> {
