@@ -153,8 +153,24 @@ public final class ChatParticipationService {
     }
 
     public boolean available() {
-        return !draining && !failed && runtimePermit.getAsBoolean() && messageTransportReady.getAsBoolean()
-                && localLease - System.nanoTime() > 0;
+        if (draining) {
+            return unavailable("draining");
+        }
+        if (failed) {
+            return unavailable("already_failed");
+        }
+        if (!runtimePermit.getAsBoolean()) {
+            return unavailable("runtime_permit");
+        }
+        if (!messageTransportReady.getAsBoolean()) {
+            return unavailable("message_transport");
+        }
+        long remaining = localLease - System.nanoTime();
+        return remaining > 0 || diagnostics.unavailable("local_lease_expired", remaining);
+    }
+
+    private boolean unavailable(String reason) {
+        return diagnostics.unavailable(reason, localLease - System.nanoTime());
     }
 
     public ChatRoomJoinResult join(long user, String sid, long room, LocationResolutionClaims claims) {

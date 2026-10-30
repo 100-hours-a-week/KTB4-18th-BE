@@ -31,8 +31,13 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
     private final AtomicBoolean blocked = new AtomicBoolean();
     private final AtomicBoolean reported = new AtomicBoolean();
     private final AtomicBoolean stopped = new AtomicBoolean();
+    private final AtomicBoolean denialReported = new AtomicBoolean();
     private volatile long permitUntil;
     private volatile boolean running;
+    private volatile CheckTiming checkTiming = new CheckTiming(0, 0, 0, false);
+
+    private record CheckTiming(long started, long completed, long duration, boolean inProgress) {
+    }
 
     public ChatRuntimeLifecycle(JdbcTemplate jdbc, ChatParticipationService participation, ChatRedisConnection redis,
             ChatRedisChannels channels, ChatSocketSessions sockets, ChatRuntimeMetrics metrics,
@@ -50,13 +55,43 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
         this.metrics = metrics;
         this.environment = environment;
         this.drainTimeout = drainTimeout;
-        participation.setRuntimePermit(this::permitted);
+        participation.setRuntimePermit(() -> permitted(true));
         redis.onUnavailable(() -> blocked.set(true)); // Lettuce callback only latches, never DB/socket I/O.
     }
 
     public boolean permitted() {
-        return running && !participation.isFailed() && !blocked.get() && !stopped.get()
-                && permitUntil - System.nanoTime() > 0;
+        return permitted(false);
+    }
+
+    private boolean permitted(boolean diagnose) {
+        boolean active = running;
+        boolean failed = participation.isFailed();
+        boolean latched = blocked.get();
+        boolean stopping = stopped.get();
+        long deadline = permitUntil;
+        long now = System.nanoTime();
+        boolean expired = deadline - now <= 0;
+        boolean allowed = active && !failed && !latched && !stopping && !expired;
+        // A metrics/readiness probe must not consume the evidence for the first participation rejection.
+        if (diagnose && !allowed && denialReported.compareAndSet(false, true)) {
+            try {
+                CheckTiming timing = checkTiming;
+                log.warn("event=chat_runtime_first_denied environment={} task={} running={} participation_failed={} "
+                        + "blocked={} stopped={} permit_expired={} permit_remaining_ms={} "
+                        + "last_check_start_age_ms={} last_check_complete_age_ms={} last_check_duration_ms={} "
+                        + "check_in_progress={}", environment, participation.taskId(), active, failed, latched,
+                        stopping, expired, TimeUnit.NANOSECONDS.toMillis(deadline - now),
+                        ageMillis(now, timing.started()), ageMillis(now, timing.completed()),
+                        TimeUnit.NANOSECONDS.toMillis(timing.duration()), timing.inProgress());
+            } catch (RuntimeException ignored) {
+                // Keep the original guard decision even if diagnostic logging fails.
+            }
+        }
+        return allowed;
+    }
+
+    private static long ageMillis(long now, long timestamp) {
+        return timestamp == 0 ? -1 : TimeUnit.NANOSECONDS.toMillis(now - timestamp);
     }
 
     @Override
@@ -75,6 +110,8 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
             return;
         }
         long started = System.nanoTime();
+        CheckTiming previous = checkTiming;
+        checkTiming = new CheckTiming(started, previous.completed(), previous.duration(), true);
         try {
             if (blocked.get() || !redis.isConnected() || !redis.areSubscriptionsReady()) {
                 throw new IllegalStateException();
@@ -105,6 +142,9 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
                 log.warn("event=chat_runtime_closed exception={}", unavailable.getClass().getSimpleName());
             }
             participation.failClosed("runtime_check", unavailable, started);
+        } finally {
+            long completed = System.nanoTime();
+            checkTiming = new CheckTiming(started, completed, completed - started, false);
         }
     }
 

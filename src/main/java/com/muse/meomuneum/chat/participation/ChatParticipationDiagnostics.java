@@ -18,6 +18,7 @@ final class ChatParticipationDiagnostics {
     private final String task;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean transactionFailed = new AtomicBoolean();
+    private final AtomicBoolean unavailable = new AtomicBoolean();
 
     ChatParticipationDiagnostics(String environment, String task) {
         this.environment = environment;
@@ -34,6 +35,19 @@ final class ChatParticipationDiagnostics {
         if (transactionFailed.compareAndSet(false, true)) {
             record("chat_participation_first_transaction_failure", stage, failure, started);
         }
+    }
+
+    boolean unavailable(String reason, long leaseRemaining) {
+        if (unavailable.compareAndSet(false, true)) {
+            try {
+                log.warn("event=chat_participation_first_unavailable environment={} task={} reason={} "
+                        + "local_lease_remaining_ms={}", environment, task, symbol(reason),
+                        TimeUnit.NANOSECONDS.toMillis(leaseRemaining));
+            } catch (RuntimeException ignored) {
+                // Observability must not change the availability decision.
+            }
+        }
+        return false;
     }
 
     private void record(String event, String stage, Throwable failure, long started) {
