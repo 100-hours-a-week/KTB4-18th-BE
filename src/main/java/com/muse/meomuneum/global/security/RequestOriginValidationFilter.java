@@ -19,9 +19,12 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
     private static final Set<String> STATE_CHANGING_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
 
     private final Set<String> allowedOrigins;
+    private final Set<String> exactAllowedOrigins;
     private final SecurityErrorResponseWriter errorResponseWriter;
 
     public RequestOriginValidationFilter(String allowedOrigins, SecurityErrorResponseWriter errorResponseWriter) {
+        this.exactAllowedOrigins = Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim).collect(Collectors.toUnmodifiableSet());
         this.allowedOrigins = Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .map(origin -> normalizeOrigin(origin, false))
@@ -33,22 +36,43 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        if (STATE_CHANGING_METHODS.contains(request.getMethod().toUpperCase(Locale.ROOT))
-                && !hasAllowedOrigin(request)) {
-            errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_ORIGIN_DENIED);
+        boolean direct = "direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"));
+        boolean recoveryRead = direct && "GET".equals(request.getMethod())
+                && request.getRequestURI()
+                        .matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery/[^/]+");
+        boolean directOptions = direct && "OPTIONS".equals(request.getMethod())
+                && request.getRequestURI().startsWith("/api/v1/auth/");
+        if ((STATE_CHANGING_METHODS.contains(request.getMethod().toUpperCase(Locale.ROOT)) || recoveryRead
+                || directOptions)
+                && !(recoveryRead && !request.getHeaders("Origin").hasMoreElements()
+                        && java.util.Collections.list(request.getHeaders("Sec-Fetch-Site"))
+                                .equals(java.util.List.of("same-origin")))
+                && !hasAllowedOrigin(request, direct)) {
+            errorResponseWriter.write(request, response, direct
+                    ? SecurityErrorCode.ORIGIN_NOT_ALLOWED
+                    : SecurityErrorCode.AUTH_ORIGIN_DENIED);
             return;
         }
         filterChain.doFilter(request, response);
     }
 
-    private boolean hasAllowedOrigin(HttpServletRequest request) {
+    private boolean hasAllowedOrigin(HttpServletRequest request, boolean direct) {
         String origin = request.getHeader("Origin");
         if (origin != null) {
+            if (direct && java.util.Collections.list(request.getHeaders("Origin")).size() != 1) {
+                return false;
+            }
             if (origin.isBlank()) {
                 return false;
             }
+            if (direct) {
+                return normalizeOrigin(origin, false) != null && exactAllowedOrigins.contains(origin);
+            }
             String normalizedOrigin = normalizeOrigin(origin, false);
             return normalizedOrigin != null && allowedOrigins.contains(normalizedOrigin);
+        }
+        if (direct) {
+            return false;
         }
         String referer = request.getHeader("Referer");
         if (referer == null || referer.isBlank()) {
