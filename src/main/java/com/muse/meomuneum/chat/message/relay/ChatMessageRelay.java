@@ -6,11 +6,14 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,6 +27,7 @@ import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.control.ChatControlEvent;
 import com.muse.meomuneum.chat.control.ChatControlEventConsumer;
+import com.muse.meomuneum.chat.control.ChatPresenceEventCoalescer;
 import com.muse.meomuneum.chat.message.dto.ChatMessageEvent;
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
 import com.muse.meomuneum.chat.message.service.DistributedChatMessageService;
@@ -37,6 +41,8 @@ import io.lettuce.core.pubsub.RedisPubSubAdapter;
 
 /** Both sender and peers use the same Pub/Sub path; ACK remains a DB-commit acknowledgement only. */
 public final class ChatMessageRelay implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(ChatMessageRelay.class);
+    private final AtomicBoolean rejectionReported = new AtomicBoolean();
     private ChatRuntimeMetrics metrics;
 
     @Autowired(required = false)
@@ -66,6 +72,7 @@ public final class ChatMessageRelay implements AutoCloseable {
     private final AtomicBoolean publishing = new AtomicBoolean();
     private final ThreadPoolExecutor publishers = executor("chat-message-publish", 2, 100);
     private final ThreadPoolExecutor receivers = executor("chat-message-receive", 2, 256);
+    private final ChatPresenceEventCoalescer presenceEvents;
     private final LinkedHashMap<String, Long> seen = new LinkedHashMap<>(128, 0.75f, true);
     private final AtomicLong rejected = new AtomicLong();
     private final AtomicLong published = new AtomicLong();
@@ -86,6 +93,9 @@ public final class ChatMessageRelay implements AutoCloseable {
         this.verifier = verifier;
         this.broker = broker;
         this.environment = environment;
+        presenceEvents = new ChatPresenceEventCoalescer(receivers,
+                event -> processControl(event.channel(channels), event.encode()),
+                failure -> receiveRejected(failure, "presence"));
         subscription = redis.openSubscription(channels, new RedisPubSubAdapter<>() {
             @Override
             public void message(String pattern, String channel, String body) {
@@ -194,25 +204,35 @@ public final class ChatMessageRelay implements AutoCloseable {
         if (!ready() || controls == null) {
             return;
         }
+        ChatControlEvent event;
         try {
-            ChatControlEvent.decode(body); // Bound and validate before accepting bytes into the finite queue.
+            event = ChatControlEvent.decode(body);
+            if (!event.channel(channels).equals(channel) || event.epoch() != participation.epoch()) {
+                throw new IllegalArgumentException();
+            }
         } catch (RuntimeException invalid) {
             controls.rejectMalformed();
             return;
         }
+        if (event.type().equals("CHAT_PRESENCE_CHANGED")) {
+            presenceEvents.submit(event);
+            return;
+        }
         try {
-            receivers.execute(() -> {
-                try {
-                    if (ready()) {
-                        controls.receive(channel, channels, body);
-                    }
-                } catch (RuntimeException unavailable) {
-                    failures.incrementAndGet();
-                    failClosed(unavailable);
-                }
-            });
+            receivers.execute(() -> processControl(channel, body));
         } catch (RuntimeException full) {
-            failClosed(full);
+            receiveRejected(full, "control");
+        }
+    }
+
+    private void processControl(String channel, String body) {
+        try {
+            if (ready()) {
+                controls.receive(channel, channels, body);
+            }
+        } catch (RuntimeException unavailable) {
+            failures.incrementAndGet();
+            failClosed(unavailable);
         }
     }
 
@@ -245,8 +265,18 @@ public final class ChatMessageRelay implements AutoCloseable {
                 }
             });
         } catch (RuntimeException full) {
-            failClosed(full); // A dropped queue item is a service interruption, not successful delivery.
+            receiveRejected(full, "message");
         }
+    }
+
+    private void receiveRejected(RuntimeException failure, String kind) {
+        if (failure instanceof RejectedExecutionException && rejectionReported.compareAndSet(false, true)) {
+            log.warn("event=chat_relay_first_receiver_rejected kind={} active={} pool={} queued={} remaining={} "
+                    + "completed={} shutdown={} terminating={}", kind, receivers.getActiveCount(),
+                    receivers.getPoolSize(), receivers.getQueue().size(), receivers.getQueue().remainingCapacity(),
+                    receivers.getCompletedTaskCount(), receivers.isShutdown(), receivers.isTerminating());
+        }
+        failClosed(failure);
     }
 
     private void deliver(ChatMessageRedisEvent event) {
@@ -349,6 +379,7 @@ public final class ChatMessageRelay implements AutoCloseable {
     @Override
     public void close() {
         blocked.set(true);
+        presenceEvents.close();
         subscription.close();
         publishers.shutdownNow();
         receivers.shutdownNow();
