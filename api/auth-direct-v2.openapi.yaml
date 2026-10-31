@@ -438,6 +438,7 @@ paths:
     post:
       operationId: refreshDirectSession
       description: Direct-v2 refresh. X-Auth-Flow-Epoch is the immutable original startingEpoch for this operation, not a value refreshed before retry. After an uncertain outcome FE persists only non-secret operation metadata and manually retries with the same operation ID and startingEpoch. The browser supplies HttpOnly flow and DB-selected refresh cookies. An exact receipt may replay when either original request cookies match the recorded proof or result cookies match the exact current DB result. A later authentication mutation or expired receipt returns 409 with no Set-Cookie/token. DB cookie_mode continues to select legacy or generation-scoped refresh cookies.
+      x-expiry-retry: Live receipt mismatch of startingEpoch or initial client expiry returns 409 AUTH_OPERATION_ID_REUSED. A tombstone with matching ID and epoch returns AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry; epoch mismatch returns AUTH_OPERATION_ID_REUSED. Neither returns credentials or cookies.
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
@@ -484,6 +485,13 @@ paths:
           type: string
           format: uri
           minLength: 1
+      - in: header
+        name: X-Auth-Client-Expires-At
+        required: true
+        description: Single physical header containing the immutable initial client expiry in Unix epoch milliseconds; repeat exactly on retries.
+        schema:
+          type: string
+          pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
       security:
       - DirectFlowProofCookie: []
         DirectRefreshCookie: []
@@ -567,20 +575,20 @@ paths:
         - flowId
         - operationKind=REFRESH
         - operationId
-        sameOperationRetry: Repeat the original flowId, startingEpoch and operationId; never replace startingEpoch with the current flow epoch.
+        sameOperationRetry: Repeat the original flowId, startingEpoch, operationId and client expiry; never replace startingEpoch with the current flow epoch.
         proofAlternatives:
         - name: original-request-proof
           allOf:
-          - original direct flow proof cookie generation equals receipt.proofCookieGeneration
+          - original flow proof keyed HMAC matches receipt.originalFlowCookieHmac in constant time
           - browser-supplied original refresh credential HMAC-SHA-256 fingerprint constant-time matches receipt.originalRefreshTokenFingerprint
           - receipt flowId/startingEpoch/operationId match
         - name: committed-result-proof
           allOf:
-          - direct flow proof cookie generation equals receipt.resultFlowCookieGeneration
+          - exact result flow proof matches the canonical current flow and receipt result generation
           - browser-supplied refresh credential hash equals current MySQL active session hash
           - active session refresh generation equals receipt.resultRefreshGeneration
           - current canonical flow/session tuple equals receipt result tuple
-        replaySuccess: Replay the exact saved response body and only the receipt result cookie names/generations while receipt.expiresAt is after DB current time and result remains canonical.
+        replaySuccess: Replay the exact saved response body and only the receipt result cookie names/generations while receipt expiry and fixed server cutoff are strictly after DB current time and result remains canonical.
         superseded: 409 AUTH_OPERATION_SUPERSEDED; no token or Set-Cookie.
         expired: 409 AUTH_OPERATION_RECEIPT_EXPIRED; no token or Set-Cookie.
         operationIdReuse: 409 AUTH_OPERATION_ID_REUSED if kind/flow/original startingEpoch/request binding differs.
@@ -718,11 +726,11 @@ paths:
         proofAlternatives:
         - name: original-request-proof
           allOf:
-          - direct flow proof cookie generation equals receipt.proofCookieGeneration
+          - original flow proof keyed HMAC constant-time matches receipt.originalFlowCookieHmac; generation alone is insufficient
           - receipt flowId/startingEpoch/operationId match
         - name: committed-anonymous-result-proof
           allOf:
-          - direct flow proof cookie generation equals receipt.resultFlowCookieGeneration
+          - exact result flow proof matches the canonical current flow and stored result generation; generation alone is insufficient
           - canonical flow epoch/revision equals receipt result
           - lifecycle is ANONYMOUS
           - no active session/login owner/queue ticket
@@ -1035,6 +1043,7 @@ paths:
       operationId: recoverRefreshSessionExplicitly
       summary: Explicitly recover a session after losing refresh response and flow proof
       description: User-triggered bodyless POST. Requires exact source REFRESH operation ID and immutable original startingEpoch, same-flow browser-binding cookie, CSRF cookie/header, and actual allowlisted Origin. It never replays the source refresh result. Same-ID exact replay is allowed only while still canonical. 202 and errors never set cookies or return credentials. All responses are no-store.
+      x-expiry-retry: Live receipt mismatch of startingEpoch or initial client expiry returns 409 AUTH_OPERATION_ID_REUSED. A tombstone with matching ID and epoch returns AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry; epoch mismatch returns AUTH_OPERATION_ID_REUSED. Neither returns credentials or cookies.
       parameters:
       - in: path
         name: operationId
@@ -1087,6 +1096,13 @@ paths:
         schema:
           type: string
           minLength: 1
+      - in: header
+        name: X-Auth-Recovery-Client-Expires-At
+        required: true
+        description: Single physical header containing the immutable initial client expiry in Unix epoch milliseconds; repeat exactly on retries.
+        schema:
+          type: string
+          pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
       security:
       - BrowserBindingProofCookie: []
         CsrfCookie: []
@@ -1236,7 +1252,7 @@ paths:
     get:
       operationId: getRefreshSessionRecoveryStatus
       summary: Read-only explicit refresh-session recovery status
-      description: No-store status GET. Requires exact source REFRESH ID and immutable startingEpoch, same-flow browser-binding cookie, and actual allowlisted Origin. No CSRF is required. It never sets/expires cookies, returns credentials/proof, mutates receipt/pointer/expiry, or consumes quota.
+      description: No-store status GET. Requires exact source REFRESH ID and immutable startingEpoch, same-flow browser-binding cookie, and the Origin or Fetch Metadata rule below. No CSRF is required. It never sets/expires cookies, returns credentials/proof, mutates receipt/pointer/expiry, or consumes quota.
       parameters:
       - in: path
         name: operationId
@@ -1269,8 +1285,8 @@ paths:
           example: '7'
       - in: header
         name: Origin
-        required: true
-        description: Actual browser Origin; exact configured allowlist match required. Referer is not a substitute.
+        required: false
+        description: When present, exactly one nonempty non-null physical value must match the configured allowlist. Duplicates, merged values and mismatch are rejected; Fetch Metadata cannot override it. Referer is not a substitute.
         schema:
           type: string
           format: uri
@@ -1282,6 +1298,12 @@ paths:
         schema:
           type: string
           format: uuid
+      - in: header
+        name: Sec-Fetch-Site
+        required: false
+        description: When Origin is present this header is unrestricted. Only when Origin is absent, exactly one physical value equal to same-origin is required; missing, duplicate, merged or other values are rejected.
+        schema:
+          type: string
       security:
       - BrowserBindingProofCookie: []
       responses:
@@ -1310,7 +1332,7 @@ paths:
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ErrorEnvelopeRefreshRecovery400"
+                "$ref": "#/components/schemas/ErrorEnvelopeRefreshRecoveryRead400"
         '403':
           description: Actual Origin rejected.
           headers:
@@ -1369,7 +1391,7 @@ paths:
     get:
       operationId: getCurrentRefreshSessionRecovery
       summary: Read-only discovery of the current refresh-session recovery ID
-      description: No-store discovery GET by the exact source REFRESH operation ID. Uses original startingEpoch, same-flow browser-binding proof and actual allowlisted Origin. No CSRF, bearer token, Set-Cookie, credential, quota consumption or mutation. The source REFRESH must still be the canonical latest auth mutation; otherwise return 409 AUTH_OPERATION_SUPERSEDED before reading the recovery pointer, including when an older receipt is retained as a tombstone. For a canonical source, return the live recovery pointer and status; a canonical tombstone is EXPIRED, and an absent pointer is NONE.
+      description: No-store discovery GET by the exact source REFRESH operation ID. Uses original startingEpoch, same-flow browser-binding proof and the Origin or Fetch Metadata rule below. No CSRF, bearer token, Set-Cookie, credential, quota consumption or mutation. The source REFRESH must still be the canonical latest auth mutation; otherwise return 409 AUTH_OPERATION_SUPERSEDED before reading the recovery pointer, including when an older receipt is retained as a tombstone. For a canonical source, return the live recovery pointer and status; a canonical tombstone is EXPIRED, and an absent pointer is NONE.
       parameters:
       - in: path
         name: operationId
@@ -1402,12 +1424,18 @@ paths:
           example: '7'
       - in: header
         name: Origin
-        required: true
-        description: Actual browser Origin; exact configured allowlist match required. Referer is not a substitute.
+        required: false
+        description: When present, exactly one nonempty non-null physical value must match the configured allowlist. Duplicates, merged values and mismatch are rejected; Fetch Metadata cannot override it. Referer is not a substitute.
         schema:
           type: string
           format: uri
           minLength: 1
+      - in: header
+        name: Sec-Fetch-Site
+        required: false
+        description: When Origin is present this header is unrestricted. Only when Origin is absent, exactly one physical value equal to same-origin is required; missing, duplicate, merged or other values are rejected.
+        schema:
+          type: string
       security:
       - BrowserBindingProofCookie: []
       responses:
@@ -1436,7 +1464,7 @@ paths:
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ErrorEnvelopeRefreshRecovery400"
+                "$ref": "#/components/schemas/ErrorEnvelopeRefreshRecoveryRead400"
         '403':
           description: Actual Origin rejected; GET does not validate CSRF.
           headers:
@@ -1658,6 +1686,7 @@ components:
       enum:
       - INVALID_LOGIN_PROTOCOL
       - INVALID_OPERATION_ID
+      - INVALID_CLIENT_EXPIRY
       - INVALID_CREDENTIALS
       - AUTH_LOGIN_IN_PROGRESS
       - LOGIN_RESULT_REQUIRES_RECOVERY
@@ -2403,6 +2432,7 @@ components:
             enum:
             - INVALID_LOGIN_PROTOCOL
             - INVALID_OPERATION_ID
+            - INVALID_CLIENT_EXPIRY
             - INVALID_AUTH_FLOW_TUPLE
           data:
             type: 'null'
@@ -2712,7 +2742,21 @@ components:
       - reasonCode
       - leaseExpiresAt
       - receiptExpiresAt
+      - clientExpiresAt
+      - effectiveExpiresAt
       properties:
+        clientExpiresAt:
+          description: Immutable initial client expiry as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
+        effectiveExpiresAt:
+          description: Fixed server DB-clock retry cutoff as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
         flowId:
           type: string
           format: uuid
@@ -2771,6 +2815,30 @@ components:
             format: date-time
           - type: 'null'
       allOf:
+      - if:
+          properties:
+            kind:
+              enum: [LOGIN, LOGOUT]
+          required: [kind]
+        then:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+            effectiveExpiresAt:
+              type: 'null'
+      - if:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+          required: [clientExpiresAt]
+        then:
+          properties:
+            effectiveExpiresAt:
+              type: 'null'
+        else:
+          properties:
+            effectiveExpiresAt:
+              type: string
       - if:
           properties:
             status:
@@ -3016,7 +3084,21 @@ components:
       - leaseExpiresAt
       - resultEpoch
       - resultRevision
+      - clientExpiresAt
+      - effectiveExpiresAt
       properties:
+        clientExpiresAt:
+          description: Immutable initial client expiry as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
+        effectiveExpiresAt:
+          description: Fixed server DB-clock retry cutoff as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
         flowId:
           type: string
           format: uuid
@@ -3057,6 +3139,30 @@ components:
             example: '1'
           - type: 'null'
       allOf:
+      - if:
+          properties:
+            status:
+              enum: [NOT_RECEIVED]
+          required: [status]
+        then:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+            effectiveExpiresAt:
+              type: 'null'
+      - if:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+          required: [clientExpiresAt]
+        then:
+          properties:
+            effectiveExpiresAt:
+              type: 'null'
+        else:
+          properties:
+            effectiveExpiresAt:
+              type: string
       - if:
           properties:
             status:
@@ -3236,6 +3342,24 @@ components:
             enum:
             - INVALID_LOGIN_PROTOCOL
             - INVALID_OPERATION_ID
+            - INVALID_CLIENT_EXPIRY
+            - INVALID_AUTH_FLOW_TUPLE
+          data:
+            type: 'null'
+        additionalProperties: false
+    ErrorEnvelopeRefreshRecoveryRead400:
+      allOf:
+      - "$ref": "#/components/schemas/EnvelopeBase"
+      - type: object
+        required:
+        - message
+        - data
+        properties:
+          message:
+            type: string
+            enum:
+            - INVALID_LOGIN_PROTOCOL
+            - INVALID_OPERATION_ID
             - INVALID_AUTH_FLOW_TUPLE
           data:
             type: 'null'
@@ -3332,7 +3456,21 @@ components:
       - leaseExpiresAt
       - resultEpoch
       - resultRevision
+      - clientExpiresAt
+      - effectiveExpiresAt
       properties:
+        clientExpiresAt:
+          description: Immutable initial client expiry as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
+        effectiveExpiresAt:
+          description: Fixed server DB-clock retry cutoff as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
         flowId:
           type: string
           format: uuid
@@ -3377,6 +3515,30 @@ components:
             example: '1'
           - type: 'null'
       allOf:
+      - if:
+          properties:
+            status:
+              enum: [NONE, EXPIRED]
+          required: [status]
+        then:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+            effectiveExpiresAt:
+              type: 'null'
+      - if:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+          required: [clientExpiresAt]
+        then:
+          properties:
+            effectiveExpiresAt:
+              type: 'null'
+        else:
+          properties:
+            effectiveExpiresAt:
+              type: string
       - if:
           properties:
             status:
@@ -3548,7 +3710,21 @@ components:
       - leaseExpiresAt
       - resultEpoch
       - resultRevision
+      - clientExpiresAt
+      - effectiveExpiresAt
       properties:
+        clientExpiresAt:
+          description: Immutable initial client expiry as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
+        effectiveExpiresAt:
+          description: Fixed server DB-clock retry cutoff as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          oneOf:
+          - type: string
+            pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
+          - type: 'null'
         flowId:
           type: string
           format: uuid
@@ -3575,6 +3751,20 @@ components:
           type: 'null'
         resultRevision:
           type: 'null'
+      allOf:
+      - if:
+          properties:
+            clientExpiresAt:
+              type: 'null'
+          required: [clientExpiresAt]
+        then:
+          properties:
+            effectiveExpiresAt:
+              type: 'null'
+        else:
+          properties:
+            effectiveExpiresAt:
+              type: string
     ErrorEnvelopeRefreshRecoveryLeaseExpired409:
       allOf:
       - "$ref": "#/components/schemas/EnvelopeBase"
@@ -3717,7 +3907,7 @@ x-negative-receipt-policy:
   - First look up the exact operation ID; then in a short flow-row-lock transaction re-read it, validate the tuple, and check the 20-live-receipt quota. If at limit, return 429 before attempting a permit.
   - If below quota, release the DB lock and make one nonblocking per-process BCrypt permit attempt. If unavailable, reacquire the flow lock and repeat exact-operation/tuple/quota/active-owner checks. At the limit return 429 without a receipt; if a peer owns the flow below the limit, persist NOT_ADMITTED with reason_code AUTH_LOGIN_IN_PROGRESS and return 409 AUTH_LOGIN_IN_PROGRESS; only if there is no peer owner and quota remains below 20 persist NOT_ADMITTED with reason_code AUTH_BCRYPT_CAPACITY and return 503.
   - If a permit was acquired, reacquire the flow lock and repeat exact-operation/tuple/quota/active-owner checks. If the quota reached 20 or another operation now owns the flow, release the permit before returning; never start BCrypt. At the quota limit return 429 without a receipt. Below the quota, a peer-owner conflict persists NOT_ADMITTED with reason_code AUTH_LOGIN_IN_PROGRESS and returns 409.
-  - Only after an IN_PROGRESS owner claim is committed may BCrypt start outside the transaction.
+  - Under flow then operation locks, each IN_PROGRESS claim records a newly generated random owner_token and lease. Only after the claim commits may BCrypt start outside the transaction. Login does not reclaim the same ID after expiry; any future reclaim policy must issue a fresh owner token.
   permitUnavailable: 'When all 250 process-local BCrypt permits are occupied, after the locked recheck confirms the operation is still new, the tuple is valid, no peer owner is active, and fewer than 20 negative receipts are live, return HTTP 503 AUTH_BCRYPT_CAPACITY and create a durable NOT_ADMITTED receipt with reason_code AUTH_BCRYPT_CAPACITY without BCrypt execution and without flow mutation. If a peer owner is active, apply quota precedence under the flow lock: when fewer than 20 negative receipts are live, return HTTP 409 AUTH_LOGIN_IN_PROGRESS and create one NOT_ADMITTED receipt with reason_code AUTH_LOGIN_IN_PROGRESS instead of a capacity receipt; when 20 negative receipts are live, including a peer-owner race that filled the quota, return HTTP 429 AUTH_OPERATION_RECEIPT_LIMIT with Retry-After and create no receipt. Release any provisionally acquired permit before a 409 or 429 rejection; BCrypt does not start and flow ownership is not changed.'
   atLimit: If a locked quota check finds 20 live negative receipts in the 900-second window, return HTTP 429 AUTH_OPERATION_RECEIPT_LIMIT with Retry-After and create no receipt. Do not attempt a permit when the initial locked check is at limit. If a permit was provisionally acquired after a below-limit check but a later locked recheck finds the limit full, release it before 429; no permit remains owned, BCrypt does not start, and the flow is not mutated.
   retention: Full negative receipt expires 900 seconds after terminal commit; retain a minimal non-secret ID tombstone until 86,400 seconds after receipt expiry; expired rows do not count toward the live 20-row cap.
@@ -3737,10 +3927,10 @@ x-exact-operation-replay:
   - LOGOUT
   identity: "(flow_id, operation_kind, operation_id); startingEpoch and proof are immutable request bindings, not part of the unique key."
   lookup: After validating exact protocol marker and tuple shape, acquire flow then receipt locks and look up the exact direct-v2 receipt before applying current-generation checks.
-  originalCookieProof: Original flow-cookie generation plus original refresh-cookie HMAC fingerprint for refresh; original flow-cookie generation for logout. The receipt startingEpoch and operation ID must match.
-  resultCookieProof: Result flow-cookie generation and, for refresh, active refresh-cookie hash/generation must equal both the stored result and current canonical MySQL session.
-  refreshReplay: Replay exact encrypted response body and exact result refresh cookie only while the original operation result is still canonical; do not mint a new access token or rotate a generation.
-  logoutReplay: Replay only the exact anonymous result epoch/revision/generation, do not increment epoch again, and expire only the cookie names recorded for that operation.
+  originalCookieProof: Original flow-cookie keyed HMAC and, for refresh, original refresh-cookie HMAC fingerprint must match in constant time; generation alone is insufficient. Receipt startingEpoch and operation ID must match. Exact canonical result proofs are the alternative.
+  resultCookieProof: Exact result flow proof and, for refresh, active refresh proof, SID and generations must match the stored result and current canonical MySQL session; generation alone is insufficient.
+  refreshReplay: Replay exact encrypted response body and exact result flow and refresh cookies only while the original operation result is still canonical; do not mint a new access token or rotate a generation.
+  logoutReplay: Replay the exact stored active result flow cookie and anonymous result epoch/revision/generation, do not increment epoch again, and expire only the cookie names recorded for that operation.
   superseded: A newer login/refresh/logout returns 409 AUTH_OPERATION_SUPERSEDED with no Set-Cookie or token.
   expired: Full response receipt is valid for 900 seconds. During the next 86,400 seconds a minimal identity tombstone returns 409 AUTH_OPERATION_RECEIPT_EXPIRED with no Set-Cookie/token. After tombstone purge the idempotency horizon ends; FE's 900-second metadata has already expired.
 x-cors-expose-headers:
@@ -3760,12 +3950,13 @@ x-replay-ciphertext-contract:
   v2Payloads:
   - operation-response-body
   - refresh-cookie-token
+  - direct-operation-flow-cookie
   - rebootstrap-flow-cookie
   - refresh-recovery-response-body
   - refresh-recovery-refresh-cookie
   - refresh-recovery-flow-cookie
   - bootstrap-exact-response
-  storage: Distinct payload types map respectively to auth_direct_operation_receipts.encrypted_result_response_body and .encrypted_result_refresh_token; auth_flow_rebootstrap_operations.result_flow_cookie_ciphertext; auth_refresh_recovery_operations.encrypted_result_response_body, .encrypted_result_refresh_cookie and .encrypted_result_flow_cookie; auth_flow_bootstrap_operations.encrypted_exact_response. Bootstrap payload contains exact body and ordered physical Set-Cookie lines. No plaintext secrets persist.
+  storage: Distinct payload types map respectively to auth_direct_operation_receipts.encrypted_result_response_body, .encrypted_result_refresh_token and .encrypted_result_flow_cookie; auth_flow_rebootstrap_operations.result_flow_cookie_ciphertext; auth_refresh_recovery_operations.encrypted_result_response_body, .encrypted_result_refresh_cookie and .encrypted_result_flow_cookie; auth_flow_bootstrap_operations.encrypted_exact_response. Bootstrap payload contains exact body and ordered physical Set-Cookie lines. No plaintext secrets persist.
   aadFields:
   - payloadType
   - tablePurpose
@@ -3786,7 +3977,7 @@ x-replay-ciphertext-contract:
   failure: Unknown version, malformed envelope, invalid tag, swapped row/column/payload, or mismatched AAD fails closed with no token or cookie.
   key: 'Use HKDF-SHA256 extract-and-expand with the exact existing high-entropy encryption-key bytes as IKM, fixed public UTF-8 salt meomuneum/auth-replay/v2/hkdf-salt and fixed UTF-8 info meomuneum/auth-replay/v2/aes-256-gcm, output 32 bytes as the AES-256-GCM v2 key. Salt and info have no terminator. They are domain labels, not secrets; reject missing, malformed, or insufficient-entropy key material rather than treating a password as a key. Unprefixed v1 data continues to use the original key and existing no-AAD decrypt path. Only rrc:v2: with version byte 2 dispatches to the derived v2 key and specified AAD; unknown prefixes, versions, malformed envelopes, invalid tags, wrong keys, and AAD mismatches fail closed without fallback or credential output.'
   aadBindings:
-    direct: tablePurpose auth_direct_operation_receipts; operationKind REFRESH or LOGOUT; sourceOperationId is operation ID; auxiliaryOperationId empty.
+    direct: tablePurpose auth_direct_operation_receipts; operationKind REFRESH or LOGOUT; sourceOperationId is operation ID; auxiliaryOperationId empty. For payloadType direct-operation-flow-cookie bind immutable row flow ID, source ID, starting/result epochs, result revision and applicable result generations in the listed 15-field order; inapplicable fields are empty. Never substitute mutable values.
     rebootstrap: tablePurpose auth_flow_rebootstrap_operations; operationKind REBOOTSTRAP; sourceOperationId is rebootstrap ID; auxiliaryOperationId empty.
     recovery: tablePurpose auth_refresh_recovery_operations; operationKind REFRESH_RECOVERY; sourceOperationId is source REFRESH ID; auxiliaryOperationId is recovery ID.
     bootstrap: tablePurpose auth_flow_bootstrap_operations; operationKind BOOTSTRAP; sourceOperationId is bootstrap ID; auxiliaryOperationId empty; startingEpoch empty if no starting flow. Bind resultBindingGeneration, requestFingerprint and nullable initialProofFingerprint from committed receipt; those three are empty for other payloads.
@@ -4044,6 +4235,10 @@ x-schema-migration-contract:
     engine: InnoDB
     tableCharacterSetAndCollation: Match auth_browser_flows table default so flow_id foreign keys are metadata-compatible; flow_key_hash alone explicitly uses ascii/ascii_bin.
     columns:
+    - name: owner_token
+      sqlType: BINARY(16)
+      nullable: true
+      default: 'NULL'
     - name: flow_id
       sqlType: CHAR(36)
       nullable: false
@@ -4174,6 +4369,7 @@ x-schema-migration-contract:
       tombstoneSecondsAfterReceiptExpiry: 86400
       tombstoneStatus: TOMBSTONE
       clearOnReceiptExpiry:
+      - owner_token
       - proof_generation
       - lease_expires_at
       - result_epoch
@@ -4206,13 +4402,13 @@ x-schema-migration-contract:
     - REAUTH_REQUIRED
     - TOMBSTONE
     rowInvariants:
-      IN_PROGRESS: proof_generation and lease_expires_at are NOT NULL; receipt_expires_at, tombstone_purge_at, completed_at, all result fields, and all recovery fields are NULL.
-      SUCCEEDED: lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, result_epoch, result_revision, result_sid, result_flow_cookie_generation, and result_refresh_generation are NOT NULL; recovery tuple is all NULL or complete.
-      NOT_ADMITTED: lease_expires_at is NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, result_revision, and reason_code are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
-      INVALID_CREDENTIALS: lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, and result_revision are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
-      SUPERSEDED: lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, and result_revision are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
-      REAUTH_REQUIRED: lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, and result_revision are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
-      TOMBSTONE: receipt_expires_at and tombstone_purge_at are NOT NULL; lease_expires_at, completed_at, proof_generation, reason_code, all result fields, and all recovery fields are NULL.
+      IN_PROGRESS: owner_token, proof_generation and lease_expires_at are NOT NULL; receipt_expires_at, tombstone_purge_at, completed_at, all result fields, and all recovery fields are NULL.
+      SUCCEEDED: owner_token, lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, result_epoch, result_revision, result_sid, result_flow_cookie_generation, and result_refresh_generation are NOT NULL; recovery tuple is all NULL or complete.
+      NOT_ADMITTED: owner_token and lease_expires_at are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, result_revision, and reason_code are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
+      INVALID_CREDENTIALS: owner_token, lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, and result_revision are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
+      SUPERSEDED: owner_token, lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, and result_revision are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
+      REAUTH_REQUIRED: owner_token, lease_expires_at and reason_code are NULL; receipt_expires_at, tombstone_purge_at, completed_at, proof_generation, result_epoch, and result_revision are NOT NULL; result_sid, result_flow_cookie_generation, result_refresh_generation, and recovery fields are NULL.
+      TOMBSTONE: owner_token is NULL; receipt_expires_at and tombstone_purge_at are NOT NULL; lease_expires_at, completed_at, proof_generation, reason_code, all result fields, and all recovery fields are NULL.
     negativeReceiptMapping:
       CAPACITY_REJECTED: Persist as NOT_ADMITTED with reason_code AUTH_BCRYPT_CAPACITY.
       PEER_ACTIVE_REJECTED: Persist as NOT_ADMITTED with reason_code AUTH_LOGIN_IN_PROGRESS.
@@ -4223,6 +4419,7 @@ x-schema-migration-contract:
     stateInvariants:
       IN_PROGRESS:
         requiredNonNull:
+        - owner_token
         - proof_generation
         - lease_expires_at
         requiredNull:
@@ -4252,6 +4449,7 @@ x-schema-migration-contract:
         - result_refresh_generation
         - completed_at
         requiredNull:
+        - owner_token
         - lease_expires_at
         - reason_code
         optionalAllOrNone:
@@ -4270,6 +4468,7 @@ x-schema-migration-contract:
         - reason_code
         - completed_at
         requiredNull:
+        - owner_token
         - lease_expires_at
         - result_sid
         - result_flow_cookie_generation
@@ -4291,6 +4490,7 @@ x-schema-migration-contract:
         - result_revision
         - completed_at
         requiredNull:
+        - owner_token
         - lease_expires_at
         - result_sid
         - reason_code
@@ -4310,6 +4510,7 @@ x-schema-migration-contract:
         - result_revision
         - completed_at
         requiredNull:
+        - owner_token
         - lease_expires_at
         - result_sid
         - reason_code
@@ -4329,6 +4530,7 @@ x-schema-migration-contract:
         - result_revision
         - completed_at
         requiredNull:
+        - owner_token
         - lease_expires_at
         - result_sid
         - reason_code
@@ -4344,6 +4546,7 @@ x-schema-migration-contract:
         - receipt_expires_at
         - tombstone_purge_at
         requiredNull:
+        - owner_token
         - proof_generation
         - lease_expires_at
         - result_epoch
@@ -4371,6 +4574,26 @@ x-schema-migration-contract:
     engine: InnoDB
     tableCharacterSetAndCollation: Match auth_browser_flows table default so flow_id foreign keys are metadata-compatible; flow_key_hash alone explicitly uses ascii/ascii_bin.
     columns:
+    - name: result_session_sid
+      sqlType: VARCHAR(64)
+      nullable: true
+      default: 'NULL'
+    - name: original_flow_cookie_hmac
+      sqlType: BINARY(32)
+      nullable: true
+      default: 'NULL'
+    - name: encrypted_result_flow_cookie
+      sqlType: TEXT
+      nullable: true
+      default: 'NULL'
+    - name: client_expires_at_ms
+      sqlType: BIGINT
+      nullable: true
+      default: 'NULL'
+    - name: effective_expires_at_ms
+      sqlType: BIGINT
+      nullable: true
+      default: 'NULL'
     - name: flow_id
       sqlType: CHAR(36)
       nullable: false
@@ -4482,6 +4705,11 @@ x-schema-migration-contract:
       tombstoneStatus: TOMBSTONE
       clearOnReceiptExpiry:
       - original_flow_cookie_generation
+      - original_flow_cookie_hmac
+      - encrypted_result_flow_cookie
+      - result_session_sid
+      - client_expires_at_ms
+      - effective_expires_at_ms
       - original_refresh_token_hmac
       - result_epoch
       - result_revision
@@ -4504,10 +4732,16 @@ x-schema-migration-contract:
     - SUCCEEDED
     - TOMBSTONE
     rowInvariants:
-      SUCCEEDED: Every SUCCEEDED row requires original_flow_cookie_generation, result_epoch, result_revision, result_flow_cookie_generation, encrypted_result_response_body, receipt_expires_at, tombstone_purge_at, created_at, and completed_at. REFRESH additionally requires original_refresh_token_hmac, result_refresh_generation, and encrypted_result_refresh_token; expired_cookie_names is NULL. LOGOUT requires expired_cookie_names; original_refresh_token_hmac, result_refresh_generation, and encrypted_result_refresh_token are NULL.
-      TOMBSTONE: receipt_expires_at and tombstone_purge_at are NOT NULL; original flow-cookie generation, refresh fingerprints, result tuple/generations, encrypted payloads, expired_cookie_names, and completed_at are NULL.
+      SUCCEEDED: Every new SUCCEEDED row requires original_flow_cookie_hmac, encrypted_result_flow_cookie, original_flow_cookie_generation, result_epoch, result_revision, result_flow_cookie_generation, encrypted_result_response_body, receipt_expires_at, tombstone_purge_at, created_at, and completed_at. REFRESH additionally requires client_expires_at_ms, effective_expires_at_ms, result_session_sid, original_refresh_token_hmac, result_refresh_generation, and encrypted_result_refresh_token; expired_cookie_names is NULL. LOGOUT requires expired_cookie_names; client_expires_at_ms, effective_expires_at_ms, result_session_sid, original_refresh_token_hmac, result_refresh_generation, and encrypted_result_refresh_token are NULL. Legacy rows with missing expiry or proof/result fields are unknown and fail closed without replay or reconstructed values.
+      TOMBSTONE: receipt_expires_at and tombstone_purge_at are NOT NULL; original flow-cookie generation and HMAC, client/effective expiry, result session SID, refresh fingerprints, result tuple/generations, encrypted payloads, expired_cookie_names, and completed_at are NULL.
     operationKindInvariants:
       REFRESH:
+        requiredNonNullForNewLiveRows:
+        - client_expires_at_ms
+        - effective_expires_at_ms
+        - result_session_sid
+        - original_flow_cookie_hmac
+        - encrypted_result_flow_cookie
         requiredNonNull:
         - original_refresh_token_hmac
         - result_refresh_generation
@@ -4515,9 +4749,15 @@ x-schema-migration-contract:
         requiredNull:
         - expired_cookie_names
       LOGOUT:
+        requiredNonNullForNewLiveRows:
+        - original_flow_cookie_hmac
+        - encrypted_result_flow_cookie
         requiredNonNull:
         - expired_cookie_names
         requiredNull:
+        - client_expires_at_ms
+        - effective_expires_at_ms
+        - result_session_sid
         - original_refresh_token_hmac
         - result_refresh_generation
         - encrypted_result_refresh_token
@@ -4636,6 +4876,14 @@ x-schema-migration-contract:
     engine: InnoDB
     tableCharacterSetAndCollation: Match auth_browser_flows so flow_id foreign key metadata is compatible.
     columns:
+    - name: client_expires_at_ms
+      sqlType: BIGINT
+      nullable: true
+      default: 'NULL'
+    - name: effective_expires_at_ms
+      sqlType: BIGINT
+      nullable: true
+      default: 'NULL'
     - name: flow_id
       sqlType: CHAR(36)
       nullable: false
@@ -4644,6 +4892,11 @@ x-schema-migration-contract:
       sqlType: CHAR(36)
       nullable: false
       default: NONE
+    - name: source_operation_kind
+      sqlType: VARCHAR(16)
+      nullable: false
+      default: REFRESH
+      constraint: CHECK source_operation_kind = 'REFRESH'
     - name: source_refresh_operation_id
       sqlType: CHAR(36)
       nullable: false
@@ -4654,16 +4907,16 @@ x-schema-migration-contract:
       default: NONE
     - name: binding_generation
       sqlType: BIGINT
-      nullable: false
-      default: NONE
+      nullable: true
+      default: 'NULL'
     - name: claim_flow_cookie_generation
       sqlType: BIGINT
-      nullable: false
-      default: NONE
+      nullable: true
+      default: 'NULL'
     - name: claim_refresh_generation
       sqlType: BIGINT
-      nullable: false
-      default: NONE
+      nullable: true
+      default: 'NULL'
     - name: status
       sqlType: VARCHAR(24)
       nullable: false
@@ -4743,6 +4996,12 @@ x-schema-migration-contract:
       - flow_id
       onDelete: RESTRICT
       onUpdate: RESTRICT
+    - name: FK_AUTH_REFRESH_RECOVERY_SOURCE
+      columns: [flow_id, source_operation_kind, source_refresh_operation_id]
+      referencedTable: auth_direct_operation_receipts
+      referencedColumns: [flow_id, operation_kind, operation_id]
+      onDelete: RESTRICT
+      onUpdate: RESTRICT
     indexes:
     - name: IDX_AUTH_REFRESH_RECOVERY_SOURCE
       columns:
@@ -4773,11 +5032,11 @@ x-schema-migration-contract:
       - IN_PROGRESS
       - SUCCEEDED
       - TOMBSTONE
-      onReceiptExpiry: Under flow then one recovery receipt lock, scrub owner/lease/SID/result/ciphertext and set TOMBSTONE. Keep the discovery pointer only while its source remains canonical. A later auth mutation may clear the live pointer but never deletes the tombstone.
+      onReceiptExpiry: Under flow then one recovery receipt lock, scrub owner/lease/SID/result/ciphertext, client/effective expiry and all three claim generations and set TOMBSTONE. Keep the discovery pointer only while its source remains canonical. A later auth mutation may clear the live pointer but never deletes the tombstone.
       onPurge: Under flow then one recovery receipt lock after tombstone_purge_at, delete tombstone and clear the flow pointer only when flow/source/recovery IDs all match.
     rowInvariants:
-      IN_PROGRESS: owner_token and lease_expires_at are NOT NULL; result fields/ciphertexts/completed_at are NULL.
-      SUCCEEDED: owner_token and lease_expires_at are NULL; completed_at, result tuple/generations/SID and encrypted exact result are NOT NULL.
+      IN_PROGRESS: binding_generation, claim_flow_cookie_generation, claim_refresh_generation, owner_token and lease_expires_at are NOT NULL; result fields/ciphertexts/completed_at are NULL.
+      SUCCEEDED: binding_generation, claim_flow_cookie_generation and claim_refresh_generation are NOT NULL; owner_token and lease_expires_at are NULL; completed_at, result tuple/generations/SID and encrypted exact result are NOT NULL.
       RESULT_STALE: Not a stored receipt state; derive from captured/result generations and the canonical flow pointer. No receipt-row mutation is needed for read-only stale reporting.
       TOMBSTONE: Only flow ID, recovery ID, source REFRESH ID, starting_epoch, status, fixed expiry/purge timestamps and audit timestamps remain; current discovery pointer is retained until purge.
     flowDeletionContract:
@@ -5007,9 +5266,9 @@ x-schema-migration-contract:
     lockOrder:
     - auth_browser_flows.flow_id FOR UPDATE
     - auth_login_operations(flow_id, operation_id) FOR UPDATE
-    recoveryTransition: Under the flow-first locks, re-read the operation and require status IN_PROGRESS, lease_expires_at <= CURRENT_TIMESTAMP(6), and flow.active_login_operation_id = operation_id. Atomically set status REAUTH_REQUIRED, lease_expires_at NULL, result_epoch to the unchanged flow epoch, result_revision to flow.revision + 1, receipt_expires_at to DB time + 900 seconds, tombstone_purge_at to receipt_expires_at + 86400 seconds, completed_at to DB time; update flow.revision and clear active_login_operation_id. Do not increment auth epoch or alter existing sessions/cookies.
+    recoveryTransition: Under the flow-first locks, re-read the operation and require status IN_PROGRESS, lease_expires_at <= CURRENT_TIMESTAMP(6), and flow.active_login_operation_id = operation_id. Atomically set status REAUTH_REQUIRED, owner_token and lease_expires_at NULL, result_epoch to the unchanged flow epoch, result_revision to flow.revision + 1, receipt_expires_at to DB time + 900 seconds, tombstone_purge_at to receipt_expires_at + 86400 seconds, completed_at to DB time; update flow.revision and clear active_login_operation_id. Do not increment auth epoch or alter existing sessions/cookies.
     admissionBehavior: A new login claim and a capacity-rejection decision both recover a matching expired active login under the same flow-first locks before deciding ownership/quota. Commit recovery before claiming a different operation. A request that reuses the expired operation ID receives its REAUTH_REQUIRED receipt and must start again with a new operation ID; no request waits in a queue.
-    lateWorkerFence: Before writing a session, outbox event, or SUCCEEDED receipt, the worker locks flow then operation and requires status IN_PROGRESS, the matching active_login_operation_id, captured starting_epoch equal to both operation and current flow epoch, matching proof_generation, and lease_expires_at > CURRENT_TIMESTAMP(6). On any mismatch, roll back all authentication writes; release the in-memory BCrypt permit in finally. A late worker can never restore ownership or complete the expired operation.
+    lateWorkerFence: Before writing a session, outbox event, or SUCCEEDED receipt, the worker locks flow then operation and requires status IN_PROGRESS, captured owner_token equal to the current row owner_token, the matching active_login_operation_id, captured starting_epoch equal to both operation and current flow epoch, matching proof_generation, and lease_expires_at > CURRENT_TIMESTAMP(6). Completion uses the same predicates as a compare-and-set before session, outbox and receipt writes and clears owner_token and lease on every terminal transition. On any mismatch, roll back all authentication writes; release the in-memory BCrypt permit in finally. A late worker can never restore ownership or complete the expired operation.
     cleanupBehavior: The bounded cleanup worker also selects expired IN_PROGRESS rows through the lease-expiry index, locks flow then operation, rechecks the exact predicate and owner pointer, and applies the same idempotent REAUTH_REQUIRED transition. If a different operation already owns the flow, it does not clear that pointer.
     epochBehavior: Expired-login recovery advances flow revision only; logout remains the operation that advances auth epoch.
   bootstrapReceiptCleanup:
@@ -5044,6 +5303,8 @@ x-cors-allow-headers:
 - X-Queue-Cancel-Operation-Id
 - If-Match
 - X-Chat-View-Session
+- X-Auth-Client-Expires-At
+- X-Auth-Recovery-Client-Expires-At
 x-cors-credentials: true
 x-cors-allowed-origins: Explicit configured frontend origin allowlist; no wildcard when credentials are enabled.
 x-refresh-session-recovery-contract:
@@ -5063,7 +5324,7 @@ x-refresh-session-recovery-contract:
     - actual allowlisted Origin
     GET:
     - same-flow browser-binding cookie
-    - actual allowlisted Origin
+    - present Origin must be a single valid exact allowlist match; only when absent a single Sec-Fetch-Site same-origin is accepted
   replay: Explicit same-ID POST returns exact saved fresh result only while source REFRESH and result generations remain canonical; later mutation returns 409/no credentials.
   quota: 20 live recovery IDs per flow/900 seconds; new ID over limit is 429 + Retry-After and inserts no row; GET and same-ID retries do not count.
   retention: receipt_expires_at = LEAST(created_at + 900 seconds, source_refresh.receipt_expires_at); tombstone_purge_at = LEAST(receipt_expires_at + 86400 seconds, source_refresh.tombstone_purge_at); both fixed at claim and never extended.
@@ -5144,3 +5405,16 @@ x-flow-bootstrap-contract:
   - AUTH_OPERATION_SUPERSEDED
   rateLimit: Apply only to new operation IDs; exact receipt reads/replays do not consume a new bootstrap attempt; a rejected new attempt leaves no committed receipt.
 x-direct-v2-wire-integer-contract: All FE-visible epochs, revisions and generations, including request/response headers and nested JSON, are canonical decimal strings in the nonnegative signed 64-bit range; no leading zeros except zero. Enforce field-specific positive minimums. Values are never JSON numbers.
+
+x-refresh-expiry-overlay:
+  wire: Both client expiry headers are single canonical positive epoch millisecond decimal strings, at most 9007199254740991. Missing, duplicate, merged, noncanonical or out-of-range values produce 400 INVALID_CLIENT_EXPIRY before mutation.
+  storage: REFRESH and recovery independently persist immutable client_expires_at_ms and effective_expires_at_ms as BIGINT NULL DEFAULT NULL; new live rows require both, legacy null is unknown, and tombstones scrub both. Never infer or backfill missing values.
+  sourceCutoff: Minimum of client expiry, DB first receipt time plus 900 seconds, and source receipt expiry.
+  recoveryCutoff: Minimum of recovery client expiry, DB first receipt time plus 900 seconds, source cutoff, source receipt expiry and recovery receipt expiry.
+  validity: DB time must be strictly before the fixed cutoff and receipt expiry for each mutation, retry, replay or reclaim. Expired cutoff returns AUTH_OPERATION_RECEIPT_EXPIRED without credentials.
+  fields: Required nullable clientExpiresAt and effectiveExpiresAt return paired recorded values for known live rows; unknown legacy returns both null. LOGIN, LOGOUT, NOT_RECEIVED, NONE and EXPIRED return both null. RESULT_STALE never permits replay.
+  recoveryAdmission: NONE or NOT_RECEIVED without confirmed receipt and cutoff never permits retry. An explicit new first POST requires verified canonical source, both deadlines, saved and read-back new identity and expiry, and direct in-memory evidence that dispatch has not occurred. Reload or uncertainty is GET-only or reauthentication.
+  binding: Browser binding proof survives reload only within its fixed 1800 second cookie lifetime; absence or invalid proof requires reauthentication. Reads never extend it.
+  persistence: Login owner_token is BINARY(16) NULL DEFAULT NULL. Direct result_session_sid, original_flow_cookie_hmac and encrypted_result_flow_cookie are nullable default null; live REFRESH and LOGOUT bind original proof and exact result flow cookie ciphertext using v2 direct-operation-flow-cookie AAD. REFRESH also fences canonical session SID and generations. Tombstones scrub sensitive results and retain identity and purge horizon.
+  recoveryPersistence: Recovery binding_generation, claim_flow_cookie_generation and claim_refresh_generation are BIGINT NULL DEFAULT NULL, required for live rows and scrubbed on tombstone. A fixed REFRESH kind and composite RESTRICT source receipt FK preserve source identity; purge recovery before source.
+  originBoundary: The two exact recovery GET routes only accept an exact singleton allowlisted Origin when present; only absent Origin permits singleton Sec-Fetch-Site same-origin. No Referer fallback. Browser binding and canonical DB validation remain mandatory. Proxy must preserve header absence and reject duplicates; deployment requires trusted forwarding and CORS verification.
