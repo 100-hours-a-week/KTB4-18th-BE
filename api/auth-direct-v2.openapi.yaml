@@ -3,7 +3,7 @@ openapi: 3.1.0
 info:
   title: Meomuneum direct-v2 authentication contract
   version: 2.4.0
-  description: 'Cross-area semantic decisions are recorded in auth-contract-matrix.json; this OpenAPI is the exact wire-shape projection and must match it. Normative direct-v2 authentication contract only. Headerless legacy routes retain separate unchanged schemas. Browser-managed cookies are never read or constructed by FE. Refresh/logout operation replay is defined by original startingEpoch plus either original-cookie proof or exact result-cookie proof. MySQL is the canonical source for current-operation lookup and session state. GET /flow/current-operation is read-only and separate from bootstrap. For that lookup, a uniquely valid current direct flow proof wins; otherwise a valid browser-binding proof may be used only for the same flow identified by a rejected flow-proof cookie, or as the sole proof when no flow-proof cookie is present. A unique valid flow proof remains authoritative even if a different-flow binding cookie is also presented. If valid current flow-proof cookies resolve to more than one distinct flow, the result is ambiguous and returns generic AUTH_FLOW_NOT_FOUND without selecting by cookie order or attempting binding fallback. Cross-flow mismatch returns generic AUTH_FLOW_NOT_FOUND only when no current flow proof validates and the request is being resolved through binding fallback. Proposed refresh response-loss recovery: explicit user-triggered session recovery requires the DB-bound browser-binding proof. GET /flow/current-operation may omit flow tuple headers when sessionStorage is unreadable; FE must not guess them.'
+  description: 'Normative direct-v2 authentication wire contract. Headerless legacy routes retain their existing separate behavior where explicitly specified. Browser-managed cookies are never read or constructed by FE. Refresh/logout operation replay is defined by original startingEpoch plus either exact original-cookie proof or exact result-cookie proof, with MySQL canonical state. GET /flow/current-operation is read-only and separate from bootstrap. It validates every current flow-proof candidate: exactly one valid flow proof wins even if an unrelated valid binding proof is present; multiple distinct valid flows return generic AUTH_FLOW_NOT_FOUND without cookie-order choice or binding fallback; binding fallback is considered only when no flow proof validates and is constrained to the same flow key. Proposed refresh response-loss recovery requires DB-bound browser-binding proof and explicit user action. GET /flow/current-operation may omit flow tuple headers when sessionStorage is unreadable; FE must not guess them.'
 servers:
 - url: "/api/v1/auth"
 paths:
@@ -439,6 +439,39 @@ paths:
       operationId: refreshDirectSession
       description: Direct-v2 refresh. X-Auth-Flow-Epoch is the immutable original startingEpoch for this operation, not a value refreshed before retry. After an uncertain outcome FE persists only non-secret operation metadata and manually retries with the same operation ID and startingEpoch. The browser supplies HttpOnly flow and DB-selected refresh cookies. An exact receipt may replay when either original request cookies match the recorded proof or result cookies match the exact current DB result. A later authentication mutation or expired receipt returns 409 with no Set-Cookie/token. DB cookie_mode continues to select legacy or generation-scoped refresh cookies.
       x-expiry-retry: Live receipt mismatch of startingEpoch or initial client expiry returns 409 AUTH_OPERATION_ID_REUSED. A tombstone with matching ID and epoch returns AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry; epoch mismatch returns AUTH_OPERATION_ID_REUSED. Neither returns credentials or cookies.
+      x-refresh-mode-routing:
+        cases:
+        - marker: absent
+          cookie_mode: LEGACY
+          route: legacy
+          contract: existing legacy behavior unchanged
+        - marker: absent
+          cookie_mode: GENERATION_SCOPED
+          route: reject
+          http_status: 503
+          code: AUTH_STATE_UNAVAILABLE
+          legacy_fallback: false
+          credentials: false
+          set_cookie: false
+        - marker: single exact direct-v2
+          route: direct-v2
+          contract: direct-v2 only; no legacy fallback
+        - marker: invalid, empty, duplicate or combined
+          http_status: 400
+          code: INVALID_LOGIN_PROTOCOL
+          route: reject
+          legacy_fallback: false
+        - marker: direct-v2 refresh in LEGACY cookie mode or new mutation when gate disabled
+          route: direct-v2
+          legacy_fallback: false
+          http_status: 503
+          code: AUTH_STATE_UNAVAILABLE
+          note: LEGACY mode blocks both new direct refresh and exact credential/cookie replay with 503 AUTH_STATE_UNAVAILABLE and no token or Set-Cookie. Authorized read-only status remains separate. Headerless legacy remains unchanged in LEGACY mode; GENERATION_SCOPED applies the explicit markerless cutover rejection. Generic 503 does not prove disabled or no commit.
+        markerless_cutover:
+          legacy_mode: existing markerless refresh route remains unchanged
+          generation_scoped_mode: reject markerless fixed-cookie refresh mutation with 503 AUTH_STATE_UNAVAILABLE, no token, no Set-Cookie and no fallback
+          pre_cutover_gate: compatible clients and proof that old processes and in-flight fixed-cookie responses cannot affect new authority; otherwise OFF
+          status: proposed; implementation and actual browser verification required
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
@@ -568,6 +601,22 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelopeRefresh428"
+        '500':
+          description: Application-generated internal error envelope; no token or Set-Cookie. This response contract does not cover gateway 502/504 or transport loss.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - message
+                - data
+                properties:
+                  message:
+                    type: string
+                    const: internal server error
+                  data:
+                    type: 'null'
+                additionalProperties: false
       x-operation-replay-contract:
         operationIdHeader: X-Refresh-Operation-Id
         originalStartingEpochHeader: X-Auth-Flow-Epoch
@@ -593,6 +642,91 @@ paths:
         expired: 409 AUTH_OPERATION_RECEIPT_EXPIRED; no token or Set-Cookie.
         operationIdReuse: 409 AUTH_OPERATION_ID_REUSED if kind/flow/original startingEpoch/request binding differs.
         frontend: Do not retry automatically. Persist flowId, original startingEpoch, operationId, expiresAt in sessionStorage (no credentials/tokens/cookies). After reload, same-ID retry requires explicit user action.
+      x-refresh-revisit-contract:
+        maximumAutomaticFirstDispatches: 1
+        currentOperationNullProvesNoPriorRequest: false
+        never: retry a lost operation automatically or disguise it as a new ID
+        receipt_first_proof_order:
+          prelock: Validate marker, structural headers and CSRF/Origin without requiring current-generation flow proof. Resolve flow safely without revealing identity from unauthenticated inputs.
+          under_flow_lock:
+          - Locate exact flow/kind/operationId receipt or tombstone before applying new-ID current-proof and epoch gates.
+          - 'Live receipt: compare original stored flow and refresh HMAC in constant time OR exact canonical result proof, then verify identity, expiry, cutoff and canonical result. In LEGACY mode no credential/cookie replay: return 503 AUTH_STATE_UNAVAILABLE after security checks; authenticated read-only status remains available.'
+          - 'Scrubbed tombstone or absent receipt: validate current DB-selected flow proof and refresh/session proof independently of ID existence; missing or invalid flow proof yields 428, invalid refresh/session proof yields 401 independent of receipt presence. Valid proof allows same-epoch tombstone expired, different-epoch ID_REUSED.'
+          - Absent receipt requires current proof, starting epoch, unexpired original client expiry and canonical session before new mutation. LEGACY mode blocks all direct refresh, including replay.
+          failure: Ambiguous flow, invalid proof, unavailable state or missing required evidence fail closed without credentials or Set-Cookie.
+        definitiveBLoss:
+          status: 409
+          code: AUTH_REFRESH_STALE
+          requires: B is proven uncommitted, B cannot later commit, the exact negative tombstone commits before response, and the flow quota is available.
+          capacityOrPersistenceFailure: 503 AUTH_STATE_UNAVAILABLE; no definitive stale 409 and preserve FE tuple metadata.
+          allConditions:
+          - flow lock held; exact B receipt and tombstone absent
+          - A is live canonical winner and result remains valid
+          - B original flow and refresh proofs match A original fingerprints in constant time
+          - B presented previous generation and lost the current state race
+          - the server has not committed B and can guarantee B cannot subsequently commit under that tuple
+          - create and commit a durable negative B tombstone in the same transaction before sending 409
+          - reserve capacity and successfully persist tombstone; limit or DB failure cannot emit definitive code
+          negativeTombstone:
+            scope: flowId, kind=REFRESH, operationId B, startingEpoch; negative terminal state and purge deadline
+            retentionSeconds: 86400
+            retentionOrigin: negative tombstone commit DB time
+            scrub: no tokens, cookie values, proofs, HMAC fingerprints, ciphertext or credential result
+            repeatedB: after independent route authorization, matching identity and epoch => 409 AUTH_OPERATION_RECEIPT_EXPIRED, mismatched epoch => 409 AUTH_OPERATION_ID_REUSED; neither returns credentials or Set-Cookie
+            proofPrivacy: Independently validate current canonical flow generation and proof plus DB-selected refresh proof and active canonical session. Invalid flow proof yields receipt-independent 428; invalid refresh/session proof yields receipt-independent 401. Binding proof alone cannot authorize refresh POST.
+            admission: Under flow-first lock count and atomically insert plus commit under the shared flow-wide 20 rejections per 900 seconds budget, including negative REFRESH. No forced eviction; cap, DB failure or uncertain commit => 503 AUTH_STATE_UNAVAILABLE, no definitive response; FE preserves B.
+            limit: Protection lasts until physical purge under documented 24h horizon; do not assert indefinite ID prohibition.
+          frontend:
+          - verify response status and exact code under this contract
+          - compare all four stored fields to dispatched B
+          - delete only exact B and read back empty
+          - user-initiated current-operation GET and exact A tuple readback
+          - separate user action before authorized same-ID A recovery
+          noToken: true
+          noSetCookie: true
+          otherAmbiguousFailures: Use route-allowed 428/409/503 without mislabeling as definitive; FE preserves B. If this stronger code meaning cannot be guaranteed, B deletion is disabled until a distinct verified wire signal is designed.
+        allFailureResponses:
+          statuses: [400, 401, 403, 409, 428, 500, 503]
+          token: false
+          set_cookie: false
+          commit_inference: No credentials alone does not prove no commit; only definitive_b_loss carries the specified no-commit meaning. Transport errors, 5xx and all other ambiguous outcomes preserve B.
+          scope: Application-generated direct refresh failures; upstream gateway 502/504 is external infrastructure and cannot be promised by the application. FE treats such responses as ambiguous and retains B.
+        errorCredentials: false
+        errorSetCookie: false
+        applicationFailureStatuses:
+        - 400
+        - 401
+        - 403
+        - 409
+        - 428
+        - 500
+        - 503
+        gateway502504: Outside application response guarantee; ambiguous.
+      x-refresh-db-authority:
+        success_condition: writer DB confirms session, receipt and required outbox commit and canonical result; immediate Hazelcast projection failure alone does not turn success into failure
+        success_http_status: 200
+        success_credentials: canonical token and generation-scoped Set-Cookie
+        projection: leave delivery pending for durable retry; MySQL writer is authentication authority
+        unknown_condition: DB or required outbox commit outcome or canonical validation unavailable
+        unknown_http_status: 503
+        unknown_code: AUTH_STATE_UNAVAILABLE
+        unknown_token: false
+        unknown_set_cookie: false
+        frontend: preserve exact operation tuple; no automatic retransmission; gateway 502/504, timeout and disconnect are ambiguous independently
+        status: proposed; actual OpenAPI projection and paired tests required
+      x-refresh-negative-receipt-policy:
+        perFlowLimit: 20
+        windowSeconds: 900
+        appliesTo:
+        - Existing login rejection receipts
+        - Negative REFRESH receipts
+        capOrStoreFailure: 503 AUTH_STATE_UNAVAILABLE; never emit definitive AUTH_REFRESH_STALE and preserve FE tuple metadata.
+      x-refresh-retention:
+        live_payload_seconds: 900
+        tombstone_seconds_after_receipt_expiry: 86400
+        no_extension_on_retry: true
+        server_cutoff: min(client expiry, first DB receipt plus 900 seconds, receipt expiry); recovery also clamps to source cutoff and source receipt expiry
+        tombstone: scrub credential/proof payload; after independent current canonical route proof, matching epoch returns 409 AUTH_OPERATION_RECEIPT_EXPIRED. Negative tombstone retains 86400 seconds from commit, full receipt tombstone 86400 seconds from effective deadline. Original client expiry remains binding after purge; indefinite ID uniqueness is not promised.
   "/logout":
     post:
       operationId: logoutDirectSession
@@ -739,6 +873,13 @@ paths:
         expired: 409 AUTH_OPERATION_RECEIPT_EXPIRED; no token or Set-Cookie.
         operationIdReuse: 409 AUTH_OPERATION_ID_REUSED if kind/flow/original startingEpoch differs.
         frontend: Do not retry automatically. Persist flowId, original startingEpoch, operationId, expiresAt in sessionStorage; reload requires explicit same-ID retry.
+      x-proposal-overlay-logout:
+        refresh_first: If a valid identifiable original proof establishes the older logout tuple is superseded, propose 409 AUTH_OPERATION_SUPERSEDED, no token or Set-Cookie. Invalid or missing usable proof follows existing 428 AUTH_FLOW_COOKIE_INVALID or AUTH_FLOW_REQUIRED, rather than assuming an epoch change.
+        frontend: Do not mark logout complete. No automatic replay or tuple rewrite. Explicit proof recovery and user-initiated new logout only after canonical state is established; otherwise reauthenticate/fail closed.
+        logout_first: Once logout commits, earlier refresh cannot issue credentials or Set-Cookie; actual route-specific 409, 428 or 401 follows proof/state validation.
+        errors:
+          '409': [AUTH_FLOW_ID_MISMATCH, AUTH_FLOW_EPOCH_STALE, AUTH_OPERATION_ID_REUSED, AUTH_OPERATION_SUPERSEDED, AUTH_OPERATION_RECEIPT_EXPIRED]
+          '428': [AUTH_FLOW_REQUIRED, AUTH_FLOW_COOKIE_INVALID]
   "/token/csrf":
     get:
       summary: Issue the CSRF token pair
@@ -892,6 +1033,18 @@ paths:
           publicCode: AUTH_FLOW_NOT_FOUND
           selectByCookieOrder: false
           attemptBindingFallback: false
+      x-proposal-overlay-current-operation:
+        source_recovery: Use existing canonical REFRESH currentOperation with original flowId, startingEpoch, operationId, clientExpiresAt and effectiveExpiresAt, plus DB-bound binding and applicable replay proof. Verify schema and readback; explicit user action before mutation.
+        superseded_or_missing_proof: No recovery POST; reauthenticate when proof recovery is unavailable. null is not evidence A was never sent.
+        success:
+          http_status: 200
+          cache_control: no-store
+          set_cookie: false
+          credential: false
+        proof_failure:
+          http_status: 404
+          code: AUTH_FLOW_NOT_FOUND
+        binding_only: proofState REBOOTSTRAP_REQUIRED; binding does not authorize ordinary refresh
   "/flow/rebootstrap":
     post:
       operationId: rebootstrapDirectAuthFlow
