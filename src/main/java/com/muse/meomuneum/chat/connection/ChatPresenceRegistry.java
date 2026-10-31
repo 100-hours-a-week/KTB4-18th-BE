@@ -97,7 +97,7 @@ public class ChatPresenceRegistry {
         if (seat == null || !seat.userId.equals(userId)) {
             return Set.of();
         }
-        int previousCount = connectedCount(seat.roomId);
+        int previousCount = participation == null ? connectedCount(seat.roomId) : 0;
         Set<String> ended = new HashSet<>();
         seat.socketViews.forEach((socket, view) -> {
             if (viewId.equals(view)) {
@@ -140,7 +140,7 @@ public class ChatPresenceRegistry {
         }
         reserve(userId, roomId, membershipId);
         Seat seat = seats.get(membershipId);
-        int previousCount = connectedCount(roomId);
+        int previousCount = participation == null ? connectedCount(roomId) : 0;
         seat.sessions.add(sessionId);
         seat.expiresAt = null;
         changed(roomId, previousCount);
@@ -149,7 +149,7 @@ public class ChatPresenceRegistry {
     public synchronized void disconnect(String sessionId) {
         events.publishEvent(new ChatViewConnectionClosedEvent(sessionId));
         for (Seat seat : seats.values()) {
-            int previousCount = connectedCount(seat.roomId);
+            int previousCount = participation == null ? connectedCount(seat.roomId) : 0;
             seat.subscriptions.remove(sessionId);
             String viewId = seat.socketViews.remove(sessionId);
             if (viewId != null) {
@@ -179,7 +179,7 @@ public class ChatPresenceRegistry {
         if (seat == null) {
             return Set.of();
         }
-        int previousCount = connectedCount(seat.roomId);
+        int previousCount = participation == null ? connectedCount(seat.roomId) : 0;
         seats.remove(membershipId);
         changed(seat.roomId, previousCount);
         return Set.copyOf(seat.sessions);

@@ -16,6 +16,24 @@ import org.junit.jupiter.api.Test;
 
 class ChatPresenceRegistryTest {
     @Test
+    void distributedLocalTransportChangesDoNotReadGlobalCountsForEverySeat() {
+        var registry = new ChatPresenceRegistry(Clock.systemUTC());
+        var participation = org.mockito.Mockito.mock(
+                com.muse.meomuneum.chat.participation.ChatParticipationService.class);
+        registry.setParticipation(participation);
+        for (long user = 1; user <= 500; user++) {
+            registry.connect(user, 10L, user, 1000, "socket-" + user);
+        }
+        registry.attachTab(2L, "view-2", "socket-2");
+        registry.disconnect("socket-1");
+        registry.removeTab(2L, 2L, "view-2");
+        registry.remove(3L, 3L);
+        org.mockito.Mockito.verifyNoInteractions(participation);
+        registry.connectedCount(10L);
+        org.mockito.Mockito.verify(participation).connectedCount(10L);
+    }
+
+    @Test
     void countsActualDistinctAccountsAndVersionsOnlyCountChanges() {
         Clock clock = Clock.systemUTC();
         java.util.List<ChatPresenceChangedEvent> events = new java.util.ArrayList<>();
