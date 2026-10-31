@@ -104,7 +104,7 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
         }
     }
 
-    @Scheduled(fixedDelay = 500, scheduler = "chatRuntimeCheckScheduler")
+    @Scheduled(fixedDelayString = "${chat.runtime.check-delay-ms:500}", scheduler = "chatRuntimeCheckScheduler")
     public void check() {
         if (!running || stopped.get()) {
             return;

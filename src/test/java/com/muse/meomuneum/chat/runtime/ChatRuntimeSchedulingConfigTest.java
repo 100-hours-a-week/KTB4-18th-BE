@@ -15,11 +15,47 @@ import org.springframework.boot.test.util.TestPropertyValues;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.SchedulingAwareRunnable;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.scheduling.config.FixedDelayTask;
 
 class ChatRuntimeSchedulingConfigTest {
+    @Test
+    void runtimeCheckUsesTheExistingDelayByDefault() {
+        assertRuntimeCheckDelay(500);
+    }
+
+    @Test
+    void runtimeCheckUsesTheConfiguredDelay() {
+        assertRuntimeCheckDelay(100, "chat.runtime.check-delay-ms=100");
+    }
+
+    private void assertRuntimeCheckDelay(long expectedMillis, String... properties) {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            TestPropertyValues.of("chat.lifecycle.enabled=true").applyTo(context);
+            TestPropertyValues.of(properties).applyTo(context);
+            context.register(ChatRuntimeSchedulingConfig.class, Fixtures.class);
+            context.refresh();
+            Probe probe = context.getBean(Probe.class);
+            try {
+                var tasks = context.getBean(ScheduledAnnotationBeanPostProcessor.class).getScheduledTasks();
+                var checks = tasks.stream().map(task -> task.getTask())
+                        .filter(task -> task.getRunnable() instanceof SchedulingAwareRunnable runnable
+                                && "chatRuntimeCheckScheduler".equals(runnable.getQualifier()))
+                        .toList();
+                assertThat(checks).hasSize(1);
+                assertThat(checks.getFirst()).isInstanceOf(FixedDelayTask.class);
+                assertThat(((FixedDelayTask) checks.getFirst()).getIntervalDuration().toMillis())
+                        .isEqualTo(expectedMillis);
+            } finally {
+                probe.release.countDown();
+            }
+        }
+    }
+
     @Test
     void schedulerIsCreatedOnlyForTheEnabledLifecycle() {
         var runner = new ApplicationContextRunner().withUserConfiguration(ChatRuntimeSchedulingConfig.class);
