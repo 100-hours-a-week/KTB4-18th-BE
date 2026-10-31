@@ -209,7 +209,7 @@ class DirectAuthOperationMigrationTest {
     @Test
     void freshMigrationHasSameSchema() {
         String url = FRESH.getJdbcUrl();
-        Flyway.configure().dataSource(url, FRESH.getUsername(), FRESH.getPassword()).load().migrate();
+        Flyway.configure().dataSource(url, FRESH.getUsername(), FRESH.getPassword()).target(TARGET).load().migrate();
         JdbcTemplate fresh = new JdbcTemplate(
                 new DriverManagerDataSource(url, FRESH.getUsername(), FRESH.getPassword()));
         verifySchema(fresh);
