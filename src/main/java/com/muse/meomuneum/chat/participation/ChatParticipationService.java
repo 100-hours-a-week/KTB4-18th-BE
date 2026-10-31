@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
@@ -68,9 +69,11 @@ public final class ChatParticipationService {
     private final String environment;
     private final ChatRoomReadBoundaryStore boundaries;
     private final Map<String, Long> claims = new ConcurrentHashMap<>();
-    private final String taskId = UUID.randomUUID().toString();
+    private final String taskId;
     private final ChatParticipationDiagnostics diagnostics;
     private final Set<Long> touchedRooms = ConcurrentHashMap.newKeySet();
+    // Admit before acquiring a DB connection: contended room locks must not consume the shared pool.
+    private final Semaphore transitionAdmission = new Semaphore(2, true);
     private volatile long epoch;
     private volatile long localLease;
     private volatile boolean failed;
@@ -105,6 +108,13 @@ public final class ChatParticipationService {
     public ChatParticipationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
             ChatViewStorageService storage, ChatSessionAccessPolicy access, ChatParticipationProjection projection,
             ApplicationEventPublisher events, ChatSocketSessions sockets, String environment) {
+        this(jdbc, manager, storage, access, projection, events, sockets, environment, UUID.randomUUID().toString());
+    }
+
+    public ChatParticipationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
+            ChatViewStorageService storage, ChatSessionAccessPolicy access, ChatParticipationProjection projection,
+            ApplicationEventPublisher events, ChatSocketSessions sockets, String environment, String taskId) {
+        this.taskId = UUID.fromString(taskId).toString();
         if (environment == null || !environment.matches("[a-z0-9-]{1,32}")) {
             throw new IllegalArgumentException("chat participation environment required");
         }
@@ -408,24 +418,56 @@ public final class ChatParticipationService {
     }
 
     public void assertSocket(long user, long room, long member, String socket) {
-        execute(user, tx -> {
-            tx.lock(List.of(room));
-            List<String> views = jdbc.queryForList("""
-                    SELECT view_id FROM chat_view_runtime WHERE environment=? AND user_id=? AND room_id=?
-                        AND membership_id=? AND owner_task_id=? AND socket_token=? AND epoch=?
-                    """, String.class, environment, user, room, member, taskId, socket, epoch);
-            if (views.size() != 1) {
+        if (!available()) {
+            throw new ChatParticipationUnavailableException();
+        }
+        long started = System.nanoTime();
+        try {
+            // No state transition: one authoritative DB read must not queue behind room writers.
+            var authorizations = jdbc.query("""
+                    SELECT m.auth_session_id,c.mode,c.epoch,
+                        (t.state='ACTIVE' AND t.epoch=v.epoch AND t.lease_until>UTC_TIMESTAMP(6)) AS owner_live,
+                        (u.deleted_at IS NULL) AS user_active,
+                        EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id AND b.deleted_at IS NULL
+                            AND b.created_at<=UTC_TIMESTAMP(6) AND b.expires_at>UTC_TIMESTAMP(6)) AS banned
+                    FROM chat_view_runtime v JOIN chat_view_sessions s ON s.id=v.view_id
+                    JOIN chat_room_members m ON m.id=v.membership_id AND m.user_id=v.user_id AND m.room_id=v.room_id
+                    JOIN users u ON u.id=v.user_id
+                    JOIN chat_runtime_control c ON c.environment=v.environment
+                    LEFT JOIN chat_runtime_tasks t ON t.environment=v.environment AND t.task_id=v.owner_task_id
+                    WHERE v.environment=? AND v.user_id=? AND v.room_id=? AND v.membership_id=?
+                        AND v.owner_task_id=? AND v.socket_token=? AND v.epoch=? AND v.owner_generation=?
+                        AND m.deleted_at IS NULL AND s.ended_at IS NULL
+                        AND (v.state='CONNECTED' OR (v.state='RESERVED' AND v.deadline>UTC_TIMESTAMP(6)))
+                    """, (row, index) -> new SocketAuthorization(row.getString(1), row.getString(2), row.getLong(3),
+                    row.getBoolean(4), row.getBoolean(5), row.getBoolean(6)),
+                    environment, user, room, member, taskId, socket, epoch, claims.getOrDefault(socket, -1L));
+            if (authorizations.size() != 1) {
                 throw denied();
             }
-            RuntimeView current = owned(user, room, member, views.getFirst());
-            requireOwner(current, socket);
-            if (current.state.equals("RESERVED") && !current.deadline.isAfter(now())) {
-                throw denied();
+            var authorization = authorizations.getFirst();
+            if (!available() || !"RUNNING".equals(authorization.mode()) || authorization.epoch() != epoch
+                    || !authorization.ownerLive()) {
+                throw new ChatParticipationUnavailableException();
             }
-            authorizeUser(user, false);
-            access.authorize(user, sid(member));
-            return null;
-        });
+            if (!authorization.userActive()) {
+                throw error(ChatRoomErrorCode.USER_NOT_FOUND);
+            }
+            if (authorization.banned()) {
+                throw error(ChatRoomErrorCode.CHAT_BANNED);
+            }
+            access.authorize(user, authorization.sid());
+            ChatAuthOperation.check();
+        } catch (ChatRoomException rejected) {
+            throw rejected;
+        } catch (RuntimeException unavailable) {
+            diagnostics.transactionFailed("socket_authorization", unavailable, started);
+            throw new ChatParticipationUnavailableException();
+        }
+    }
+
+    private record SocketAuthorization(String sid, String mode, long epoch, boolean ownerLive,
+            boolean userActive, boolean banned) {
     }
 
     public record ReadContext(String environment, long epoch, long generation, long roomSeq,
@@ -716,7 +758,14 @@ public final class ChatParticipationService {
         }
         var tx = new Transition();
         T result;
+        boolean admitted = false;
         try {
+            tx.stage = "local_transition_admission";
+            admitted = transitionAdmission.tryAcquire(1, TimeUnit.SECONDS);
+            if (!admitted) {
+                throw new ChatParticipationUnavailableException();
+            }
+            tx.stage = "transaction_start";
             result = transactions.execute(status -> {
                 tx.stage = "transaction_configuration";
                 jdbc.execute("SET SESSION innodb_lock_wait_timeout=1");
@@ -751,11 +800,16 @@ public final class ChatParticipationService {
                 T applied = action.apply(tx);
                 tx.stage = "control_outbox";
                 for (long room : tx.presence) {
+                    tx.projectionVersions.put(room, tx.version(room));
                     recordControl("CHAT_PRESENCE_CHANGED", room, tx.version(room),
                             Map.of("room_id", room, "room_seq", tx.version(room)));
                 }
                 return applied;
             });
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            diagnostics.transactionFailed(tx.stage, interrupted, tx.started);
+            throw new ChatParticipationUnavailableException();
         } catch (ChatRoomException | ChatQueryException | ChatMessageRejection rejected) {
             throw rejected;
         } catch (ChatParticipationUnavailableException rejected) {
@@ -764,8 +818,14 @@ public final class ChatParticipationService {
         } catch (RuntimeException unavailable) {
             diagnostics.transactionFailed(tx.stage, unavailable, tx.started);
             throw new ChatParticipationUnavailableException();
+        } finally {
+            if (admitted) {
+                transitionAdmission.release();
+            }
         }
-        tx.changed.forEach(this::project);
+        // Release admission before projection/transport callbacks, which may take local presence locks.
+        // Message ordering/checkpoints advance room_seq without changing participation or presence.
+        tx.presence.forEach(room -> project(room, tx.projectionVersions.get(room)));
         return result;
     }
 
@@ -995,16 +1055,28 @@ public final class ChatParticipationService {
     }
 
     private void project(long room) {
+        project(room, 0);
+    }
+
+    private void project(long room, long minimumViewVersion) {
         long started = System.nanoTime();
         String stage = "projection_snapshot";
         try {
             touchedRooms.add(room);
             var snapshot = snapshot(room);
             stage = "redis_projection";
-            projection.write(snapshot);
+            // Counts stay authoritative for the entire room. A transition must not synchronously rewrite
+            // every unchanged view while its caller holds the local connection lifecycle monitor.
+            // Periodic refresh uses minimum version zero to repair missing projection keys.
+            projection.write(new ChatParticipationProjection.Snapshot(snapshot.epoch(), snapshot.roomId(),
+                    snapshot.version(), snapshot.occupied(), snapshot.connected(), snapshot.views().stream()
+                            .filter(view -> view.version() >= minimumViewVersion).toList()));
             stage = "presence_event";
-            events.publishEvent(
-                    new ChatPresenceChangedEvent(room, snapshot.connected(), snapshot.version(), null, null));
+            if (!controlEvents) {
+                // Distributed mode already publishes the committed outbox hint through the coalescing receiver.
+                events.publishEvent(
+                        new ChatPresenceChangedEvent(room, snapshot.connected(), snapshot.version(), null, null));
+            }
         } catch (RuntimeException unavailable) {
             failClosed(stage, unavailable, started);
             throw new ChatParticipationUnavailableException();
@@ -1102,6 +1174,7 @@ public final class ChatParticipationService {
         private String stage = "transaction_start";
         private final Set<Long> changed = new LinkedHashSet<>();
         private final Set<Long> presence = new LinkedHashSet<>();
+        private final Map<Long, Long> projectionVersions = new java.util.HashMap<>();
 
         private void presenceChanged(long room) {
             changed(room);
