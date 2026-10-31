@@ -1,10 +1,7 @@
 package com.muse.meomuneum.auth.application;
 
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,11 +13,7 @@ import org.springframework.http.HttpHeaders;
 import com.muse.meomuneum.auth.config.AuthStateProperties;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
-import com.muse.meomuneum.auth.exception.AuthStateBusyException;
 import com.muse.meomuneum.auth.exception.AuthStateConflictException;
-import com.muse.meomuneum.auth.exception.AuthStateExpiredException;
-import com.muse.meomuneum.auth.exception.AuthStateTooEarlyException;
-import com.muse.meomuneum.auth.exception.AuthStateTooManyRequestsException;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.queue.AuthQueueCookieFactory;
@@ -43,6 +36,8 @@ public final class QueuedLoginService {
     private final RefreshReplayCipher replayCipher;
     private final AuthQueueCookieFactory queueCookieFactory;
     private final AuthStateProperties authStateProperties;
+    private final QueuedLoginDiagnostics diagnostics;
+    private final QueuedLoginRequestSupport requestSupport;
 
     public QueuedLoginService(JwtTokenProvider jwtTokenProvider, JwtProperties jwtProperties,
             RefreshTokenCookieFactory refreshTokenCookieFactory,
@@ -57,6 +52,8 @@ public final class QueuedLoginService {
         this.replayCipher = replayCipher;
         this.queueCookieFactory = queueCookieFactory;
         this.authStateProperties = authStateProperties;
+        this.diagnostics = new QueuedLoginDiagnostics(authStateStore);
+        this.requestSupport = new QueuedLoginRequestSupport();
     }
 
     public TokenResponse login(LoginRequest request, HttpServletRequest servletRequest, HttpHeaders headers) {
@@ -222,85 +219,23 @@ public final class QueuedLoginService {
 
     private <T> T loginStage(HazelcastAuthStateStore.Ticket ticket, String correlationId, String stage,
             Supplier<T> action) {
-        long started = System.nanoTime();
-        try {
-            T result = action.get();
-            if (ticket != null) {
-                authStateStore.diagnosticLoginStage(stage, ticket.ticketId(), "SUCCESS", "NONE",
-                        elapsedMillis(started), null);
-            } else {
-                authStateStore.diagnosticLoginRequestStage(stage, correlationId, "SUCCESS", "NONE",
-                        elapsedMillis(started), null);
-            }
-            return result;
-        } catch (RuntimeException failure) {
-            String errorCode = diagnosticErrorCode(failure);
-            if (ticket != null) {
-                authStateStore.diagnosticLoginStage(stage, ticket.ticketId(), "ERROR", errorCode,
-                        elapsedMillis(started), failure);
-            } else {
-                authStateStore.diagnosticLoginRequestStage(stage, correlationId, "ERROR", errorCode,
-                        elapsedMillis(started), failure);
-            }
-            throw failure;
-        }
+        return diagnostics.loginStage(ticket, correlationId, stage, action);
     }
 
     private String diagnosticErrorCode(RuntimeException failure) {
-        if (failure instanceof AuthStateConflictException conflict) {
-            return conflict.code();
-        }
-        if (failure instanceof AuthStateTooEarlyException tooEarly) {
-            return tooEarly.code();
-        }
-        if (failure instanceof AuthStateTooManyRequestsException tooManyRequests) {
-            return tooManyRequests.code();
-        }
-        if (failure instanceof AuthenticationFailedException) {
-            return "INVALID_CREDENTIALS";
-        }
-        if (failure instanceof AuthStateExpiredException) {
-            return "TICKET_EXPIRED";
-        }
-        if (failure instanceof AuthStateUnavailableException || failure instanceof AuthStateBusyException) {
-            return "AUTH_STATE_UNAVAILABLE";
-        }
-        return "OTHER";
+        return diagnostics.diagnosticErrorCode(failure);
     }
 
     private long elapsedMillis(long startedNanos) {
-        return TimeUnit.NANOSECONDS.toMillis(Math.max(0, System.nanoTime() - startedNanos));
+        return diagnostics.elapsedMillis(startedNanos);
     }
 
     private String deviceLabel(String userAgent) {
-        if (userAgent == null || userAgent.isBlank()) {
-            return "Unknown device";
-        }
-        String browser = userAgent.contains("Edg/")
-                ? "Edge"
-                : userAgent.contains("Firefox/")
-                        ? "Firefox"
-                        : userAgent.contains("Chrome/")
-                                ? "Chrome"
-                                : userAgent.contains("Safari/") ? "Safari" : "Other browser";
-        String platform = userAgent.contains("Android")
-                ? "Android"
-                : userAgent.contains("iPhone") || userAgent.contains("iPad")
-                        ? "iOS"
-                        : userAgent.contains("Windows")
-                                ? "Windows"
-                                : userAgent.contains("Mac OS")
-                                        ? "macOS"
-                                        : userAgent.contains("Linux") ? "Linux" : "device";
-        return browser + " on " + platform;
+        return requestSupport.deviceLabel(userAgent);
     }
 
-    private Optional<String> getOptionalCookie(HttpServletRequest request, String name) {
-        if (request.getCookies() == null) {
-            return Optional.empty();
-        }
-        return Arrays.stream(request.getCookies()).filter(cookie -> name.equals(cookie.getName()))
-                .map(cookie -> cookie.getValue()).filter(value -> !value.isBlank()).findFirst();
+    private java.util.Optional<String> getOptionalCookie(HttpServletRequest request, String name) {
+        return requestSupport.getOptionalCookie(request, name);
     }
 
     private User user(Long userId) {
