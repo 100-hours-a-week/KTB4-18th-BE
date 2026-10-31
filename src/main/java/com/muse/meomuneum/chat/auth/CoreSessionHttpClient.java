@@ -8,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -15,6 +16,10 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.muse.meomuneum.global.security.InternalSessionProtocol;
 import com.muse.meomuneum.global.security.SessionDecision;
@@ -22,8 +27,11 @@ import com.muse.meomuneum.global.security.SessionPair;
 
 /** Dedicated credential, no redirects/retries, default JVM TLS verification, total caller deadline. */
 public final class CoreSessionHttpClient implements CoreSessionGateway, AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(CoreSessionHttpClient.class);
+    private final AtomicBoolean failureLogged = new AtomicBoolean();
     private final URI endpoint;
     private final String credential;
+    private final String taskId;
     private final Semaphore permits = new Semaphore(16);
     private final ThreadPoolExecutor transport = new ThreadPoolExecutor(4, 8, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(64), Thread.ofPlatform().name("chat-core-http-", 0).factory(),
@@ -31,6 +39,11 @@ public final class CoreSessionHttpClient implements CoreSessionGateway, AutoClos
     private final HttpClient client;
 
     public CoreSessionHttpClient(String baseUrl, String credential, boolean isolated) {
+        this(baseUrl, credential, isolated, UUID.randomUUID().toString());
+    }
+
+    public CoreSessionHttpClient(String baseUrl, String credential, boolean isolated, String taskId) {
+        this.taskId = UUID.fromString(taskId).toString();
         URI base;
         try {
             base = URI.create(baseUrl);
@@ -55,22 +68,31 @@ public final class CoreSessionHttpClient implements CoreSessionGateway, AutoClos
     @Override
     public List<SessionDecision> validate(List<SessionPair> pairs) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        if (!permits.tryAcquire()) {
-            throw new ChatAuthUnavailableException();
-        }
+        boolean acquired = false;
         CompletableFuture<HttpResponse<byte[]>> future = null;
+        String stage = "http_admission";
+        int status = 0;
         try {
+            acquired = permits.tryAcquire(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            if (!acquired || System.nanoTime() - deadline >= 0) {
+                throw new ChatAuthUnavailableException();
+            }
+            stage = "http_request";
             var request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(1))
                     .header("Authorization", "Bearer " + credential).header("Content-Type", "application/json")
-                    .header("Cache-Control", "no-store")
+                    .header("Cache-Control", "no-store").header("X-Chat-Task-Id", taskId)
                     .POST(HttpRequest.BodyPublishers.ofByteArray(InternalSessionProtocol.encodeRequest(pairs))).build();
             future = client.sendAsync(request, ignored -> new LimitedBody());
             var response = future.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            status = response.statusCode();
+            stage = "http_response";
             if (response.statusCode() != 200 || System.nanoTime() - deadline >= 0) {
                 throw new ChatAuthUnavailableException();
             }
+            stage = "http_protocol";
             return InternalSessionProtocol.response(response.body(), pairs);
         } catch (Exception failure) {
+            diagnostic(stage, pairs.size(), deadline, status, failure.getClass().getSimpleName());
             if (failure instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
@@ -79,7 +101,19 @@ public final class CoreSessionHttpClient implements CoreSessionGateway, AutoClos
             if (future != null) {
                 future.cancel(true);
             }
-            permits.release();
+            if (acquired) {
+                permits.release();
+            }
+        }
+    }
+
+    private void diagnostic(String stage, int batchSize, long deadline, int status, String cause) {
+        if (failureLogged.compareAndSet(false, true)) {
+            log.warn("event=chat_auth_first_http_failure stage={} batch_size={} elapsed_ms={} status={} "
+                    + "in_flight={} transport_active={} transport_queued={} cause={}", stage, batchSize,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - deadline + TimeUnit.SECONDS.toNanos(1)),
+                    status, 16 - permits.availablePermits(), transport.getActiveCount(), transport.getQueue().size(),
+                    cause);
         }
     }
 

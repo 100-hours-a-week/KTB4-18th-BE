@@ -7,11 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.muse.meomuneum.global.security.InternalSessionProtocol;
 import com.muse.meomuneum.global.security.SessionDecision;
@@ -19,6 +22,55 @@ import com.muse.meomuneum.global.security.SessionPair;
 import com.sun.net.httpserver.HttpServer;
 
 class CoreSessionHttpClientTest {
+    @Test
+    void busyAdmissionWaitsWithinTheOriginalDeadlineAndDoesNotSendAfterTimeout() throws Exception {
+        var pair = new SessionPair(1, UUID.randomUUID().toString());
+        var received = new AtomicInteger();
+        String taskId = UUID.randomUUID().toString();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/internal/v1/auth/sessions/validate", exchange -> {
+            assertEquals(taskId, exchange.getRequestHeaders().getFirst("X-Chat-Task-Id"));
+            received.incrementAndGet();
+            byte[] response = InternalSessionProtocol
+                    .encodeResponse(List.of(new SessionDecision(pair, true, 1, 10000)));
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try (var client = new CoreSessionHttpClient("http://127.0.0.1:" + server.getAddress().getPort(),
+                "synthetic-http-service-secret-at-least-32", true, taskId);
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            assertTrue(client.validate(List.of(pair)).getFirst().active());
+            var permits = (Semaphore) ReflectionTestUtils.getField(client, "permits");
+            permits.acquire(16);
+            try {
+                var started = new CountDownLatch(1);
+                var pending = workers.submit(() -> {
+                    started.countDown();
+                    return client.validate(List.of(pair));
+                });
+                assertTrue(started.await(1, TimeUnit.SECONDS));
+                Thread.sleep(100);
+                assertTrue(!pending.isDone(), "a temporary admission spike must not fail immediately");
+                permits.release();
+                assertTrue(pending.get(800, TimeUnit.MILLISECONDS).getFirst().active());
+                permits.acquire();
+                int before = received.get();
+                long waiting = System.nanoTime();
+                assertThrows(ChatAuthUnavailableException.class, () -> client.validate(List.of(pair)));
+                long elapsed = System.nanoTime() - waiting;
+                assertTrue(elapsed >= TimeUnit.MILLISECONDS.toNanos(900));
+                assertTrue(elapsed < TimeUnit.MILLISECONDS.toNanos(1400));
+                assertEquals(before, received.get());
+            } finally {
+                permits.release(16);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     void totalDeadlineStatusSchemaBodyLimitsAndRedirectsFailWithoutUserUnauthorized() throws Exception {
         String credential = "synthetic-http-service-secret-at-least-32";

@@ -10,6 +10,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.global.security.SessionDecision;
@@ -17,6 +20,10 @@ import com.muse.meomuneum.global.security.SessionPair;
 
 /** All authorization reads are local; network validation must happen before presence/DB locks. */
 public final class ChatCoreSessionVerifier implements ChatSessionVerifier {
+    private static final Logger log = LoggerFactory.getLogger(ChatCoreSessionVerifier.class);
+    private final AtomicBoolean validationFailureLogged = new AtomicBoolean();
+    private final AtomicBoolean expiredLogged = new AtomicBoolean();
+    private final AtomicBoolean pendingFailureLogged = new AtomicBoolean();
     private volatile Consumer<SessionPair> onInactive = ignored -> {
     };
     private final CoreSessionGateway gateway;
@@ -53,6 +60,9 @@ public final class ChatCoreSessionVerifier implements ChatSessionVerifier {
         try {
             pending.get(1, TimeUnit.SECONDS);
         } catch (Exception failure) {
+            if (pendingFailureLogged.compareAndSet(false, true)) {
+                log.warn("event=chat_auth_first_pending_failure cause={}", failure.getClass().getSimpleName());
+            }
             if (failure instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
@@ -118,6 +128,11 @@ public final class ChatCoreSessionVerifier implements ChatSessionVerifier {
             }
             available.set(true);
         } catch (RuntimeException failure) {
+            if (validationFailureLogged.compareAndSet(false, true)) {
+                log.warn("event=chat_auth_first_validation_failure batch_size={} elapsed_ms={} cause={}",
+                        pairs.size(), TimeUnit.NANOSECONDS.toMillis(nanoTime.getAsLong() - started),
+                        failure.getClass().getSimpleName());
+            }
             available.set(false);
             for (State state : selected) {
                 synchronized (state) {
@@ -137,6 +152,11 @@ public final class ChatCoreSessionVerifier implements ChatSessionVerifier {
         synchronized (state) {
             terminal(state);
             if (!state.confirmed || nanoTime.getAsLong() - state.deadline >= 0) {
+                if (expiredLogged.compareAndSet(false, true)) {
+                    log.warn("event=chat_auth_first_invalid_permit confirmed={} in_flight={} expired_by_ms={}",
+                            state.confirmed, state.inFlight != null,
+                            state.confirmed ? TimeUnit.NANOSECONDS.toMillis(nanoTime.getAsLong() - state.deadline) : 0);
+                }
                 throw new ChatAuthUnavailableException();
             }
             state.touched = nanoTime.getAsLong();

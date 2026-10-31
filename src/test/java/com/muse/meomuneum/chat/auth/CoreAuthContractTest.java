@@ -75,6 +75,40 @@ class CoreAuthContractTest {
     }
 
     @Test
+    void tasksBehindTheSameAddressHaveIndependentLimitsButCannotBypassTheUserLimit() throws Exception {
+        var validation = mock(CoreSessionValidationService.class);
+        when(validation.validate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> List.of(
+                SessionDecision.inactive(call.<List<SessionPair>>getArgument(0).getFirst())));
+        var filter = new CoreInternalAuthFilter(CURRENT, "", validation, () -> 1L);
+        String taskA = UUID.randomUUID().toString();
+        String taskB = UUID.randomUUID().toString();
+        for (int i = 1; i <= 100; i++) {
+            for (String task : List.of(taskA, taskB)) {
+                long user = task.equals(taskA) ? i : i + 100;
+                byte[] body = InternalSessionProtocol.encodeRequest(
+                        List.of(new SessionPair(user, UUID.randomUUID().toString())));
+                assertEquals(200, invoke(filter, CURRENT, body, task).getStatus());
+            }
+        }
+        byte[] body = InternalSessionProtocol.encodeRequest(List.of(pair));
+        assertEquals(503, invoke(filter, CURRENT, body, taskA).getStatus());
+        assertEquals(503, invoke(filter, CURRENT, body, taskB).getStatus());
+        var userFilter = new CoreInternalAuthFilter(CURRENT, "", validation, () -> 1L);
+        for (int i = 0; i < 100; i++) {
+            assertEquals(200, invoke(userFilter, CURRENT, body, i % 2 == 0 ? taskA : taskB).getStatus());
+        }
+        assertEquals(503, invoke(userFilter, CURRENT, body, UUID.randomUUID().toString()).getStatus());
+        var legacy = new CoreInternalAuthFilter(CURRENT, "", validation, () -> 1L);
+        for (int i = 0; i < 100; i++) {
+            assertEquals(200, invoke(legacy, CURRENT, body).getStatus());
+        }
+        assertEquals(503, invoke(legacy, CURRENT, body).getStatus());
+        assertEquals(400, invoke(filter, CURRENT, body, "invalid").getStatus());
+        assertEquals(400, invoke(filter, CURRENT, body, taskA, taskB).getStatus());
+        assertEquals(401, invoke(filter, "invalid-service-key", body, taskA).getStatus());
+    }
+
+    @Test
     void coreReadsActiveOwnerUserAndBothExpirationsWithoutRotatingSessions() {
         var store = mock(HazelcastAuthStateStore.class);
         var users = mock(UserRepository.class);
@@ -118,13 +152,17 @@ class CoreAuthContractTest {
         assertFalse(body.contains("refresh"));
     }
 
-    private MockHttpServletResponse invoke(CoreInternalAuthFilter filter, String credential, byte[] body)
+    private MockHttpServletResponse invoke(CoreInternalAuthFilter filter, String credential, byte[] body,
+            String... tasks)
             throws Exception {
         var request = new MockHttpServletRequest("POST", CoreInternalAuthFilter.PATH);
         request.setServletPath(CoreInternalAuthFilter.PATH);
         request.addHeader("Authorization", "Bearer " + credential);
         request.setContentType("application/json");
         request.setContent(body);
+        for (String task : tasks) {
+            request.addHeader("X-Chat-Task-Id", task);
+        }
         var response = new MockHttpServletResponse();
         filter.doFilter(request, response, (req, res) -> {
             throw new AssertionError("internal endpoint escaped");
