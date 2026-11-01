@@ -4,6 +4,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,6 +20,7 @@ final class ChatParticipationDiagnostics {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean transactionFailed = new AtomicBoolean();
     private final AtomicBoolean unavailable = new AtomicBoolean();
+    private final AtomicBoolean admissionBlocked = new AtomicBoolean();
 
     ChatParticipationDiagnostics(String environment, String task) {
         this.environment = environment;
@@ -34,6 +36,23 @@ final class ChatParticipationDiagnostics {
     void transactionFailed(String stage, Throwable failure, long started) {
         if (transactionFailed.compareAndSet(false, true)) {
             record("chat_participation_first_transaction_failure", stage, failure, started);
+        }
+    }
+
+    record Phase(String stage, long started) {
+    }
+
+    void admissionBlocked(List<Phase> holders) {
+        if (admissionBlocked.compareAndSet(false, true)) {
+            try {
+                long now = System.nanoTime();
+                var evidence = holders.stream().limit(2).map(holder -> symbol(holder.stage()) + ":"
+                        + Math.max(0, TimeUnit.NANOSECONDS.toMillis(now - holder.started()))).toList();
+                log.warn("event=chat_transition_first_admission_blocked environment={} task={} holders_stage_age_ms={}",
+                        environment, task, evidence);
+            } catch (RuntimeException ignored) {
+                // Diagnostics must not change transaction admission.
+            }
         }
     }
 

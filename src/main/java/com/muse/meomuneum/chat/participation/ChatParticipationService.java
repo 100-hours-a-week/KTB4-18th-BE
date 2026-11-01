@@ -74,6 +74,7 @@ public final class ChatParticipationService {
     private final Set<Long> touchedRooms = ConcurrentHashMap.newKeySet();
     // Admit before acquiring a DB connection: contended room locks must not consume the shared pool.
     private final Semaphore transitionAdmission = new Semaphore(2, true);
+    private final Map<Transition, Boolean> activeTransitions = new ConcurrentHashMap<>();
     private volatile long epoch;
     private volatile long localLease;
     private volatile boolean failed;
@@ -763,8 +764,11 @@ public final class ChatParticipationService {
             tx.stage = "local_transition_admission";
             admitted = transitionAdmission.tryAcquire(1, TimeUnit.SECONDS);
             if (!admitted) {
+                diagnostics.admissionBlocked(activeTransitions.keySet().stream().limit(2)
+                        .map(active -> new ChatParticipationDiagnostics.Phase(active.stage, active.started)).toList());
                 throw new ChatParticipationUnavailableException();
             }
+            activeTransitions.put(tx, Boolean.TRUE);
             tx.stage = "transaction_start";
             result = transactions.execute(status -> {
                 tx.stage = "transaction_configuration";
@@ -820,6 +824,7 @@ public final class ChatParticipationService {
             throw new ChatParticipationUnavailableException();
         } finally {
             if (admitted) {
+                activeTransitions.remove(tx);
                 transitionAdmission.release();
             }
         }
@@ -1171,7 +1176,7 @@ public final class ChatParticipationService {
 
     private final class Transition {
         private final long started = System.nanoTime();
-        private String stage = "transaction_start";
+        private volatile String stage = "transaction_start";
         private final Set<Long> changed = new LinkedHashSet<>();
         private final Set<Long> presence = new LinkedHashSet<>();
         private final Map<Long, Long> projectionVersions = new java.util.HashMap<>();

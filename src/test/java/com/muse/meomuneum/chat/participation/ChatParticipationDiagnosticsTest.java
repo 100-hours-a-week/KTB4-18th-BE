@@ -242,6 +242,22 @@ class ChatParticipationDiagnosticsTest {
                 .doesNotContain("sql-password-canary", "raw-query-canary", "unused-synthetic-sid");
     }
 
+    @Test
+    void admissionEvidenceIsBoundedSanitizedAndEmittedOnlyOnce() {
+        var diagnostics = new ChatParticipationDiagnostics("test", "synthetic-task");
+        long started = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(100);
+        var holders = java.util.List.of(new ChatParticipationDiagnostics.Phase("room_lock_and_boundaries", started),
+                new ChatParticipationDiagnostics.Phase("secret\ncanary", started),
+                new ChatParticipationDiagnostics.Phase("third_holder", started));
+        diagnostics.admissionBlocked(holders);
+        diagnostics.admissionBlocked(holders);
+        assertThat(appender.list).hasSize(1);
+        assertThat(appender.list.getFirst().getFormattedMessage())
+                .contains("event=chat_transition_first_admission_blocked", "room_lock_and_boundaries:", "unknown:")
+                .doesNotContain("secret", "canary", "third_holder", "\n");
+        assertThat(appender.list.getFirst().getThrowableProxy()).isNull();
+    }
+
     private ChatParticipationService service(PlatformTransactionManager manager, ChatSocketSessions sockets) {
         var jdbc = mock(JdbcTemplate.class);
         when(jdbc.getDataSource()).thenReturn(mock(DataSource.class));

@@ -39,6 +39,11 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
     private record CheckTiming(long started, long completed, long duration, boolean inProgress) {
     }
 
+    private volatile ProbeTiming probeTiming = new ProbeTiming("idle", 0, 0, 0, 0, 0);
+
+    private record ProbeTiming(String stage, long started, long db, long redisServer, long redisMarker, long gap) {
+    }
+
     public ChatRuntimeLifecycle(JdbcTemplate jdbc, ChatParticipationService participation, ChatRedisConnection redis,
             ChatRedisChannels channels, ChatSocketSessions sockets, ChatRuntimeMetrics metrics,
             String environment, Duration drainTimeout) {
@@ -76,13 +81,20 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
         if (diagnose && !allowed && denialReported.compareAndSet(false, true)) {
             try {
                 CheckTiming timing = checkTiming;
+                ProbeTiming probe = probeTiming;
                 log.warn("event=chat_runtime_first_denied environment={} task={} running={} participation_failed={} "
                         + "blocked={} stopped={} permit_expired={} permit_remaining_ms={} "
                         + "last_check_start_age_ms={} last_check_complete_age_ms={} last_check_duration_ms={} "
-                        + "check_in_progress={}", environment, participation.taskId(), active, failed, latched,
+                        + "check_in_progress={} check_stage={} check_stage_age_ms={} db_ms={} "
+                        + "redis_server_ms={} redis_marker_ms={} check_gap_ms={}",
+                        environment, participation.taskId(), active, failed, latched,
                         stopping, expired, TimeUnit.NANOSECONDS.toMillis(deadline - now),
                         ageMillis(now, timing.started()), ageMillis(now, timing.completed()),
-                        TimeUnit.NANOSECONDS.toMillis(timing.duration()), timing.inProgress());
+                        TimeUnit.NANOSECONDS.toMillis(timing.duration()), timing.inProgress(), probe.stage(),
+                        ageMillis(now, probe.started()), TimeUnit.NANOSECONDS.toMillis(probe.db()),
+                        TimeUnit.NANOSECONDS.toMillis(probe.redisServer()),
+                        TimeUnit.NANOSECONDS.toMillis(probe.redisMarker()),
+                        TimeUnit.NANOSECONDS.toMillis(probe.gap()));
             } catch (RuntimeException ignored) {
                 // Keep the original guard decision even if diagnostic logging fails.
             }
@@ -112,25 +124,47 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
         long started = System.nanoTime();
         CheckTiming previous = checkTiming;
         checkTiming = new CheckTiming(started, previous.completed(), previous.duration(), true);
+        long gap = previous.completed() == 0 ? 0 : started - previous.completed();
+        long db = 0;
+        long server = 0;
+        long marker = 0;
+        String stage = "preconditions";
+        probeTiming = new ProbeTiming(stage, started, db, server, marker, gap);
         try {
             if (blocked.get() || !redis.isConnected() || !redis.areSubscriptionsReady()) {
                 throw new IllegalStateException();
             }
+            stage = "db_snapshot";
+            long phaseStarted = System.nanoTime();
+            probeTiming = new ProbeTiming(stage, phaseStarted, db, server, marker, gap);
             var row = jdbc.queryForMap("""
                     SELECT c.epoch,c.mode,c.redis_generation,c.redis_server_id,t.state,
                         t.lease_until>UTC_TIMESTAMP(6) AS live
                     FROM chat_runtime_control c JOIN chat_runtime_tasks t ON t.environment=c.environment
                     WHERE c.environment=? AND t.task_id=?
                     """, environment, participation.taskId());
+            db = System.nanoTime() - phaseStarted;
             var expected = new ChatRuntimeRecovery.Lease(((Number) row.get("epoch")).longValue(), "unused",
                     (String) row.get("redis_generation"), (String) row.get("redis_server_id"));
             if (!"RUNNING".equals(row.get("mode")) || !"ACTIVE".equals(row.get("state"))
                     || ((Number) row.get("live")).intValue() != 1 || expected.epoch() != participation.epoch()
-                    || expected.generation() == null || expected.serverId() == null
-                    || !expected.serverId().equals(ChatRuntimeRecovery.serverId(redis))
-                    || !expected.marker()
-                            .equals(redis.commands().sync().hget(channels.runtimeMarkerKey(), "generation"))
-                    || System.nanoTime() - started >= TimeUnit.SECONDS.toNanos(1)) {
+                    || expected.generation() == null || expected.serverId() == null) {
+                throw new IllegalStateException();
+            }
+            stage = "redis_server";
+            phaseStarted = System.nanoTime();
+            probeTiming = new ProbeTiming(stage, phaseStarted, db, server, marker, gap);
+            String serverId = ChatRuntimeRecovery.serverId(redis);
+            server = System.nanoTime() - phaseStarted;
+            if (!expected.serverId().equals(serverId)) {
+                throw new IllegalStateException();
+            }
+            stage = "redis_marker";
+            phaseStarted = System.nanoTime();
+            probeTiming = new ProbeTiming(stage, phaseStarted, db, server, marker, gap);
+            String generation = redis.commands().sync().hget(channels.runtimeMarkerKey(), "generation");
+            marker = System.nanoTime() - phaseStarted;
+            if (!expected.marker().equals(generation) || System.nanoTime() - started >= TimeUnit.SECONDS.toNanos(1)) {
                 throw new IllegalStateException();
             }
             permitUntil = started + TimeUnit.SECONDS.toNanos(1);
@@ -139,12 +173,17 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
             permitUntil = 0;
             if (reported.compareAndSet(false, true)) {
                 metrics.failed();
-                log.warn("event=chat_runtime_closed exception={}", unavailable.getClass().getSimpleName());
+                log.warn("event=chat_runtime_closed exception={} check_stage={} db_ms={} redis_server_ms={} "
+                        + "redis_marker_ms={} check_gap_ms={} elapsed_ms={}", unavailable.getClass().getSimpleName(),
+                        stage, TimeUnit.NANOSECONDS.toMillis(db), TimeUnit.NANOSECONDS.toMillis(server),
+                        TimeUnit.NANOSECONDS.toMillis(marker), TimeUnit.NANOSECONDS.toMillis(gap),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
             }
             participation.failClosed("runtime_check", unavailable, started);
         } finally {
             long completed = System.nanoTime();
             checkTiming = new CheckTiming(started, completed, completed - started, false);
+            probeTiming = new ProbeTiming("idle", completed, db, server, marker, gap);
         }
     }
 
