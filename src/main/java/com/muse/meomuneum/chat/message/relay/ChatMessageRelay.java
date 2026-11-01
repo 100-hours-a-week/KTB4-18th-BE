@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -11,6 +12,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +46,21 @@ public final class ChatMessageRelay implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ChatMessageRelay.class);
     private final AtomicBoolean rejectionReported = new AtomicBoolean();
     private ChatRuntimeMetrics metrics;
+    private ChatDeliveryMetrics deliveryMetrics;
+
+    @Autowired(required = false)
+    public void setDeliveryMetrics(ChatDeliveryMetrics value) {
+        deliveryMetrics = value;
+    }
+
+    private <T> T measured(ChatDeliveryMetrics.Stage stage, Supplier<T> action) {
+        long started = System.nanoTime();
+        try {
+            return action.get();
+        } finally {
+            ChatDeliveryMetrics.record(deliveryMetrics, stage, started);
+        }
+    }
 
     @Autowired(required = false)
     public void setMetrics(ChatRuntimeMetrics metrics) {
@@ -73,6 +90,7 @@ public final class ChatMessageRelay implements AutoCloseable {
     private final ThreadPoolExecutor publishers = executor("chat-message-publish", 2, 100);
     private final ThreadPoolExecutor receivers = executor("chat-message-receive", 2, 256);
     private final ChatPresenceEventCoalescer presenceEvents;
+    private final Object deliveryLock = new Object();
     private final LinkedHashMap<String, Long> seen = new LinkedHashMap<>(128, 0.75f, true);
     private final AtomicLong rejected = new AtomicLong();
     private final AtomicLong published = new AtomicLong();
@@ -136,7 +154,7 @@ public final class ChatMessageRelay implements AutoCloseable {
         }
     }
 
-    @Scheduled(fixedDelay = 200)
+    @Scheduled(fixedDelay = 200, scheduler = "chatRelayDispatchScheduler")
     public void dispatch() {
         if (!ready() || !participation.available() || !publishing.compareAndSet(false, true)) {
             return;
@@ -154,14 +172,17 @@ public final class ChatMessageRelay implements AutoCloseable {
                             if (!ready() || !participation.available() || budget == 0) {
                                 break;
                             }
-                            ChatMessageOutboxStore.Claim claim = outbox.claim(room);
+                            ChatMessageOutboxStore.Claim claim = measured(ChatDeliveryMetrics.Stage.OUTBOX_CLAIM,
+                                    () -> outbox.claim(room));
                             if (claim == null) {
                                 continue;
                             }
                             budget--;
                             progress = true;
-                            if (!outbox.publishable(claim)) {
-                                outbox.complete(claim, false);
+                            if (!measured(ChatDeliveryMetrics.Stage.OUTBOX_PUBLISHABLE,
+                                    () -> outbox.publishable(claim))) {
+                                measured(ChatDeliveryMetrics.Stage.OUTBOX_COMPLETE,
+                                        () -> outbox.complete(claim, false));
                                 continue;
                             }
                             boolean sent = false;
@@ -180,7 +201,9 @@ public final class ChatMessageRelay implements AutoCloseable {
                             if (metrics != null) {
                                 metrics.published(started, sent);
                             }
-                            outbox.complete(claim, sent);
+                            boolean completedPublish = sent;
+                            measured(ChatDeliveryMetrics.Stage.OUTBOX_COMPLETE,
+                                    () -> outbox.complete(claim, completedPublish));
                             if (!sent) {
                                 failClosed(publishFailure);
                                 return;
@@ -252,13 +275,32 @@ public final class ChatMessageRelay implements AutoCloseable {
             rejected.incrementAndGet();
             return;
         }
+        long queued = System.nanoTime();
         try {
             receivers.execute(() -> {
+                ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.RECEIVER_QUEUE, queued);
                 try {
-                    presence.exclusive(() -> {
-                        deliver(event);
-                        return null;
-                    });
+                    if (!ready() || !participation.available()) {
+                        return;
+                    }
+                    var found = lookup(event);
+                    if (found.isEmpty()) {
+                        rejected.incrementAndGet();
+                        return;
+                    }
+                    long waiting = System.nanoTime();
+                    // Body reads may overlap. Deduplication, fresh batch permissions and enqueue stay serialized.
+                    synchronized (deliveryLock) {
+                        ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.DELIVERY_LOCK_WAIT,
+                                waiting);
+                        long holding = System.nanoTime();
+                        try {
+                            deliver(event, found.getFirst());
+                        } finally {
+                            ChatDeliveryMetrics.record(deliveryMetrics,
+                                    ChatDeliveryMetrics.Stage.DELIVERY_LOCK_HOLD, holding);
+                        }
+                    }
                 } catch (RuntimeException unavailable) {
                     failures.incrementAndGet();
                     failClosed(unavailable);
@@ -279,12 +321,9 @@ public final class ChatMessageRelay implements AutoCloseable {
         failClosed(failure);
     }
 
-    private void deliver(ChatMessageRedisEvent event) {
-        if (!ready() || !participation.available() || duplicate(event, false)) {
-            return;
-        }
+    private List<ChatMessageResponse> lookup(ChatMessageRedisEvent event) {
         // Registration is the dynamic Chat producer allowlist; the committed outbox binds every reference.
-        var found = jdbc.query("""
+        return measured(ChatDeliveryMetrics.Stage.MESSAGE_LOOKUP_DB, () -> jdbc.query("""
                 SELECT m.*,u.nickname FROM chat_message_outbox x
                 JOIN chat_runtime_tasks t ON x.producer_id=CONCAT('chat:',t.task_id)
                     AND t.environment=x.environment AND t.epoch=x.epoch
@@ -298,35 +337,56 @@ public final class ChatMessageRelay implements AutoCloseable {
                 r.getLong("room_id"), r.getLong("user_id"), r.getString("nickname"), r.getString("content"),
                 r.getObject("created_at", LocalDateTime.class).atOffset(ZoneOffset.UTC)),
                 event.eventId(), environment, event.epoch(), event.producerId(), event.roomId(), event.roomSeq(),
-                event.messageId(), LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC));
-        if (found.isEmpty()) {
-            rejected.incrementAndGet();
+                event.messageId(), LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC)));
+    }
+
+    private void deliver(ChatMessageRedisEvent event, ChatMessageResponse message) {
+        if (!ready() || !participation.available() || duplicate(event, false)) {
             return;
         }
-        Set<String> eligible = participation.messageRecipients(event.roomId(), event.messageId());
-        var candidates = presence.roomSubscriptions(event.roomId());
+        var permissions = participation.messageEnqueuePermissions(event.roomId(), event.messageId());
+        enqueue(event, message, permissions);
+        duplicate(event, true);
+    }
+
+    private void enqueue(ChatMessageRedisEvent event, ChatMessageResponse message,
+            ChatParticipationService.MessageEnqueuePermissions permissions) {
+        Set<String> eligible = permissions.sockets();
+        var candidates = measured(ChatDeliveryMetrics.Stage.LOCAL_RECIPIENT_SNAPSHOT,
+                () -> presence.roomSubscriptions(event.roomId()));
+        long fanoutStarted = System.nanoTime();
         Set<String> recipients = new java.util.HashSet<>();
         for (String socket : candidates.keySet()) {
             var context = auth.context(socket);
             if (eligible.contains(socket) && context.isPresent() && auth.tokenValid(socket, Instant.now())) {
+                long authStarted = System.nanoTime();
                 try {
                     verifier.assertValid(context.get().userId(), context.get().authSessionId());
                     recipients.add(socket);
                 } catch (RuntimeException denied) {
                     // No network refresh under the local view/room serialization monitor.
+                } finally {
+                    ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.RECIPIENT_AUTH, authStarted);
                 }
             }
+        }
+        if (deliveryMetrics != null) {
+            deliveryMetrics.recipients(eligible.size(), recipients.size());
         }
         if (!recipients.isEmpty()) {
             SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
             headers.setHeader("chatRecipients", Set.copyOf(recipients));
             headers.setHeader("chatRoomId", event.roomId());
             headers.setHeader("chatMessageId", event.messageId());
+            headers.setHeader("chatEnqueuePermissions", permissions);
             headers.setLeaveMutable(true);
-            broker.getObject().convertAndSend("/topic/chat-rooms/" + event.roomId(),
-                    new ChatMessageEvent("CHAT_MESSAGE", found.getFirst()), headers.getMessageHeaders());
+            measured(ChatDeliveryMetrics.Stage.BROKER_ENQUEUE, () -> {
+                broker.getObject().convertAndSend("/topic/chat-rooms/" + event.roomId(),
+                        new ChatMessageEvent("CHAT_MESSAGE", message), headers.getMessageHeaders());
+                return null;
+            });
         }
-        duplicate(event, true);
+        ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.FANOUT, fanoutStarted);
     }
 
     private boolean duplicate(ChatMessageRedisEvent event, boolean record) {

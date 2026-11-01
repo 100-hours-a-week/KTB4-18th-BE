@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties;
 import com.muse.meomuneum.chat.message.policy.ChatTransmissionPolicy;
+import com.muse.meomuneum.chat.message.relay.ChatDeliveryMetrics;
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
@@ -25,6 +27,12 @@ import com.muse.meomuneum.chat.view.ChatViewMembershipEndedEvent;
 public class ChatPresenceRegistry {
 
     private ChatParticipationService participation;
+    private ChatDeliveryMetrics deliveryMetrics;
+
+    @Autowired(required = false)
+    public void setDeliveryMetrics(ChatDeliveryMetrics value) {
+        deliveryMetrics = value;
+    }
 
     @Autowired(required = false)
     public void setParticipation(ChatParticipationService service) {
@@ -36,6 +44,8 @@ public class ChatPresenceRegistry {
     private final ApplicationEventPublisher events;
     private final Map<Long, Long> revisions = new HashMap<>();
     private final Map<Long, Seat> seats = new HashMap<>();
+    // Transport-only index, updated under the seat monitor; actual outbound still checks primary DB authority.
+    private final Map<String, Long> subscribedRooms = new ConcurrentHashMap<>();
 
     public ChatPresenceRegistry(Clock clock) {
         this(clock, new ChatTransmissionPolicy(clock,
@@ -51,9 +61,19 @@ public class ChatPresenceRegistry {
         this.events = events;
     }
 
-    public synchronized <T> T exclusive(Supplier<T> work) {
-        expire();
-        return work.get();
+    public <T> T exclusive(Supplier<T> work) {
+        long waiting = System.nanoTime();
+        synchronized (this) {
+            ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.PRESENCE_TRANSITION_WAIT, waiting);
+            long holding = System.nanoTime();
+            try {
+                expire();
+                return work.get();
+            } finally {
+                ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.PRESENCE_TRANSITION_HOLD,
+                        holding);
+            }
+        }
     }
 
     public synchronized boolean hasCapacity(Long userId, Long roomId, int capacity) {
@@ -105,6 +125,7 @@ public class ChatPresenceRegistry {
             }
         });
         ended.forEach(socket -> {
+            subscribedRooms.remove(socket);
             seat.sessions.remove(socket);
             seat.subscriptions.remove(socket);
             seat.socketViews.remove(socket);
@@ -147,6 +168,7 @@ public class ChatPresenceRegistry {
     }
 
     public synchronized void disconnect(String sessionId) {
+        subscribedRooms.remove(sessionId);
         events.publishEvent(new ChatViewConnectionClosedEvent(sessionId));
         for (Seat seat : seats.values()) {
             int previousCount = participation == null ? connectedCount(seat.roomId) : 0;
@@ -174,6 +196,9 @@ public class ChatPresenceRegistry {
         if (seat != null && !seat.userId.equals(userId)) {
             return Set.of();
         }
+        if (seat != null) {
+            seat.sessions.forEach(subscribedRooms::remove);
+        }
         events.publishEvent(new ChatViewMembershipEndedEvent(membershipId));
         transmission.ended(membershipId);
         if (seat == null) {
@@ -189,18 +214,38 @@ public class ChatPresenceRegistry {
         Instant now = clock.instant();
         seats.values().forEach(seat -> seat.tabs.values()
                 .removeIf(expiry -> expiry != null && !expiry.isAfter(now)));
-        seats.values().removeIf(seat -> seat.expiresAt != null && !seat.expiresAt.isAfter(now));
+        seats.values().removeIf(seat -> {
+            boolean expired = seat.expiresAt != null && !seat.expiresAt.isAfter(now);
+            if (expired) {
+                seat.sessions.forEach(subscribedRooms::remove);
+            }
+            return expired;
+        });
     }
 
     public synchronized void subscribed(String sessionId, String subscriptionId, String destination) {
         seats.values().stream().filter(seat -> seat.sessions.contains(sessionId))
                 .forEach(seat -> seat.subscriptions.computeIfAbsent(sessionId, ignored -> new HashMap<>())
                         .put(subscriptionId, destination));
+        refreshSubscribedRoom(sessionId);
     }
 
     public synchronized void unsubscribed(String sessionId, String subscriptionId) {
         seats.values().forEach(seat -> seat.subscriptions.getOrDefault(sessionId, new HashMap<>())
                 .remove(subscriptionId));
+        refreshSubscribedRoom(sessionId);
+    }
+
+    private void refreshSubscribedRoom(String socket) {
+        Long room = seats.values().stream().filter(seat -> seat.sessions.contains(socket))
+                .filter(seat -> seat.subscriptions.getOrDefault(socket, Map.of()).values()
+                        .contains("/topic/chat-rooms/" + seat.roomId))
+                .map(seat -> seat.roomId).findFirst().orElse(null);
+        if (room == null) {
+            subscribedRooms.remove(socket);
+        } else {
+            subscribedRooms.put(socket, room);
+        }
     }
 
     public synchronized Set<String> recipients(Long roomId) {
@@ -208,6 +253,17 @@ public class ChatPresenceRegistry {
         seats.values().stream().filter(seat -> seat.roomId.equals(roomId)).forEach(seat -> seat.sessions.stream()
                 .filter(session -> hasRoomSubscription(session, roomId)).forEach(result::add));
         return Set.copyOf(result);
+    }
+
+    /** Local subscription only; distributed callers must separately verify current DB authority. */
+    public boolean hasLocalRoomSubscription(String sessionId, Long roomId) {
+        long started = System.nanoTime();
+        ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.LOCAL_SUBSCRIPTION_WAIT, started);
+        try {
+            return sessionId != null && roomId != null && roomId.equals(subscribedRooms.get(sessionId));
+        } finally {
+            ChatDeliveryMetrics.record(deliveryMetrics, ChatDeliveryMetrics.Stage.LOCAL_SUBSCRIPTION_HOLD, started);
+        }
     }
 
     public synchronized boolean hasRoomSubscription(String sessionId, Long roomId) {

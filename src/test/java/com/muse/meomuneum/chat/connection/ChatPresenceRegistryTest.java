@@ -16,6 +16,69 @@ import org.junit.jupiter.api.Test;
 
 class ChatPresenceRegistryTest {
     @Test
+    void localSubscriptionIndexTracksMultipleSubscriptionsAndEveryDeparturePath() {
+        var registry = new ChatPresenceRegistry(Clock.systemUTC());
+        registry.connect(1L, 10L, 100L, 1000, "first");
+        registry.attachTab(100L, "view", "first");
+        registry.subscribed("first", "private", "/queue/chat-events");
+        assertFalse(registry.hasLocalRoomSubscription("first", 10L));
+        registry.subscribed("first", "one", "/topic/chat-rooms/10");
+        registry.subscribed("first", "two", "/topic/chat-rooms/10");
+        assertTrue(registry.hasLocalRoomSubscription("first", 10L));
+        assertFalse(registry.hasLocalRoomSubscription("first", 11L));
+        assertFalse(registry.hasLocalRoomSubscription(null, 10L));
+        assertFalse(registry.hasLocalRoomSubscription("first", null));
+        registry.unsubscribed("first", "one");
+        assertTrue(registry.hasLocalRoomSubscription("first", 10L));
+        registry.unsubscribed("first", "two");
+        assertFalse(registry.hasLocalRoomSubscription("first", 10L));
+        registry.subscribed("first", "one", "/topic/chat-rooms/10");
+        registry.removeTab(1L, 100L, "view");
+        assertFalse(registry.hasLocalRoomSubscription("first", 10L));
+        registry.connect(2L, 10L, 200L, 1000, "second");
+        registry.subscribed("second", "room", "/topic/chat-rooms/10");
+        registry.disconnect("second");
+        assertFalse(registry.hasLocalRoomSubscription("second", 10L));
+        registry.connect(2L, 10L, 200L, 1000, "reconnected");
+        registry.subscribed("reconnected", "room", "/topic/chat-rooms/10");
+        assertFalse(registry.hasLocalRoomSubscription("second", 10L));
+        assertTrue(registry.hasLocalRoomSubscription("reconnected", 10L));
+        registry.remove(2L, 200L);
+        assertFalse(registry.hasLocalRoomSubscription("reconnected", 10L));
+    }
+
+    @Test
+    void localSubscriptionLookupDoesNotWaitForAnUnrelatedTransitionMonitor() throws Exception {
+        var registry = new ChatPresenceRegistry(Clock.systemUTC());
+        registry.connect(1L, 10L, 100L, 1000, "first");
+        registry.subscribed("first", "room", "/topic/chat-rooms/10");
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var transition = workers.submit(() -> registry.exclusive(() -> {
+                entered.countDown();
+                try {
+                    assertTrue(release.await(3, java.util.concurrent.TimeUnit.SECONDS));
+                } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(failure);
+                }
+                return null;
+            }));
+            try {
+                assertTrue(entered.await(3, java.util.concurrent.TimeUnit.SECONDS));
+                assertTrue(workers.submit(() -> registry.hasLocalRoomSubscription("first", 10L))
+                        .get(500, java.util.concurrent.TimeUnit.MILLISECONDS));
+            } finally {
+                release.countDown();
+            }
+            transition.get(1, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        registry.unsubscribed("first", "room");
+        assertFalse(registry.hasLocalRoomSubscription("first", 10L));
+    }
+
+    @Test
     void distributedLocalTransportChangesDoNotReadGlobalCountsForEverySeat() {
         var registry = new ChatPresenceRegistry(Clock.systemUTC());
         var participation = org.mockito.Mockito.mock(

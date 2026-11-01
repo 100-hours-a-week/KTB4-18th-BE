@@ -111,6 +111,10 @@ class ChatParticipationMySqlTest {
         dataSource.setUsername(MYSQL.getUsername());
         dataSource.setPassword(MYSQL.getPassword());
         dataSource.setMaximumPoolSize(16);
+        dataSource.addDataSourceProperty("useServerPrepStmts", "true");
+        dataSource.addDataSourceProperty("cachePrepStmts", "true");
+        dataSource.addDataSourceProperty("prepStmtCacheSize", "250");
+        dataSource.addDataSourceProperty("prepStmtCacheSqlLimit", "8192");
         jdbc = new JdbcTemplate(dataSource);
         var before = jdbc.queryForList("SELECT * FROM chat_rooms ORDER BY id");
         Flyway latest = Flyway.configure().dataSource(dataSource).load();
@@ -875,6 +879,298 @@ class ChatParticipationMySqlTest {
     }
 
     @Test
+    void presenceProofCannotReplaceFreshHandlerAuthorityOrCrossIdentityBoundaries() {
+        var owner = service("presence-proof", snapshot -> {
+        });
+        var other = service("presence-proof", snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "presence-proof");
+        var proof = owner.issueSocketEnqueuePermissions(room);
+        assertTrue(owner.permitsSocketEnqueue(user, "presence-proof", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user + 1, "presence-proof", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user, "other", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user, "presence-proof", room + 1, proof));
+        assertFalse(other.permitsSocketEnqueue(user, "presence-proof", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user, "presence-proof", room, new Object()));
+        assertEquals(List.of(false), owner.permitsMessageBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, "presence-proof", room, 0))));
+        jdbc.update("INSERT INTO chat_bans(user_id,reason,created_at,expires_at) "
+                + "VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))", user);
+        assertEquals(List.of(false), owner.permitsSocketBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, "presence-proof", room, 0))));
+        assertFalse(owner.permitsSocketEnqueue(user, "presence-proof", room, null));
+    }
+
+    @Test
+    void handlerBatchBindsEachRequestAndReadsRevocationsAgainUsingViewPrimaryKeys() throws Exception {
+        var owner = service("handler-batch", snapshot -> {
+        });
+        long first = user();
+        long second = user();
+        var one = owner.join(first, UUID.randomUUID().toString(), room, claims(first)).membership();
+        var two = owner.join(second, UUID.randomUUID().toString(), room, claims(second)).membership();
+        connect(owner, first, one, "batch-one");
+        connect(owner, second, two, "batch-two");
+        var message = send(owner, first, one.membershipId(), "batch-one");
+        var requests = List.of(
+                new ChatParticipationService.MessagePermission(first, "batch-one", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(second, "batch-two", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(first, "batch-two", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(first, "missing", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(second, "batch-two", room + 1, message.messageId()));
+        var observed = org.mockito.Mockito.spy((JdbcTemplate) ReflectionTestUtils.getField(owner, "jdbc"));
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        assertEquals(List.of(true, true, false, false, false), owner.permitsMessageBatch(requests));
+        assertEquals(java.util.Collections.nCopies(32, true),
+                owner.permitsMessageBatch(java.util.Collections.nCopies(32, requests.getFirst())));
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        var parameters = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.times(2)).queryForList(sql.capture(),
+                org.mockito.ArgumentMatchers.eq(Integer.class), parameters.capture());
+        var plan = jdbc.queryForList("EXPLAIN FORMAT=TRADITIONAL " + sql.getValue(), parameters.getValue());
+        var viewPlan = plan.stream().filter(row -> "v".equals(row.get("table"))).findFirst().orElseThrow();
+        assertEquals("PRIMARY", viewPlan.get("key"), plan.toString());
+        assertEquals(1, ((Number) viewPlan.get("rows")).intValue(), plan.toString());
+        // Exercise every batch size on one physical connection: reuse metadata, never permission results.
+        try (var connection = dataSource.getConnection()) {
+            var single = new org.springframework.jdbc.datasource.SingleConnectionDataSource(connection, true);
+            var batchJdbc = org.mockito.Mockito.spy(new JdbcTemplate(single));
+            ReflectionTestUtils.setField(owner, "jdbc", batchJdbc);
+            var preparationCounts = new java.util.ArrayList<Long>();
+            long prepares = statementCounter(connection, "Com_stmt_prepare");
+            long reprepares = statementCounter(connection, "Com_stmt_reprepare");
+            for (int size = 1; size <= 32; size++) {
+                assertEquals(java.util.Collections.nCopies(size, true),
+                        owner.permitsMessageBatch(java.util.Collections.nCopies(size, requests.getFirst())));
+                preparationCounts.add(statementCounter(connection, "Com_stmt_prepare") - prepares);
+            }
+            long preparedAfterFirst = statementCounter(connection, "Com_stmt_prepare");
+            long reprepareDelta = statementCounter(connection, "Com_stmt_reprepare") - reprepares;
+            var batchSql = org.mockito.ArgumentCaptor.forClass(String.class);
+            org.mockito.Mockito.verify(batchJdbc, org.mockito.Mockito.times(32)).queryForList(batchSql.capture(),
+                    org.mockito.ArgumentMatchers.eq(Integer.class), org.mockito.ArgumentMatchers.any(Object[].class));
+            var debug = java.nio.file.Path.of("build/chat-delivery-db-local");
+            java.nio.file.Files.createDirectories(debug);
+            java.nio.file.Files.writeString(debug.resolve("batch-preparation-shapes.json"),
+                    new ObjectMapper().writeValueAsString(Map.of("cumulative_prepares", preparationCounts,
+                            "sql_lengths", batchSql.getAllValues().stream().map(String::length).toList(),
+                            "unique_shapes", new java.util.HashSet<>(batchSql.getAllValues()).size(),
+                            "automatic_reprepares", reprepareDelta)));
+            assertEquals(6, new java.util.HashSet<>(batchSql.getAllValues()).size());
+            assertTrue(preparedAfterFirst - prepares - reprepareDelta <= 6,
+                    "new client preparations must use at most six shapes: " + preparationCounts);
+            for (int size = 1; size <= 32; size++) {
+                assertEquals(java.util.Collections.nCopies(size, true),
+                        owner.permitsMessageBatch(java.util.Collections.nCopies(size, requests.getFirst())));
+            }
+            assertEquals(preparedAfterFirst, statementCounter(connection, "Com_stmt_prepare"),
+                    "another pass must execute fresh reads without preparing these SQL shapes again");
+        }
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        jdbc.update("INSERT INTO chat_bans(user_id,reason,created_at,expires_at) "
+                + "VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))", second);
+        assertEquals(List.of(true, false, false, false, false), owner.permitsMessageBatch(requests));
+        var evidence = java.nio.file.Path.of("build/chat-delivery-db-local");
+        java.nio.file.Files.createDirectories(evidence);
+        java.nio.file.Files.writeString(evidence.resolve("batch-permission-view-access.json"),
+                new ObjectMapper().writeValueAsString(Map.of("key", viewPlan.get("key"),
+                        "access_type", viewPlan.get("type"), "rows", 1)));
+        assertThrows(IllegalArgumentException.class,
+                () -> owner.permitsMessageBatch(java.util.Collections.nCopies(33, requests.getFirst())));
+    }
+
+    @Test
+    void messageDeliveryKeepsEveryDbFenceWithoutRepeatingMembershipAndSocketReads() throws Exception {
+        String environment = "delivery-one-read";
+        var owner = service(environment, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "one-read");
+        var message = send(owner, user, joined.membershipId(), "one-read");
+        var observed = org.mockito.Mockito.spy((JdbcTemplate) ReflectionTestUtils.getField(owner, "jdbc"));
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        assertTrue(owner.permitsMessage(user, "one-read", room, message.messageId()));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.times(1)).queryForObject(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Integer.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.never()).queryForList(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Long.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        var parameters = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        org.mockito.Mockito.verify(observed).queryForObject(sql.capture(),
+                org.mockito.ArgumentMatchers.eq(Integer.class), parameters.capture());
+        var plan = jdbc.queryForList("EXPLAIN FORMAT=TRADITIONAL " + sql.getValue(), parameters.getValue());
+        var viewPlan = plan.stream().filter(row -> "v".equals(row.get("table"))).findFirst()
+                .orElseThrow(() -> new AssertionError(plan.toString()));
+        assertEquals("PRIMARY", viewPlan.get("key"));
+        assertEquals(1, ((Number) viewPlan.get("rows")).intValue());
+        try (var connection = dataSource.getConnection()) {
+            long beforePrepared = statementCounter(connection, "Com_stmt_prepare");
+            long beforeExecuted = statementCounter(connection, "Com_stmt_execute");
+            for (int i = 0; i < 10; i++) {
+                try (var prepared = connection.prepareStatement(sql.getValue())) {
+                    assertTrue(prepared.isWrapperFor(Class.forName("com.mysql.cj.jdbc.ServerPreparedStatement")),
+                            () -> "Expected server preparation; actual statement: " + prepared.getClass().getName());
+                    Object[] values = parameters.getValue();
+                    for (int arg = 0; arg < values.length; arg++) {
+                        prepared.setObject(arg + 1, values[arg]);
+                    }
+                    try (var result = prepared.executeQuery()) {
+                        assertTrue(result.next());
+                        assertEquals(1, result.getInt(1));
+                    }
+                }
+            }
+            assertTrue(statementCounter(connection, "Com_stmt_prepare") - beforePrepared <= 1);
+            assertEquals(10, statementCounter(connection, "Com_stmt_execute") - beforeExecuted);
+        }
+        var evidence = java.nio.file.Path.of("build/chat-delivery-db-local");
+        java.nio.file.Files.createDirectories(evidence);
+        java.nio.file.Files.writeString(evidence.resolve("permission-view-access.json"),
+                new ObjectMapper().writeValueAsString(Map.of("key", viewPlan.get("key"),
+                        "access_type", viewPlan.get("type"), "rows", 1)));
+        assertMessagePermission(false, owner, user + 1, "one-read", room, message.messageId());
+        assertMessagePermission(false, owner, user, "wrong-socket", room, message.messageId());
+        assertMessagePermission(false, owner, user, "one-read", room + 1, message.messageId());
+        jdbc.update("UPDATE chat_view_runtime SET owner_generation=owner_generation+1 WHERE view_id=?",
+                joined.viewSessionId());
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_view_runtime SET owner_generation=owner_generation-1 WHERE view_id=?",
+                joined.viewSessionId());
+        jdbc.update("UPDATE chat_runtime_control SET mode='RECOVERING' WHERE environment=?", environment);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_runtime_control SET mode='RUNNING',epoch=epoch+1 WHERE environment=?", environment);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_runtime_control SET epoch=epoch-1 WHERE environment=?", environment);
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, owner.taskId());
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,15,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, owner.taskId());
+        jdbc.update("UPDATE users SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", user);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE users SET deleted_at=NULL WHERE id=?", user);
+        jdbc.update("INSERT INTO chat_bans(user_id,reason,created_at,expires_at) "
+                + "VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))", user);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_bans SET deleted_at=UTC_TIMESTAMP(6) WHERE user_id=?", user);
+        jdbc.update("UPDATE chat_room_members SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", joined.membershipId());
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_room_members SET deleted_at=NULL WHERE id=?", joined.membershipId());
+        assertMessagePermission(true, owner, user, "one-read", room, message.messageId());
+        owner.paused(user, room, joined.membershipId(), joined.viewSessionId(), "one-read");
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        owner.ready(user, room, joined.membershipId(), joined.viewSessionId(), "one-read");
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        var fresh = send(owner, user, joined.membershipId(), "one-read");
+        assertMessagePermission(true, owner, user, "one-read", room, fresh.messageId());
+        jdbc.update("""
+                INSERT INTO chat_view_intervals(view_session_id,process_id,started_at,start_after_message_id,
+                    verified_at,verified_through_message_id,environment,epoch,owner_task_id,owner_generation,
+                    start_after_room_seq,verified_through_room_seq)
+                SELECT view_session_id,process_id,started_at,start_after_message_id,verified_at,
+                    verified_through_message_id,environment,epoch,owner_task_id,owner_generation,
+                    start_after_room_seq,verified_through_room_seq
+                FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL
+                """, joined.viewSessionId());
+        assertMessagePermission(false, owner, user, "one-read", room, fresh.messageId());
+    }
+
+    @Test
+    void pausedSenderIsDeniedEvenIfALocalRoutingSnapshotStillExists() {
+        var owner = service("send-paused-race", snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "paused-sender");
+        owner.paused(user, room, joined.membershipId(), joined.viewSessionId(), "paused-sender");
+        assertThrows(ChatRoomException.class,
+                () -> send(owner, user, joined.membershipId(), "paused-sender"));
+    }
+
+    @Test
+    void enqueueBatchIsBoundToIssuerMessageUserAndGenerationAcrossDeferredThreads() throws Exception {
+        var owner = service("enqueue-batch", snapshot -> {
+        });
+        long first = user();
+        long second = user();
+        var joined = owner.join(first, UUID.randomUUID().toString(), room, claims(first)).membership();
+        var other = owner.join(second, UUID.randomUUID().toString(), room, claims(second)).membership();
+        connect(owner, first, joined, "batch-first");
+        connect(owner, second, other, "batch-second");
+        var message = send(owner, first, joined.membershipId(), "batch-first");
+        var observed = org.mockito.Mockito.spy((JdbcTemplate) ReflectionTestUtils.getField(owner, "jdbc"));
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        var permissions = owner.messageEnqueuePermissions(room, message.messageId());
+        assertEquals(Set.of("batch-first", "batch-second"), permissions.sockets());
+        assertThrows(UnsupportedOperationException.class, () -> permissions.sockets().clear());
+        for (int i = 0; i < 10; i++) {
+            assertTrue(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+            assertTrue(owner.permitsMessageEnqueue(second, "batch-second", room, message.messageId(), permissions));
+        }
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            assertTrue(executor.submit(() -> owner.permitsMessageEnqueue(first, "batch-first", room,
+                    message.messageId(), permissions)).get(1, TimeUnit.SECONDS));
+        }
+        assertFalse(owner.permitsMessageEnqueue(second, "batch-first", room, message.messageId(), permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "missing", room, message.messageId(), permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room + 1, message.messageId(), permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId() + 1, permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), Boolean.TRUE));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(),
+                Map.of("user", first, "room", room, "message", message.messageId())));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.times(1)).queryForList(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Object[].class));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.never()).queryForObject(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Integer.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        Object localClaims = ReflectionTestUtils.getField(owner, "claims");
+        Object generation = ReflectionTestUtils.invokeMethod(localClaims, "remove", "batch-first");
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+        ReflectionTestUtils.invokeMethod(localClaims, "put", "batch-first", generation);
+        long originalEpoch = owner.epoch();
+        ReflectionTestUtils.setField(owner, "epoch", originalEpoch + 1);
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+        ReflectionTestUtils.setField(owner, "epoch", originalEpoch);
+        var foreign = service("enqueue-foreign-issuer", snapshot -> {
+        });
+        assertFalse(foreign.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+        jdbc.update("UPDATE chat_room_members SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", joined.membershipId());
+        assertTrue(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions),
+                "routing evidence is a point-in-time result; the actual handler must query current DB state");
+        assertFalse(owner.permitsMessage(first, "batch-first", room, message.messageId()));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), null));
+        owner.setRuntimePermit(() -> false);
+        assertFalse(owner.permitsMessageEnqueue(second, "batch-second", room, message.messageId(), permissions));
+    }
+
+    private long statementCounter(java.sql.Connection connection, String name) throws Exception {
+        try (var statement = connection.createStatement();
+                var result = statement.executeQuery("SHOW SESSION STATUS LIKE '" + name + "'")) {
+            assertTrue(result.next());
+            return result.getLong(2);
+        }
+    }
+
+    private void assertMessagePermission(boolean expected, ChatParticipationService owner, long user,
+            String socket, long roomId, long messageId) {
+        assertEquals(expected, owner.permitsMessage(user, socket, roomId, messageId));
+        boolean socketAllowed = owner.permitsSocket(user, socket, roomId);
+        assertEquals(List.of(socketAllowed), owner.permitsSocketBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, socket, roomId, 0))));
+        assertEquals(socketAllowed, owner.permitsSocketEnqueue(user, socket, roomId,
+                owner.issueSocketEnqueuePermissions(roomId)));
+        assertEquals(List.of(expected), owner.permitsMessageBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, socket, roomId, messageId))));
+        var permissions = owner.messageEnqueuePermissions(roomId, messageId);
+        assertEquals(expected, owner.permitsMessageEnqueue(user, socket, roomId, messageId, permissions));
+    }
+
+    @Test
     void delayedOutboundFrameCannotCrossUnsubscribeAndNewInterval() {
         var owner = service("outbound", snapshot -> {
         });
@@ -884,7 +1180,7 @@ class ChatParticipationMySqlTest {
         connect(owner, user, joined, "queued");
         var message = send(owner, user, joined.membershipId(), "queued");
         var presence = mock(ChatPresenceRegistry.class);
-        when(presence.hasRoomSubscription("queued", room)).thenReturn(true);
+        when(presence.hasLocalRoomSubscription("queued", room)).thenReturn(true);
         var guard = new ChatMessageOutboundGuard(presence);
         var registry = new ChatAuthSessionRegistry();
         registry.register("queued", new ChatAuthSessionRegistry.Context(user, sid));
@@ -896,12 +1192,15 @@ class ChatParticipationMySqlTest {
         headers.setHeader("chatRoomId", room);
         headers.setHeader("chatMessageId", message.messageId());
         headers.setHeader("chatRecipients", Set.of("queued"));
+        headers.setHeader("chatEnqueuePermissions", owner.messageEnqueuePermissions(room, message.messageId()));
         var frame = MessageBuilder.createMessage(new byte[0],
                 headers.getMessageHeaders());
+        assertEquals(frame, guard.preSend(frame, null));
         assertEquals(frame, guard.beforeHandle(frame, null, null));
         owner.paused(user, room, joined.membershipId(), joined.viewSessionId(), "queued");
         owner.ready(user, room, joined.membershipId(), joined.viewSessionId(), "queued");
-        assertEquals(null, guard.beforeHandle(frame, null, null));
+        assertEquals(null, guard.beforeHandle(frame, null, null),
+                "routing evidence must never bypass actual handler's fresh DB boundary check");
         assertFalse(owner.permitsMessage(user, "queued", room, message.messageId()));
         var fresh = send(owner, user, joined.membershipId(), "queued");
         assertTrue(owner.permitsMessage(user, "queued", room, fresh.messageId()));
@@ -989,7 +1288,7 @@ class ChatParticipationMySqlTest {
         var expected = jdbc.queryForList("""
                 SELECT m.id FROM chat_room_messages m JOIN chat_view_intervals i ON i.view_session_id=?
                 WHERE m.room_id=? AND m.id>i.start_after_message_id AND m.id<=i.end_message_id
-                    AND m.created_at>=i.started_at ORDER BY m.id DESC
+                    AND m.created_at>=i.started_at ORDER BY m.id DESC LIMIT 10
                 """, Long.class, view, room);
         var current = service.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
         connect(service, user, current, "after-cutover");

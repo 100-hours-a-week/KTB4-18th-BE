@@ -152,6 +152,118 @@ class ChatMessageRelayBackpressureTest {
         }
     }
 
+    @Test
+    void blockedDeliveryDbReadDoesNotHoldTheLocalPresenceMonitor() throws Exception {
+        var redis = mock(ChatRedisConnection.class);
+        var subscription = mock(ChatRedisSubscription.class);
+        var channels = mock(ChatRedisChannels.class);
+        when(redis.isConnected()).thenReturn(true);
+        when(subscription.isReady()).thenReturn(true);
+        when(redis.openSubscription(eq(channels), any())).thenReturn(subscription);
+        when(channels.roomPattern()).thenReturn("test:room:*");
+        var participation = mock(ChatParticipationService.class);
+        when(participation.epoch()).thenReturn(1L);
+        when(participation.available()).thenReturn(true);
+        var entered = new CountDownLatch(2);
+        var release = new CountDownLatch(1);
+        var jdbc = mock(JdbcTemplate.class, call -> {
+            if (call.getMethod().getName().equals("query")) {
+                entered.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return java.util.List.of();
+            }
+            return org.mockito.Answers.RETURNS_DEFAULTS.answer(call);
+        });
+        var presence = new ChatPresenceRegistry(java.time.Clock.systemUTC());
+        var beans = new DefaultListableBeanFactory();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+                var relay = new ChatMessageRelay(jdbc, participation, mock(ChatMessageOutboxStore.class),
+                        mock(DistributedChatMessageService.class), redis, channels, presence,
+                        mock(ChatAuthSessionRegistry.class), mock(ChatSessionVerifier.class),
+                        beans.getBeanProvider(SimpMessagingTemplate.class), "test")) {
+            try {
+                var event = new ChatMessageRedisEvent(UUID.randomUUID().toString(), "chat:" + UUID.randomUUID(),
+                        1, 1, 1, 1, Instant.now());
+                relay.receive("test:room:1", event.encode());
+                var other = new ChatMessageRedisEvent(UUID.randomUUID().toString(), "chat:" + UUID.randomUUID(),
+                        1, 1, 2, 2, Instant.now());
+                relay.receive("test:room:1", other.encode());
+                assertTrue(entered.await(3, TimeUnit.SECONDS),
+                        "both body reads must enter DB without waiting for deliveryLock");
+                assertTrue(executor.submit(() -> presence.exclusive(() -> true)).get(500, TimeUnit.MILLISECONDS),
+                        "a delivery DB read must not block local transitions and scheduled reconciliation");
+            } finally {
+                release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void concurrentDuplicateBodyReadsStillPublishOnlyOneBoundEnqueue() throws Exception {
+        var redis = mock(ChatRedisConnection.class);
+        var subscription = mock(ChatRedisSubscription.class);
+        var channels = mock(ChatRedisChannels.class);
+        when(redis.isConnected()).thenReturn(true);
+        when(subscription.isReady()).thenReturn(true);
+        when(redis.openSubscription(eq(channels), any())).thenReturn(subscription);
+        when(channels.roomPattern()).thenReturn("test:room:*");
+        var participation = mock(ChatParticipationService.class);
+        when(participation.epoch()).thenReturn(1L);
+        when(participation.available()).thenReturn(true);
+        var permissions = mock(ChatParticipationService.MessageEnqueuePermissions.class);
+        when(permissions.sockets()).thenReturn(java.util.Set.of("recipient"));
+        when(participation.messageEnqueuePermissions(1, 1)).thenReturn(permissions);
+        var entered = new CountDownLatch(2);
+        var release = new CountDownLatch(1);
+        var response = new com.muse.meomuneum.chat.message.dto.ChatMessageResponse(1L, UUID.randomUUID().toString(),
+                1L, 1L, "sender", "content", java.time.OffsetDateTime.now());
+        var jdbc = mock(JdbcTemplate.class, call -> {
+            if (call.getMethod().getName().equals("query")) {
+                entered.countDown();
+                assertTrue(release.await(3, TimeUnit.SECONDS));
+                return java.util.List.of(response);
+            }
+            return org.mockito.Answers.RETURNS_DEFAULTS.answer(call);
+        });
+        var presence = mock(ChatPresenceRegistry.class);
+        when(presence.roomSubscriptions(1L)).thenReturn(Map.of("recipient", java.util.Set.of("sub")));
+        var auth = mock(ChatAuthSessionRegistry.class);
+        when(auth.context("recipient")).thenReturn(java.util.Optional.of(
+                new ChatAuthSessionRegistry.Context(1L, UUID.randomUUID().toString())));
+        when(auth.tokenValid(eq("recipient"), any())).thenReturn(true);
+        var template = mock(SimpMessagingTemplate.class);
+        doAnswer(call -> {
+            Map<?, ?> headers = call.getArgument(2);
+            org.junit.jupiter.api.Assertions.assertSame(permissions, headers.get("chatEnqueuePermissions"));
+            return null;
+        }).when(template).convertAndSend(eq("/topic/chat-rooms/1"), any(Object.class), any(Map.class));
+        var beans = new DefaultListableBeanFactory();
+        beans.registerSingleton("broker", template);
+        try (var relay = new ChatMessageRelay(jdbc, participation, mock(ChatMessageOutboxStore.class),
+                mock(DistributedChatMessageService.class), redis, channels, presence, auth,
+                mock(ChatSessionVerifier.class), beans.getBeanProvider(SimpMessagingTemplate.class), "test")) {
+            var event = new ChatMessageRedisEvent(UUID.randomUUID().toString(), "chat:" + UUID.randomUUID(),
+                    1, 1, 1, 1, Instant.now());
+            try {
+                relay.receive("test:room:1", event.encode());
+                relay.receive("test:room:1", event.encode());
+                assertTrue(entered.await(3, TimeUnit.SECONDS));
+            } finally {
+                release.countDown();
+            }
+            var workers = (java.util.concurrent.ThreadPoolExecutor) org.springframework.test.util.ReflectionTestUtils
+                    .getField(relay, "receivers");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (workers.getCompletedTaskCount() < 2 && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertEquals(2, workers.getCompletedTaskCount());
+            org.mockito.Mockito.verify(template, org.mockito.Mockito.times(1))
+                    .convertAndSend(eq("/topic/chat-rooms/1"), any(Object.class), any(Map.class));
+            assertTrue(relay.ready());
+        }
+    }
+
     private ChatControlEvent presence(long sequence) {
         return presence(1, sequence);
     }
