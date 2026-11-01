@@ -39,3 +39,33 @@
 이번 커밋은 부하 준비 과정의 수정과 실패 기준점을 보존한다. 인증 호출 제한, 잠금 대기 timeout, 허가 만료·연결 종료 문제의 해결 완료가 아니다. 후속 장애 수정·동일 조건 예비 검증 후 본 측정을 다시 진행해야 한다.
 
 실행 식별자: `20261031T155704Z-after-01-round-1a583a`, `20261031T155832Z-after-02-round-5a56aa`, `20261031T161032Z-after-03-round-c48b51`. 원본 로그·raw·시계열·비공개 DB backup은 로컬 검증 보관소에 유지한다. 인증 fixture·쿠키·토큰·DB backup 및 tools 전체는 커밋하지 않는다.
+
+
+## 후속 장애 수정·성능 개선 및 별도 진단 — 2026-11-01
+
+앞의 본 측정3회 실패 기록은 당시 기준점으로 보존한다. 이후 변경은 다음과 같다.
+
+- Chat의 인증 호출 시작을 초당84회로 제한해 Core의 기존 Task별100회 제한에 지연 여유를 둔다. in-flight16개·전체1초 deadline과 사용자별 제한은 유지한다.
+- busy expired Task와 outbox 정리는 `FOR UPDATE SKIP LOCKED`로 확정한 행만 처리해 정상 작업의 잠금을 기다리지 않는다. 미만료 메시지와 DB 권한 fencing은 유지한다.
+- runtime DB/Redis 단계·전이 admission holder·Core의 DB/Hazelcast 검증 단계의 최초 실패를 제한된 로그로 남긴다. 계정·sid·토큰·본문은 기록하지 않는다.
+- enqueue 권한은 메시지/방/사용자/소켓/세대/epoch/issuer에 묶인 내부 증거로 전달한다. 실제 outbound handler는 현재 요청 최대32개를 새로운 PRIMARY DB 조회로 묶고 Core/JWT·현재 구독·소유권·구간·24시간 경계를 다시 검증한다. 권한 결과 캐시는 없다.
+- 로컬 구독 인덱스와 SEND/본문 조회의 잠금 범위 축소로 전역 presence monitor 점유를 줄인다. 중복 억제와 최종 enqueue는 직렬화한다. DB batch worker1개·pending64개·outbound32개를 사용하며 DB pool/CPU/heap/권한 TTL은 확대하지 않는다.
+- SQL 준비 정보 재사용을 명시하고 배치 크기는1/2/4/8/16/32의6가지 SQL 형태로 제한한다. NULL view padding은 실제 참여자에 일치하지 않는다. 준비 정보 캐시는 권한 결과 캐시와 구분한다.
+- 인원수 알림만200ms 구간에 최신 hint로 합치며 이미 전송한 snapshot version 이하는 재전송하지 않는다. 기존 dispatch 전용 scheduler로 flush하고 pending room256개를 상한으로 둔다. 초기 snapshot/ready·메시지·terminal 이벤트는 이 지연 구간에서 제외한다.
+- 동일 heap/CPU에서 Chat G1 GC를 명시한다. Core GC는 변경하지 않는다. 세부 GC 로그와 부하 도구/fixture는 로컬에만 보존한다.
+
+관련 단위59개·MySQL46개·Core/종료2개, 총107개와 Spotless·Checkstyle main/chat/test·Core/Chat JAR 검증을 통과했다. 모든 배치 크기의 현재 권한과 PRIMARY 실행 계획, 권한 폐기 재조회, SQL 형태6개·전체 재반복 추가 prepare0도 검증했다.
+
+최신 별도 진단 `20261101T075325Z-after-03-bottleneck-48cfca`는 각 단계 warm60초/measure60초·10msg/s·100senders·80자·join100ms 조건이다. 고정60초 구간에서 B 수동증설을10.803초에 완료했다.
+
+| 목표 연결 | A/B | 각 구간 ACK | 각 구간 수신/기대 | 측정 p95/p99 |
+| --- | --- | --- | --- | --- |
+| 100 | 100/0 | 600/600 | 60000/60000 | 192/290ms |
+| 500 | 114/386 | 600/600 | 300000/300000 | 226/466ms |
+| 1000 | 140/860 | 600/600 | 600000/600000 | 907/1153ms |
+
+모든 구간 목표 연결 수 유지, 전체3600ACK/1920000수신·누락/중복/비정상종료/정리오류0, k6 exit0이다. 정상 종료 후 active view·interval·membership0, 별도 기준DB/프록시/기존 앱 복원을 확인했다. 테스트 이후 소스와 실행JAR 해시도 대조했다.
+
+이는 수정 후 별도 진단1회이며 기존 정식3회 결과를 대체하지 않는다.180초 본 측정·자동확장·운영 검증 완료가 아니다.1000명 p95907ms로 지연 여유가 크다고 볼 수 없고, 순간 outbound 대기도 남는다.
+
+중간 진단에서는 격리 MySQL1GiB의 OOM이 발생해 장애DB를 보존하고 같은 한도로 재시작했다. 최종 진단에서는 최고706.2MiB/OOM재발0이지만 SQL형태 제한과 DB재시작이 함께 적용돼 장기 누적 원인을 분리 입증하지 못했다. 이전 Core1.1초 인증지연도 최종 진단에서 재발하지 않았으나 직접 원인 해결 확정으로 닫지 않는다. 중간 실패 원본·상세 분석·107개 XML·해시 기록은 로컬 보관소에 보존한다. 공개 API/DB 스키마 변경·AWS/배포·외부 이슈/PR 변경은 없다.
