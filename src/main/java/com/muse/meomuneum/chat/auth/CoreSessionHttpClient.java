@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -28,11 +29,16 @@ import com.muse.meomuneum.global.security.SessionPair;
 /** Dedicated credential, no redirects/retries, default JVM TLS verification, total caller deadline. */
 public final class CoreSessionHttpClient implements CoreSessionGateway, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(CoreSessionHttpClient.class);
+    private static final int MAX_IN_FLIGHT = 16;
+    // Leave room for already-dispatched calls that reach Core after a network/scheduling delay.
+    // The Core limit remains 100; this bounded local window shapes bursts within the same caller deadline.
+    private static final int MAX_STARTS_PER_SECOND = 100 - MAX_IN_FLIGHT;
+    private final ArrayDeque<Long> requestStarts = new ArrayDeque<>();
     private final AtomicBoolean failureLogged = new AtomicBoolean();
     private final URI endpoint;
     private final String credential;
     private final String taskId;
-    private final Semaphore permits = new Semaphore(16);
+    private final Semaphore permits = new Semaphore(MAX_IN_FLIGHT);
     private final ThreadPoolExecutor transport = new ThreadPoolExecutor(4, 8, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(64), Thread.ofPlatform().name("chat-core-http-", 0).factory(),
             new ThreadPoolExecutor.AbortPolicy());
@@ -77,6 +83,10 @@ public final class CoreSessionHttpClient implements CoreSessionGateway, AutoClos
             if (!acquired || System.nanoTime() - deadline >= 0) {
                 throw new ChatAuthUnavailableException();
             }
+            stage = "http_rate_admission";
+            if (!awaitRateAdmission(deadline)) {
+                throw new ChatAuthUnavailableException();
+            }
             stage = "http_request";
             var request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(1))
                     .header("Authorization", "Bearer " + credential).header("Content-Type", "application/json")
@@ -107,12 +117,35 @@ public final class CoreSessionHttpClient implements CoreSessionGateway, AutoClos
         }
     }
 
+    private boolean awaitRateAdmission(long deadline) throws InterruptedException {
+        synchronized (requestStarts) {
+            while (true) {
+                long now = System.nanoTime();
+                while (!requestStarts.isEmpty()
+                        && now - requestStarts.getFirst() >= TimeUnit.SECONDS.toNanos(1)) {
+                    requestStarts.removeFirst();
+                }
+                if (deadline - now <= 0) {
+                    return false;
+                }
+                if (requestStarts.size() < MAX_STARTS_PER_SECOND) {
+                    requestStarts.addLast(now);
+                    return true;
+                }
+                long delay = Math.min(deadline - now,
+                        TimeUnit.SECONDS.toNanos(1) - (now - requestStarts.getFirst()));
+                TimeUnit.NANOSECONDS.timedWait(requestStarts, Math.max(1, delay));
+            }
+        }
+    }
+
     private void diagnostic(String stage, int batchSize, long deadline, int status, String cause) {
         if (failureLogged.compareAndSet(false, true)) {
             log.warn("event=chat_auth_first_http_failure stage={} batch_size={} elapsed_ms={} status={} "
                     + "in_flight={} transport_active={} transport_queued={} cause={}", stage, batchSize,
                     TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - deadline + TimeUnit.SECONDS.toNanos(1)),
-                    status, 16 - permits.availablePermits(), transport.getActiveCount(), transport.getQueue().size(),
+                    status, MAX_IN_FLIGHT - permits.availablePermits(), transport.getActiveCount(),
+                    transport.getQueue().size(),
                     cause);
         }
     }

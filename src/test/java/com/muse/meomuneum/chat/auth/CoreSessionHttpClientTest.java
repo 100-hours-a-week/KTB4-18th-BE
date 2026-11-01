@@ -23,6 +23,73 @@ import com.sun.net.httpserver.HttpServer;
 
 class CoreSessionHttpClientTest {
     @Test
+    void burstyFreshValidationsRespectTheCoreTaskLimitWithoutRetries() throws Exception {
+        String credential = "synthetic-http-service-secret-at-least-32";
+        var validation = org.mockito.Mockito.mock(com.muse.meomuneum.auth.internal.CoreSessionValidationService.class);
+        org.mockito.Mockito.when(validation.validate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(
+                call -> call.<List<SessionPair>>getArgument(0).stream().map(SessionDecision::inactive).toList());
+        var filter = new com.muse.meomuneum.auth.internal.CoreInternalAuthFilter(credential, "", validation);
+        var requests = new AtomicInteger();
+        var rejected = new AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            server.setExecutor(workers);
+            server.createContext("/internal/v1/auth/sessions/validate", exchange -> {
+                requests.incrementAndGet();
+                var request = new org.springframework.mock.web.MockHttpServletRequest("POST",
+                        com.muse.meomuneum.auth.internal.CoreInternalAuthFilter.PATH);
+                request.setServletPath(com.muse.meomuneum.auth.internal.CoreInternalAuthFilter.PATH);
+                request.setContentType("application/json");
+                request.addHeader("Authorization", exchange.getRequestHeaders().getFirst("Authorization"));
+                request.addHeader("X-Chat-Task-Id", exchange.getRequestHeaders().getFirst("X-Chat-Task-Id"));
+                request.setContent(exchange.getRequestBody().readAllBytes());
+                var response = new org.springframework.mock.web.MockHttpServletResponse();
+                try {
+                    filter.doFilter(request, response, (req, res) -> {
+                        throw new AssertionError("internal endpoint escaped");
+                    });
+                } catch (jakarta.servlet.ServletException error) {
+                    throw new java.io.IOException(error);
+                }
+                if (response.getStatus() != 200) {
+                    rejected.incrementAndGet();
+                }
+                byte[] body = response.getContentAsByteArray();
+                exchange.sendResponseHeaders(response.getStatus(), body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            server.start();
+            try (var client = new CoreSessionHttpClient("http://127.0.0.1:" + server.getAddress().getPort(),
+                    credential, true)) {
+                // Warm transport/JIT before the burst, without bypassing the real Core rate filter.
+                client.validate(List.of(new SessionPair(1, UUID.randomUUID().toString())));
+                var attempts = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+                for (long user = 2; user <= 121; user++) {
+                    var pair = new SessionPair(user, UUID.randomUUID().toString());
+                    attempts.add(workers.submit(() -> {
+                        try {
+                            return client.validate(List.of(pair)).getFirst().pair().equals(pair);
+                        } catch (ChatAuthUnavailableException unavailable) {
+                            return false;
+                        }
+                    }));
+                    Thread.sleep(8);
+                }
+                var outcomes = new java.util.ArrayList<Boolean>();
+                for (var attempt : attempts) {
+                    outcomes.add(attempt.get(3, TimeUnit.SECONDS));
+                }
+                assertEquals(121, requests.get(), "each request must be sent once, without a hidden retry");
+                assertEquals(0, rejected.get(), "outgoing admission must avoid Core caller_rate rejection");
+                assertTrue(outcomes.stream().allMatch(Boolean::booleanValue));
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
     void busyAdmissionWaitsWithinTheOriginalDeadlineAndDoesNotSendAfterTimeout() throws Exception {
         var pair = new SessionPair(1, UUID.randomUUID().toString());
         var received = new AtomicInteger();
