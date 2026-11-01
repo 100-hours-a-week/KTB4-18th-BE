@@ -3,11 +3,13 @@ package com.muse.meomuneum.chat.message.relay;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -126,15 +128,30 @@ public final class ChatMessageOutboxStore {
     }
 
     public void cleanup() {
-        // Old-epoch live publication must never resume. Stored messages remain governed by their own retention.
-        jdbc.update("""
-                UPDATE chat_message_outbox SET status='EXPIRED',claim_token=NULL WHERE environment=?
-                    AND status='PENDING' AND (epoch<? OR expires_at<=UTC_TIMESTAMP(6)) LIMIT 1000
-                """, environment, participation.epoch());
-        jdbc.update("""
-                DELETE FROM chat_message_outbox WHERE environment=? AND status<>'PENDING'
-                    AND expires_at<=UTC_TIMESTAMP(6) LIMIT 1000
-                """, environment);
+        // Claim only bounded expired rows; never range-update live rows scanned by the expiry predicate.
+        transactions.executeWithoutResult(status -> {
+            var named = new NamedParameterJdbcTemplate(jdbc);
+            List<String> expired = jdbc.queryForList("""
+                    SELECT event_id FROM chat_message_outbox WHERE environment=? AND status='PENDING'
+                        AND (epoch<? OR expires_at<=UTC_TIMESTAMP(6))
+                    ORDER BY event_id LIMIT 1000 FOR UPDATE SKIP LOCKED
+                    """, String.class, environment, participation.epoch());
+            if (!expired.isEmpty()) {
+                named.update("""
+                        UPDATE chat_message_outbox SET status='EXPIRED',claim_token=NULL
+                        WHERE environment=:environment AND event_id IN (:ids) AND status='PENDING'
+                        """, Map.of("environment", environment, "ids", expired));
+            }
+            List<String> removable = jdbc.queryForList("""
+                    SELECT event_id FROM chat_message_outbox WHERE environment=? AND status<>'PENDING'
+                        AND expires_at<=UTC_TIMESTAMP(6)
+                    ORDER BY event_id LIMIT 1000 FOR UPDATE SKIP LOCKED
+                    """, String.class, environment);
+            if (!removable.isEmpty()) {
+                named.update("DELETE FROM chat_message_outbox WHERE environment=:environment AND event_id IN (:ids)",
+                        Map.of("environment", environment, "ids", removable));
+            }
+        });
     }
 
     private <T> T transaction(long room, Supplier<T> operation) {

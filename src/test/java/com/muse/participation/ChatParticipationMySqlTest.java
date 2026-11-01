@@ -698,6 +698,46 @@ class ChatParticipationMySqlTest {
     }
 
     @Test
+    void sweepingABusyExpiredPeerDoesNotBlockOrCloseTheHealthyTask() throws Exception {
+        String environment = "sweep-busy-peer";
+        var healthy = service(environment, snapshot -> {
+        });
+        var expired = service(environment, snapshot -> {
+        });
+        long user = user();
+        var joined = expired.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(expired, user, joined, "expired-busy");
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, expired.taskId());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try {
+                try (var lock = held.prepareStatement("""
+                        SELECT task_id FROM chat_runtime_tasks WHERE environment=? AND task_id=? FOR SHARE
+                        """)) {
+                    lock.setString(1, environment);
+                    lock.setString(2, expired.taskId());
+                    lock.executeQuery().close();
+                }
+                workers.submit(healthy::sweep).get(500, TimeUnit.MILLISECONDS);
+                assertTrue(healthy.available());
+                assertFalse(healthy.isFailed());
+                assertFalse(expired.socketValid(user, joined.membershipId(), "expired-busy"));
+                assertEquals("ACTIVE", jdbc.queryForObject("SELECT state FROM chat_runtime_tasks "
+                        + "WHERE environment=? AND task_id=?", String.class, environment, expired.taskId()));
+            } finally {
+                held.rollback();
+            }
+        }
+        healthy.sweep();
+        assertEquals("FENCED", jdbc.queryForObject("SELECT state FROM chat_runtime_tasks "
+                + "WHERE environment=? AND task_id=?", String.class, environment, expired.taskId()));
+        assertTrue(healthy.available());
+        assertEquals("OFFLINE", state(joined.viewSessionId()));
+    }
+
+    @Test
     void realMysqlLockTimeoutRollsBackTheWholeReservation() throws Exception {
         var service = service("timeout", snapshot -> {
         });
@@ -1557,6 +1597,60 @@ class ChatParticipationMySqlTest {
                 failing));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_send_policy WHERE user_id=?", Integer.class,
                 failing));
+    }
+
+    @Test
+    void outboxCleanupDoesNotLockUnexpiredRowsAndKeepsPendingMessages() throws Exception {
+        String env = "outbox-cleanup-lock";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "cleanup");
+        var saved = messages(owner, env, FINGERPRINT_KEY, false).send(user, room, joined.membershipId(),
+                "cleanup", UUID.randomUUID().toString(), "live", "safe");
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var statement = held.prepareStatement("SELECT event_id FROM chat_message_outbox "
+                    + "WHERE environment=? AND message_id=? FOR UPDATE")) {
+                statement.setString(1, env);
+                statement.setLong(2, saved.message().messageId());
+                statement.executeQuery().close();
+            }
+            try {
+                workers.submit(store::cleanup).get(500, TimeUnit.MILLISECONDS);
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                        + "WHERE environment=? AND status='PENDING'", Integer.class, env));
+            } finally {
+                held.rollback();
+            }
+        }
+        jdbc.update("UPDATE chat_message_outbox SET expires_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=?", env);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var statement = held.prepareStatement("SELECT event_id FROM chat_message_outbox "
+                    + "WHERE environment=? AND message_id=? FOR UPDATE")) {
+                statement.setString(1, env);
+                statement.setLong(2, saved.message().messageId());
+                statement.executeQuery().close();
+            }
+            try {
+                workers.submit(store::cleanup).get(500, TimeUnit.MILLISECONDS);
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                        + "WHERE environment=? AND status='PENDING'", Integer.class, env));
+            } finally {
+                held.rollback();
+            }
+        }
+        store.cleanup();
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?",
+                Integer.class, env));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE id=?", Integer.class,
+                saved.message().messageId()));
     }
 
     @Test

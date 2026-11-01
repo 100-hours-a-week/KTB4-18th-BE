@@ -690,7 +690,7 @@ public final class ChatParticipationService {
                 control();
                 List<String> expiredTasks = jdbc.queryForList("""
                         SELECT task_id FROM chat_runtime_tasks WHERE environment=? AND state='ACTIVE'
-                            AND lease_until<=UTC_TIMESTAMP(6) ORDER BY task_id FOR UPDATE
+                            AND lease_until<=UTC_TIMESTAMP(6) ORDER BY task_id FOR UPDATE SKIP LOCKED
                         """, String.class, environment);
                 expiredTasks.forEach(id -> jdbc.update("""
                         UPDATE chat_runtime_tasks SET state='FENCED' WHERE environment=? AND task_id=?
