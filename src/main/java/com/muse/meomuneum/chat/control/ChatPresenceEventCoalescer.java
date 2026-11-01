@@ -1,23 +1,40 @@
 package com.muse.meomuneum.chat.control;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 /** Presence hints read the latest DB snapshot; terminal events and messages never enter this buffer. */
 public final class ChatPresenceEventCoalescer {
     private final Executor executor;
     private final Consumer<ChatControlEvent> handler;
     private final Consumer<RuntimeException> failed;
+    private final long windowNanos;
+    private final int maxRooms;
+    private final LongSupplier clock;
     private final Map<Long, Pending> pending = new HashMap<>();
     private boolean closed;
 
     public ChatPresenceEventCoalescer(Executor executor, Consumer<ChatControlEvent> handler,
             Consumer<RuntimeException> failed) {
+        this(executor, handler, failed, 0, 256, System::nanoTime);
+    }
+
+    public ChatPresenceEventCoalescer(Executor executor, Consumer<ChatControlEvent> handler,
+            Consumer<RuntimeException> failed, long windowNanos, int maxRooms, LongSupplier clock) {
+        if (windowNanos < 0 || maxRooms < 1) {
+            throw new IllegalArgumentException();
+        }
         this.executor = executor;
         this.handler = handler;
         this.failed = failed;
+        this.windowNanos = windowNanos;
+        this.maxRooms = maxRooms;
+        this.clock = clock;
     }
 
     public void submit(ChatControlEvent event) {
@@ -31,18 +48,43 @@ public final class ChatPresenceEventCoalescer {
                 existing.latest = event;
                 return;
             }
-            var item = new Pending(event);
-            pending.put(event.roomId(), item);
-            failure = schedule(item);
+            if (pending.size() >= maxRooms) {
+                failure = new RejectedExecutionException("presence room buffer full");
+            } else {
+                var item = new Pending(event, clock.getAsLong() + windowNanos);
+                pending.put(event.roomId(), item);
+                failure = windowNanos == 0 ? schedule(item) : null;
+            }
         }
         if (failure != null) {
             failed.accept(failure);
         }
     }
 
-    // Called under the buffer lock: map entries are bounded by the executor's queued/running tasks.
+    /** Called by the existing dispatch scheduler; no sleeping receiver or per-hint timer is created. */
+    public void flushDue() {
+        var failures = new ArrayList<RuntimeException>();
+        synchronized (pending) {
+            if (closed) {
+                return;
+            }
+            long now = clock.getAsLong();
+            for (var item : new ArrayList<>(pending.values())) {
+                if (!item.scheduled && now - item.due >= 0) {
+                    var failure = schedule(item);
+                    if (failure != null) {
+                        failures.add(failure);
+                    }
+                }
+            }
+        }
+        failures.forEach(failed);
+    }
+
+    // Called under the buffer lock. Both buffered rooms and executor tasks have explicit bounds.
     private RuntimeException schedule(Pending item) {
         try {
+            item.scheduled = true;
             executor.execute(() -> drain(item));
             return null;
         } catch (RuntimeException failure) {
@@ -68,8 +110,12 @@ public final class ChatPresenceEventCoalescer {
         }
         synchronized (pending) {
             if (!closed && failure == null && item.latest != null) {
-                // Requeue behind other work so a hot room cannot monopolize a receiver thread.
-                failure = schedule(item);
+                if (windowNanos == 0) {
+                    failure = schedule(item);
+                } else {
+                    item.scheduled = false;
+                    item.due = clock.getAsLong() + windowNanos;
+                }
             } else {
                 pending.remove(item.room, item);
             }
@@ -89,10 +135,13 @@ public final class ChatPresenceEventCoalescer {
     private static final class Pending {
         private final long room;
         private ChatControlEvent latest;
+        private long due;
+        private boolean scheduled;
 
-        private Pending(ChatControlEvent event) {
+        private Pending(ChatControlEvent event, long due) {
             room = event.roomId();
             latest = event;
+            this.due = due;
         }
     }
 }

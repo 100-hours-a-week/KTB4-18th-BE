@@ -11,11 +11,88 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
 class ChatPresenceEventCoalescerTest {
+    @Test
+    void timedHintsKeepLatestWithoutPostponingTheFirstDeadline() {
+        var clock = new AtomicLong();
+        var jobs = new ArrayDeque<Runnable>();
+        var received = new ArrayList<Long>();
+        var buffer = new ChatPresenceEventCoalescer(jobs::add, event -> received.add(event.roomSeq()),
+                failure -> {
+                    throw failure;
+                }, 200, 2, clock::get);
+        buffer.submit(event(1, 1));
+        clock.set(199);
+        buffer.submit(event(1, 2));
+        buffer.flushDue();
+        assertEquals(0, jobs.size());
+        clock.set(200);
+        buffer.flushDue();
+        buffer.flushDue();
+        assertEquals(1, jobs.size());
+        jobs.remove().run();
+        assertEquals(List.of(2L), received);
+    }
+
+    @Test
+    void changesDuringPublishWaitForAnotherWindowAndRoomsRemainIndependent() {
+        var clock = new AtomicLong();
+        var jobs = new ArrayDeque<Runnable>();
+        var received = new ArrayList<String>();
+        var ref = new AtomicReference<ChatPresenceEventCoalescer>();
+        var buffer = new ChatPresenceEventCoalescer(jobs::add, event -> {
+            received.add(event.roomId() + ":" + event.roomSeq());
+            if (event.roomId() == 1 && event.roomSeq() == 1) {
+                ref.get().submit(event(1, 2));
+            }
+        }, failure -> {
+            throw failure;
+        }, 200, 2, clock::get);
+        ref.set(buffer);
+        buffer.submit(event(1, 1));
+        clock.set(100);
+        buffer.submit(event(2, 1));
+        clock.set(200);
+        buffer.flushDue();
+        jobs.remove().run();
+        clock.set(300);
+        buffer.flushDue();
+        jobs.remove().run();
+        assertEquals(List.of("1:1", "2:1"), received);
+        clock.set(400);
+        buffer.flushDue();
+        jobs.remove().run();
+        assertEquals(List.of("1:1", "2:1", "1:2"), received);
+    }
+
+    @Test
+    void timedBufferIsBoundedAndReleasesRejectedAndClosedRooms() {
+        var clock = new AtomicLong();
+        var failures = new ArrayList<RuntimeException>();
+        var buffer = new ChatPresenceEventCoalescer(task -> {
+            throw new RejectedExecutionException();
+        },
+                event -> {
+                    throw new AssertionError();
+                }, failures::add, 200, 1, clock::get);
+        buffer.submit(event(1, 1));
+        buffer.submit(event(2, 1));
+        assertEquals(1, failures.size());
+        clock.set(200);
+        buffer.flushDue();
+        assertEquals(2, failures.size());
+        buffer.submit(event(2, 2));
+        buffer.close();
+        clock.set(400);
+        buffer.flushDue();
+        assertEquals(2, failures.size());
+    }
+
     @Test
     void hotRoomRequeuesBehindOtherRoomsAndReadsTheNewestPendingHint() {
         var jobs = new ArrayDeque<Runnable>();

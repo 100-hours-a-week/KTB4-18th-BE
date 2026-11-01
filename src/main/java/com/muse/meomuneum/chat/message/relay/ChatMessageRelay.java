@@ -113,7 +113,8 @@ public final class ChatMessageRelay implements AutoCloseable {
         this.environment = environment;
         presenceEvents = new ChatPresenceEventCoalescer(receivers,
                 event -> processControl(event.channel(channels), event.encode()),
-                failure -> receiveRejected(failure, "presence"));
+                failure -> receiveRejected(failure, "presence"), TimeUnit.MILLISECONDS.toNanos(200), 256,
+                System::nanoTime);
         subscription = redis.openSubscription(channels, new RedisPubSubAdapter<>() {
             @Override
             public void message(String pattern, String channel, String body) {
@@ -156,7 +157,11 @@ public final class ChatMessageRelay implements AutoCloseable {
 
     @Scheduled(fixedDelay = 200, scheduler = "chatRelayDispatchScheduler")
     public void dispatch() {
-        if (!ready() || !participation.available() || !publishing.compareAndSet(false, true)) {
+        if (!ready() || !participation.available()) {
+            return;
+        }
+        presenceEvents.flushDue();
+        if (!ready() || !publishing.compareAndSet(false, true)) {
             return;
         }
         try {

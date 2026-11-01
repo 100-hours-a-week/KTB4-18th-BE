@@ -1261,10 +1261,11 @@ public final class ChatParticipationService {
                 occurred);
     }
 
-    public void publishPresence(long room) {
+    public long publishPresence(long room) {
         validSockets();
         var snapshot = snapshot(room);
         events.publishEvent(new ChatPresenceChangedEvent(room, snapshot.connected(), snapshot.version(), null, null));
+        return snapshot.version();
     }
 
     private long createMembership(long user, String sid, long room, LocalDateTime now) {

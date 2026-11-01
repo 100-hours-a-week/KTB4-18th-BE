@@ -29,6 +29,9 @@ public final class ChatControlEventConsumer {
     private final LinkedHashMap<String, Long> seen = new LinkedHashMap<>(128, 0.75f, true);
     private final AtomicLong rejected = new AtomicLong();
     private final AtomicLong applied = new AtomicLong();
+    private record PresenceKey(long epoch, long room) {
+    }
+    private final Map<PresenceKey, Long> publishedPresence = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ChatControlEventConsumer(JdbcTemplate jdbc, ChatParticipationService participation, ChatViewLifecycle views,
             ChatSocketSessions sockets, String environment) {
@@ -81,8 +84,18 @@ public final class ChatControlEventConsumer {
             return;
         }
         if (event.type().equals("CHAT_PRESENCE_CHANGED")) {
-            // A delayed lower sequence is only a hint: always publish the latest DB snapshot/version.
-            participation.publishPresence(event.roomId());
+            // The fresh snapshot includes every committed presence change through its room version.
+            // Validate each hint against the outbox above, then coalesce only already represented hints.
+            publishedPresence.compute(new PresenceKey(event.epoch(), event.roomId()), (key, previous) -> {
+                if (previous != null && event.roomSeq() <= previous) {
+                    return previous;
+                }
+                long version = participation.publishPresence(event.roomId());
+                if (version < event.roomSeq()) {
+                    throw new com.muse.meomuneum.chat.participation.ChatParticipationUnavailableException();
+                }
+                return version;
+            });
         } else if (!terminal(event)) {
             rejected.incrementAndGet();
             return;

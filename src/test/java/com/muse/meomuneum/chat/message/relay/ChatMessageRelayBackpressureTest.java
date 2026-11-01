@@ -45,6 +45,7 @@ class ChatMessageRelayBackpressureTest {
         when(channels.roomChannel(anyLong())).thenAnswer(call -> "test:room:" + call.getArgument(0));
         var participation = mock(ChatParticipationService.class);
         when(participation.epoch()).thenReturn(1L);
+        when(participation.available()).thenReturn(true);
         var controls = mock(ChatControlEventConsumer.class);
         var entered = new CountDownLatch(2);
         var release = new CountDownLatch(1);
@@ -70,6 +71,7 @@ class ChatMessageRelayBackpressureTest {
                 for (long room = 1; room <= 2; room++) {
                     relay.receive("test:room:" + room, presence(room, 1).encode());
                 }
+                flushPresence(relay);
                 assertTrue(entered.await(3, TimeUnit.SECONDS));
                 for (long seq = 2; seq <= 1001; seq++) {
                     for (long room = 1; room <= 2; room++) {
@@ -81,6 +83,7 @@ class ChatMessageRelayBackpressureTest {
             } finally {
                 release.countDown();
             }
+            flushPresence(relay);
             assertTrue(latest.await(3, TimeUnit.SECONDS));
             assertTrue(relay.ready());
         }
@@ -98,6 +101,7 @@ class ChatMessageRelayBackpressureTest {
         when(channels.controlChannel()).thenReturn("test:control");
         var participation = mock(ChatParticipationService.class);
         when(participation.epoch()).thenReturn(1L);
+        when(participation.available()).thenReturn(true);
         var controls = mock(ChatControlEventConsumer.class);
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
@@ -128,6 +132,7 @@ class ChatMessageRelayBackpressureTest {
             relay.setControls(controls);
             try {
                 relay.receive("test:room:1", presence(1).encode());
+                flushPresence(relay);
                 assertTrue(entered.await(3, TimeUnit.SECONDS));
                 for (long seq = 2; seq <= 1001; seq++) {
                     relay.receive("test:room:1", presence(seq).encode());
@@ -146,6 +151,7 @@ class ChatMessageRelayBackpressureTest {
             } finally {
                 release.countDown();
             }
+            flushPresence(relay);
             assertTrue(latest.await(3, TimeUnit.SECONDS));
             assertEquals(java.util.List.of(1L, 1001L), java.util.List.copyOf(sequences));
             assertTrue(relay.ready());
@@ -262,6 +268,12 @@ class ChatMessageRelayBackpressureTest {
                     .convertAndSend(eq("/topic/chat-rooms/1"), any(Object.class), any(Map.class));
             assertTrue(relay.ready());
         }
+    }
+
+    private void flushPresence(ChatMessageRelay relay) throws InterruptedException {
+        // The production scheduler ticks every 200ms; keep receivers free while the window elapses.
+        Thread.sleep(220);
+        relay.dispatch();
     }
 
     private ChatControlEvent presence(long sequence) {
