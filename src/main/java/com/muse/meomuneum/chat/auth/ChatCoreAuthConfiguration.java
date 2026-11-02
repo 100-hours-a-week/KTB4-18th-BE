@@ -32,7 +32,7 @@ public class ChatCoreAuthConfiguration {
                 environment.acceptsProfiles(Profiles.of("chat-isolated & !prod")), identity.value());
     }
 
-    @Bean
+    @Bean(destroyMethod = "close")
     public ChatCoreSessionVerifier chatCoreSessionVerifier(CoreSessionGateway gateway) {
         return new ChatCoreSessionVerifier(gateway);
     }
