@@ -23,11 +23,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 class DirectAuthOverlayProjectionTest {
     private static final Path FIXTURES = Path.of("src/test/resources/auth-contract");
     private static final String RECOVERY = "/token/refresh/operations/{operationId}/session-recovery";
-    private static final String APPROVED_OVERLAY_SHA256 =
-            "f716de5abffd6b1b651aa324c17be3d050b47b976920a0844937bc10a3b6b928";
+    private static final String APPROVED_OVERLAY_SHA256 = "f716de5abffd6b1b651aa324c17be3d050b47b976920a0844937bc10a3b6b928";
 
     @Test
-    void allRoutesStatusesAndErrorCodesMatchBaseWithOnlyApprovedRefresh500Addition() throws Exception {
+    void allRoutesStatusesAndErrorCodesMatchBaseWithApprovedExpiryAndRefresh500Additions() throws Exception {
         Map<String, Object> base = json("base-openapi.json");
         Map<String, Object> actual = yaml();
         Map<String, Object> basePaths = map(base.get("paths"));
@@ -49,7 +48,7 @@ class DirectAuthOverlayProjectionTest {
                 for (String status : expected.keySet()) {
                     Set<String> codes = messageValues(expected.get(status), base);
                     if (method.equals("post") && status.equals("400") &&
-                            (path.equals("/token/refresh") || path.equals(RECOVERY))) {
+                            (path.equals("/login") || path.equals("/token/refresh") || path.equals(RECOVERY))) {
                         codes.add("INVALID_CLIENT_EXPIRY");
                     }
                     assertThat(messageValues(responses.get(status), actual))
@@ -81,7 +80,8 @@ class DirectAuthOverlayProjectionTest {
         assertThat(revisit.get("maximumAutomaticFirstDispatches"))
                 .isEqualTo(map(refreshOverlay.get("first_dispatch")).get("max_automatic_dispatches"));
         assertThat(revisit.get("currentOperationNullProvesNoPriorRequest"))
-                .isEqualTo(map(refreshOverlay.get("first_dispatch")).get("current_operation_null_proves_no_prior_request"));
+                .isEqualTo(map(refreshOverlay.get("first_dispatch"))
+                        .get("current_operation_null_proves_no_prior_request"));
         assertThat(revisit.get("never")).isEqualTo(map(refreshOverlay.get("first_dispatch")).get("never"));
         assertThat(map(revisit.get("receipt_first_proof_order")))
                 .isEqualTo(map(refreshOverlay.get("receipt_first_proof_order")));
@@ -119,7 +119,8 @@ class DirectAuthOverlayProjectionTest {
     void expiryHeadersAndNullableFieldsRemainExplicit() throws Exception {
         Map<String, Object> document = yaml();
         Map<String, Object> paths = map(document.get("paths"));
-        for (String[] route : List.of(new String[]{"/token/refresh", "X-Auth-Client-Expires-At"},
+        for (String[] route : List.of(new String[]{"/login", "X-Auth-Client-Expires-At"},
+                new String[]{"/token/refresh", "X-Auth-Client-Expires-At"},
                 new String[]{RECOVERY, "X-Auth-Recovery-Client-Expires-At"})) {
             Map<String, Object> header = parameter(map(map(paths.get(route[0])).get("post")), route[1]);
             assertThat(header.get("required")).isEqualTo(true);
@@ -145,12 +146,12 @@ class DirectAuthOverlayProjectionTest {
         Map<String, Object> document = yaml();
         Map<String, Object> current = operation(document, "/flow/current-operation", "get");
         Map<String, Object> proof = map(current.get("x-auth-proof-selection"));
-        assertThat(strings(proof.get("precedence"))).anyMatch(text ->
-                text.contains("uniquely valid current direct flow-proof") && text.contains("binding cookie"));
-        assertThat(strings(proof.get("precedence"))).anyMatch(text ->
-                text.contains("more than one distinct flow") && text.contains("do not attempt binding fallback"));
-        assertThat(strings(proof.get("precedence"))).anyMatch(text ->
-                text.contains("Only if no current flow-proof cookie validates"));
+        assertThat(strings(proof.get("precedence"))).anyMatch(
+                text -> text.contains("uniquely valid current direct flow-proof") && text.contains("binding cookie"));
+        assertThat(strings(proof.get("precedence"))).anyMatch(text -> text.contains("more than one distinct flow")
+                && text.contains("do not attempt binding fallback"));
+        assertThat(strings(proof.get("precedence")))
+                .anyMatch(text -> text.contains("Only if no current flow-proof cookie validates"));
 
         Map<String, Object> refresh = operation(document, "/token/refresh", "post");
         Map<String, Object> responses = map(refresh.get("responses"));
@@ -192,6 +193,32 @@ class DirectAuthOverlayProjectionTest {
                 .contains("original_flow_cookie_hmac", "encrypted_result_flow_cookie");
         assertThat((String) map(direct.get("rowInvariants")).get("SUCCEEDED"))
                 .contains("Legacy", "unknown", "fail closed");
+    }
+
+    @Test
+    void loginExpiryProposalKeepsWriterSnapshotPrecisionAndLegacyBoundariesExplicit() throws Exception {
+        Map<String, Object> document = yaml();
+        Map<String, Object> expiry = map(document.get("x-login-expiry-contract"));
+        assertThat(expiry.get("status")).isEqualTo("proposed_not_implemented");
+        assertThat((String) expiry.get("request")).contains("String(sessionStorage.expiresAt)", "operationId",
+                "1ms change is AUTH_OPERATION_ID_REUSED", "Markerless legacy", "error precedence remains unchanged");
+        assertThat((String) expiry.get("admission")).contains("t0_us < client_ms*1000 <= t0_us+900000000",
+                "UTC Unix epoch microseconds", "without overflow", "never truncate fractional");
+        assertThat((String) expiry.get("cutoff")).contains("effective_ms = floor(cutoff_us/1000)",
+                "min(client_ms*1000, t0_us+900000000, receipt_us)", "never round, half-up or ceil",
+                "effective_ms*1000 <= cutoff_us", "999us earlier", "effective_ms*1000 <= t0_us, fail closed");
+        assertThat((String) expiry.get("validity")).contains("now_us < effective_ms*1000", "equality",
+                "original-precision now_us", "GET and retries never recalculate or extend");
+        assertThat((String) expiry.get("persistence")).contains("atomically store", "flow lock",
+                "first claim transaction", "result loss, process restart and late worker races",
+                "same authenticated writer DB snapshot", "resultEpoch, resultRevision", "does not implement or prove");
+        assertThat((String) expiry.get("projection")).contains("proven live failure/rejection", "null/null",
+                "no credentials or Set-Cookie", "never infer, backfill", "Do not add a LOGIN EXPIRED status");
+        assertThat((String) expiry.get("units")).contains("absolute Unix epoch millisecond strings",
+                "expires_in is an independent relative TTL", "receiptExpiresAt date-time", "separate follow-up run");
+        assertThat((String) map(document.get("x-refresh-expiry-overlay")).get("fields"))
+                .contains("Known live canonical LOGIN", "LOGOUT, NOT_RECEIVED, NONE and EXPIRED return both null",
+                        "RESULT_STALE never permits replay");
     }
 
     private static Map<String, Object> operation(Map<String, Object> document, String path, String method) {
