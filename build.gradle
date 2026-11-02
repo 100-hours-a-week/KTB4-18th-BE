@@ -322,6 +322,18 @@ tasks.named('processChatResources') {
 
 
 tasks.named('test') { exclude '**/AppSeparationProcessTest.class' }
+tasks.named('test') { exclude '**/ChatStartupProcessTest.class' }
+
+// Startup guards run against the packaged Chat entrypoint without Docker or deployment credentials.
+tasks.register('chatStartupTest', Test) {
+	dependsOn 'chatBootJar'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	include '**/ChatStartupProcessTest.class'
+	systemProperty 'chat.startup.jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+	outputs.upToDateWhen { false }
+}
 tasks.register('appSeparationTest', Test) {
 	dependsOn 'coreBootJar', 'chatBootJar'
 	testClassesDirs = sourceSets.test.output.classesDirs
