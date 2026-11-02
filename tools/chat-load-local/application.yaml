@@ -1,0 +1,57 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql:3306/chat_load_local?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: chat_load
+    password: ${LOCAL_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+management:
+  server:
+    port: 8081
+  metrics:
+    tags:
+      application: chat-load-local
+      instance: baseline-a
+auth:
+  cookie:
+    secure: false
+  cors:
+    allowed-origins: http://127.0.0.1:18080
+  state:
+    backend-replica-count: 1
+    hazelcast:
+      enabled: true
+      cluster-name: chat-load-local-auth
+      members: hazelcast:5701
+    expected-hazelcast-members: 1
+  local-mock-login:
+    enabled: false
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
+recommendation:
+  provider: ai
+  ai:
+    base-url: http://127.0.0.1:9
+  image:
+    provider: mock
+speech:
+  transcription:
+    provider: unavailable
+    ai:
+      base-url: http://127.0.0.1:9
+location:
+  reverse-geocoding:
+    base-url: http://location-mock:8080
+    rest-api-key: local-fixture-only
+chat:
+  redis:
+    enabled: false
