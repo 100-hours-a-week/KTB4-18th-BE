@@ -55,7 +55,12 @@ class DirectAuthOpenApiContractTest {
     void routesParametersSecurityAndResponsesMatchApprovedContract() throws Exception {
         Map<String, Object> document = document();
         assertThat(document.get("openapi")).isEqualTo("3.1.0");
-        assertThat(map(document.get("info")).get("version")).isEqualTo("2.4.0");
+        Map<String, Object> info = map(document.get("info"));
+        assertThat(info.get("title")).isEqualTo("Proposed Meomuneum direct-v2 authentication contract");
+        assertThat((String) info.get("description"))
+                .as("contract is clearly marked as a proposal and not implemented")
+                .startsWith("PROPOSAL: Not implemented; not an active runtime API. ");
+        assertThat(info.get("version")).isEqualTo("2.4.0");
         assertThat(document.get("servers")).isEqualTo(List.of(Map.of("url", "/api/v1/auth")));
         Map<String, Object> paths = map(document.get("paths"));
         assertThat(paths.keySet()).containsExactlyInAnyOrderElementsOf(
