@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "kind": "explicit-contract-overrides",
+  "status": "proposed_not_implemented",
+  "base": {
+    "run": "run-20261031T044207Z-f50d14",
+    "file": "api-refresh-recovery-proposal.json",
+    "policy": "unchanged except explicit overrides; this is not OpenAPI or JSON Patch"
+  },
+  "precedence": "This overlay overrides only listed base contract targets. integration-contract.md supplies normative semantics; project artifacts must be projected and cross-validated before implementation.",
+  "sources": [
+    "run-20261031T050747Z-2430a5/backend-design.md",
+    "run-20261031T052448Z-f6d86e/backend-design.md"
+  ],
+  "overrides": [
+    {
+      "target": "GET /token/refresh/operations/{operationId}/session-recovery/{recoveryOperationId} and /current",
+      "replace": {
+        "Origin.required": false,
+        "Origin.rule": "present: singleton valid exact allowlist; absent: singleton Sec-Fetch-Site exactly same-origin; proof and DB checks always required",
+        "response": "all statuses Cache-Control: no-store, no Set-Cookie, token, credentials, mutation or TTL extension",
+        "csrf": "not required"
+      }
+    },
+    {
+      "target": "POST /token/refresh",
+      "add": {
+        "header": {
+          "name": "X-Auth-Client-Expires-At",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+            "semanticMaximum": "9007199254740991",
+            "unit": "Unix epoch milliseconds"
+          },
+          "singleton": true
+        },
+        "400.error": "INVALID_CLIENT_EXPIRY"
+      },
+      "modify": {
+        "sameIdMismatch": "live receipt: changed startingEpoch or original expiry returns 409 AUTH_OPERATION_ID_REUSED; tombstone: matching ID and epoch returns 409 AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry, epoch mismatch returns 409 AUTH_OPERATION_ID_REUSED; no token/cookie"
+      }
+    },
+    {
+      "target": "POST /token/refresh/operations/{operationId}/session-recovery",
+      "add": {
+        "header": {
+          "name": "X-Auth-Recovery-Client-Expires-At",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+            "semanticMaximum": "9007199254740991",
+            "unit": "Unix epoch milliseconds"
+          },
+          "singleton": true
+        },
+        "400.error": "INVALID_CLIENT_EXPIRY"
+      },
+      "modify": {
+        "sameIdMismatch": "live receipt: changed startingEpoch or original expiry returns 409 AUTH_OPERATION_ID_REUSED; tombstone: matching ID and epoch returns 409 AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry, epoch mismatch returns 409 AUTH_OPERATION_ID_REUSED; no token/cookie"
+      }
+    },
+    {
+      "target": "components.schemas.CurrentOperationSummary",
+      "add": {
+        "required": [
+          "clientExpiresAt",
+          "effectiveExpiresAt"
+        ],
+        "properties": {
+          "clientExpiresAt": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+                "description": "Unix epoch milliseconds, <= 9007199254740991"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effectiveExpiresAt": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+                "description": "Fixed DB-clock cutoff as canonical epoch milliseconds, live receipt only"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "semantics": "string for known live REFRESH; null for other kinds or unknown legacy",
+        "state_rules": {
+          "operation_null": "summary absent",
+          "REFRESH_live_new": "clientExpiresAt and effectiveExpiresAt both canonical strings",
+          "REFRESH_legacy_unknown": "both null",
+          "LOGIN_or_LOGOUT": "both null"
+        }
+      },
+      "preserve": "additionalProperties false and existing status rules"
+    },
+    {
+      "target": "components.schemas.RefreshRecoveryStatusData, RefreshRecoveryCurrentData, RefreshRecoveryLeaseExpiredData",
+      "add": {
+        "required": [
+          "clientExpiresAt",
+          "effectiveExpiresAt"
+        ],
+        "properties": {
+          "clientExpiresAt": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+                "description": "Unix epoch milliseconds, <= 9007199254740991"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effectiveExpiresAt": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+                "description": "Fixed DB-clock cutoff as canonical epoch milliseconds, live receipt only"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "semantics": "known live row value; null for NONE, NOT_RECEIVED, EXPIRED tombstone or unknown legacy",
+        "state_rules": {
+          "exact_NOT_RECEIVED": "both null",
+          "exact_IN_PROGRESS_or_SUCCEEDED": "both strings for new live receipt; both null if legacy unknown",
+          "current_NONE_or_EXPIRED": "both null",
+          "current_IN_PROGRESS_SUCCEEDED_RESULT_STALE": "both strings for new live receipt; both null if legacy unknown; RESULT_STALE cannot replay",
+          "lease_expired_409": "both strings for new live receipt; both null if legacy unknown",
+          "other_errors": "base route-specific error schema; normally data null"
+        }
+      },
+      "preserve": "additionalProperties false, existing status and 409 rules"
+    },
+    {
+      "target": "persistence and retry",
+      "add": {
+        "auth_login_operations.owner_token": "BINARY(16) NULL DEFAULT NULL",
+        "auth_direct_operation_receipts.result_session_sid": "VARCHAR(64) NULL DEFAULT NULL",
+        "auth_direct_operation_receipts.original_flow_cookie_hmac": "BINARY(32) NULL DEFAULT NULL",
+        "auth_direct_operation_receipts.encrypted_result_flow_cookie": "TEXT NULL DEFAULT NULL",
+        "auth_direct_operation_receipts.client_expires_at_ms": "BIGINT NULL DEFAULT NULL",
+        "invariant": "new applicable live rows require original expiry, immutable while live; exact retry binds expiry and proof only on live receipt; on expiry scrub client expiry to NULL; legacy null is unknown and no backfill",
+        "aad_payload_type": "direct-operation-flow-cookie",
+        "auth_refresh_recovery_operations.client_expires_at_ms": "BIGINT NULL DEFAULT NULL",
+        "state_and_scrub": "login terminal clears owner/lease; direct and recovery tombstones scrub client expiry, sensitive results, proof, owner and lease. Retain flow ID, kind, operation ID, startingEpoch, purge horizon and, for recovery, source FK reference until physical purge.",
+        "proof_and_aad": "original_flow_cookie_hmac binds original REFRESH/LOGOUT flow proof. When REFRESH or LOGOUT issues result flow proof, exact result flow cookie ciphertext is required; successful LOGOUT always issues an active flow cookie, increments generation and requires ciphertext. v2 direct-operation-flow-cookie AAD binds table, REFRESH or LOGOUT kind and immutable row tuple; cross-column/row swaps fail.",
+        "server_cutoff": "At first receipt: source min(client expiry, DB receipt time+900s, source receipt expiry); recovery min(recovery client expiry, DB receipt time+900s, source server cutoff, source and recovery receipt expiry). DB checks before every mutation; immutable while live and scrubbed at expiry.",
+        "source_fk": "Actual migration has no source FK. Add recovery fixed REFRESH kind CHECK and composite RESTRICT FK (flow_id, source_operation_kind, source_refresh_operation_id) to direct receipt primary key; purge recovery before source.",
+        "auth_direct_operation_receipts.effective_expires_at_ms": "BIGINT NULL DEFAULT NULL",
+        "auth_refresh_recovery_operations.effective_expires_at_ms": "BIGINT NULL DEFAULT NULL",
+        "auth_refresh_recovery_operations.binding_generation": "BIGINT NULL DEFAULT NULL",
+        "auth_refresh_recovery_operations.claim_flow_cookie_generation": "BIGINT NULL DEFAULT NULL",
+        "auth_refresh_recovery_operations.claim_refresh_generation": "BIGINT NULL DEFAULT NULL",
+        "recovery_generation_invariant": "All three generation values are required by application for live recovery; null fails closed. Scrub all three to NULL on tombstone; DB CHECK is not claimed to enforce the live requirement."
+      }
+    },
+    {
+      "target": "CORS",
+      "add": {
+        "allowedRequestHeaders": [
+          "X-Auth-Client-Expires-At",
+          "X-Auth-Recovery-Client-Expires-At"
+        ]
+      },
+      "preserve": "existing credentials, exact origins, preflight and CSRF semantics"
+    }
+  ],
+  "qa_required": [
+    "cross-artifact OpenAPI/matrix/FE/BE conformance and closed schemas",
+    "FE-87 independent original deadlines, storage loss/readback, clock rollback/skew and no automatic mutation",
+    "actual security chain and browser Origin/Fetch Metadata/CORS/proof no-store cases; trusted edge evidence",
+    "pre/post proof replay, exact expiry binding, SID and owner fencing races, AAD swap/tag/nonce/v1",
+    "MySQL fresh/upgrade/legacy-null, scrub, fixed TTL, tombstone/FK/cleanup race",
+    "8 BE + 3 FE stacked compatibility, deployment gate and migration provenance",
+    "Verify all six exact columns NULL DEFAULT NULL, application state constraints, tombstone expiry NULL scrub/minimal identity retention and physical purge; mutate every AAD component and swap rows/columns; other auth TTL/security regression.",
+    "Verify exact same active flow cookie and generation on REFRESH and LOGOUT replay; successful LOGOUT always requires ciphertext and active flow proof; TEXT AEAD round trip and REFRESH/LOGOUT AAD kind swaps fail.",
+    "Live cutoff mismatch yields ID_REUSED; expired tombstone matching ID and epoch yields RECEIPT_EXPIRED independent of supplied cutoff, epoch mismatch yields ID_REUSED, no token/cookie; discovery EXPIRED has null expiry and cleanup delay does not extend validity.",
+    "Project overlay onto original proposal and mechanically validate OpenAPI, exact bounded decimal regex, all required nullable fields, routes, errors and FE/BE/matrix agreement. Verify DB cutoff formula, GET after reload, no receipt/identity fail closed, composite source FK and recovery-first purge.",
+    "FE-PR-01 owns strict types/parsers and missing/null/invalid/status/error tests for both required nullable fields. FE-PR-02 owns response validation and recovery integration tests; BE-PR-05/08 own responses. NONE/NOT_RECEIVED with tuple retained or lost but no confirmed receipt/cutoff must produce zero POST.",
+    "Fresh/upgrade MySQL metadata verifies BIGINT NULL DEFAULT NULL for recovery binding_generation, claim_flow_cookie_generation and claim_refresh_generation; service tests verify all three required on live and NULL scrub on tombstone."
+  ],
+  "limitations": [
+    "server receipt TTL is based on DB receipt time and does not prove client elapsed time",
+    "Server DB-time cutoff bounds accepted retries after receipt and supports reload with valid binding proof and live original identity, but cannot establish client elapsed time before receipt or prior clock accuracy.",
+    "legacy missing expiry cannot be reconstructed; GET-only or reauthentication"
+  ],
+  "scope_boundary": "New expiry headers and fields apply only to REFRESH and refresh recovery. Preserve all other operation TTL, proof, CSRF, Origin, replay and security rules.",
+  "recovery_admission": "NONE/NOT_RECEIVED without confirmed receipt and cutoff: zero retry POST regardless of retained tuple; GET-only/reauth. NONE alone does not prove no previous attempt. A first POST for an explicit new recovery is permitted only within the living execution when ID and original cutoff were stored and read back and memory directly proves that this operation has not crossed its dispatch boundary, with verified live canonical source and both deadlines. Reload, conflict or uncertainty is GET-only/reauth; server fencing handles concurrent tabs."
+}
