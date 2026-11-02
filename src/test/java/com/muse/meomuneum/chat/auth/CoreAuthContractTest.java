@@ -113,7 +113,8 @@ class CoreAuthContractTest {
         var store = mock(HazelcastAuthStateStore.class);
         var users = mock(UserRepository.class);
         var session = mock(HazelcastAuthStateStore.AuthSession.class);
-        when(store.getSession(pair.sid())).thenReturn(session);
+        when(store.getSessions(Set.of(pair.sid()))).thenReturn(java.util.Map.of(pair.sid(), session));
+        when(session.sid()).thenReturn(pair.sid());
         when(users.findActiveIds(List.of(1L))).thenReturn(Set.of(1L));
         when(session.userId()).thenReturn(1L);
         when(session.generation()).thenReturn(7L);
@@ -131,11 +132,51 @@ class CoreAuthContractTest {
                 assertFalse(service.validate(List.of(pair)).getFirst().active());
             }
             when(session.status()).thenReturn(HazelcastAuthStateStore.SessionStatus.ACTIVE);
+            when(session.sid()).thenReturn(UUID.randomUUID().toString());
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(session.sid()).thenReturn(pair.sid());
+            when(session.userId()).thenReturn(2L);
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(session.userId()).thenReturn(1L);
+            when(users.findActiveIds(List.of(1L))).thenReturn(Set.of());
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(users.findActiveIds(List.of(1L))).thenReturn(Set.of(1L));
             when(session.refreshAbsoluteExpiresAt()).thenReturn(Instant.now().minusMillis(1));
             assertFalse(service.validate(List.of(pair)).getFirst().active());
             when(users.findActiveIds(List.of(1L))).thenThrow(new IllegalStateException("database unavailable"));
             assertThrows(IllegalStateException.class, () -> service.validate(List.of(pair)));
         }
+    }
+
+    @Test
+    void hundredPairsUseOneFreshBulkReadInRequestOrderAndNeverFallBackToIndividualReads() {
+        var store = mock(HazelcastAuthStateStore.class);
+        var users = mock(UserRepository.class);
+        var pairs = java.util.stream.LongStream.rangeClosed(1, 100)
+                .mapToObj(id -> new SessionPair(id, UUID.randomUUID().toString())).toList();
+        var ids = pairs.stream().map(SessionPair::sid).collect(java.util.stream.Collectors.toSet());
+        var activeIds = pairs.stream().map(SessionPair::userId).collect(java.util.stream.Collectors.toSet());
+        when(users.findActiveIds(pairs.stream().map(SessionPair::userId).toList())).thenReturn(activeIds);
+        var values = new java.util.HashMap<String, HazelcastAuthStateStore.AuthSession>();
+        for (var item : pairs) {
+            var session = mock(HazelcastAuthStateStore.AuthSession.class);
+            when(session.sid()).thenReturn(item.sid());
+            when(session.userId()).thenReturn(item.userId());
+            when(session.status()).thenReturn(HazelcastAuthStateStore.SessionStatus.ACTIVE);
+            when(session.generation()).thenReturn(3L);
+            when(session.refreshIdleExpiresAt()).thenReturn(Instant.now().plusSeconds(10));
+            when(session.refreshAbsoluteExpiresAt()).thenReturn(Instant.now().plusSeconds(20));
+            values.put(item.sid(), session);
+        }
+        when(store.getSessions(ids)).thenReturn(values, java.util.Map.of());
+        try (var service = new CoreSessionValidationService(store, users)) {
+            var first = service.validate(pairs);
+            assertEquals(pairs, first.stream().map(SessionDecision::pair).toList());
+            assertTrue(first.stream().allMatch(SessionDecision::active));
+            assertTrue(service.validate(pairs).stream().noneMatch(SessionDecision::active));
+        }
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.times(2)).getSessions(ids);
+        org.mockito.Mockito.verifyNoMoreInteractions(store);
     }
 
     @Test

@@ -40,17 +40,20 @@ public final class CoreSessionValidationService implements AutoCloseable {
             var activeUsers = users.findActiveIds(pairs.stream().map(SessionPair::userId).distinct().toList());
             progress.usersNanos = System.nanoTime() - progress.workerStarted;
             progress.stage = "sessions";
+            Instant readStarted = Instant.now();
+            progress.sessionStarted = System.nanoTime();
+            var currentSessions = sessions.getSessions(pairs.stream().map(SessionPair::sid)
+                    .collect(java.util.stream.Collectors.toSet()));
+            progress.sessionStarted = 0;
             List<SessionDecision> results = new ArrayList<>();
             for (SessionPair pair : pairs) {
                 if (Thread.currentThread().isInterrupted() || System.nanoTime() - deadline >= 0) {
                     throw new IllegalStateException("validation unavailable");
                 }
-                Instant readStarted = Instant.now();
-                progress.sessionStarted = System.nanoTime();
-                var session = sessions.getSession(pair.sid());
+                var session = currentSessions.get(pair.sid());
                 progress.sessionsCompleted++;
-                progress.sessionStarted = 0;
-                boolean active = session != null && pair.userId() == session.userId()
+                boolean active = session != null && pair.sid().equals(session.sid())
+                        && pair.userId() == session.userId()
                         && session.status() == HazelcastAuthStateStore.SessionStatus.ACTIVE
                         && activeUsers.contains(pair.userId());
                 long remaining = active
@@ -68,7 +71,11 @@ public final class CoreSessionValidationService implements AutoCloseable {
             return List.copyOf(results);
         });
         try {
-            return future.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            var result = future.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            if (System.nanoTime() - deadline >= 0) {
+                throw new IllegalStateException("validation unavailable");
+            }
+            return result;
         } catch (Exception failure) {
             if (failureReported.compareAndSet(false, true)) {
                 long now = System.nanoTime();

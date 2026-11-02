@@ -186,6 +186,19 @@ final class HazelcastAuthSessionStore {
         }
     }
 
+    Map<String, HazelcastAuthStateStore.AuthSession> getSessions(Set<String> sids) {
+        if (sids.isEmpty() || sids.size() > 100
+                || sids.stream().anyMatch(sid -> !com.muse.meomuneum.global.security.AuthSessionIds.isValid(sid))) {
+            throw new IllegalArgumentException("invalid session read batch");
+        }
+        try {
+            return Map.copyOf(stateAccess
+                    .requireHazelcast().<String, HazelcastAuthStateStore.AuthSession>getMap(SESSIONS).getAll(sids));
+        } catch (RuntimeException exception) {
+            throw stateAccess.unavailable(exception);
+        }
+    }
+
     boolean replaceSession(HazelcastAuthStateStore.AuthSession expected,
             HazelcastAuthStateStore.AuthSession updated) {
         try {
