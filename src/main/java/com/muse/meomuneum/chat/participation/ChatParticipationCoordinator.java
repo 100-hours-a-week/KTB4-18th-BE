@@ -30,7 +30,7 @@ public final class ChatParticipationCoordinator {
         this.sockets = sockets;
     }
 
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelay = 5000, scheduler = "chatServerHeartbeatScheduler")
     public void heartbeat() {
         participation.heartbeat();
     }

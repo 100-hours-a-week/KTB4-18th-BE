@@ -4,6 +4,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,6 +19,8 @@ final class ChatParticipationDiagnostics {
     private final String task;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean transactionFailed = new AtomicBoolean();
+    private final AtomicBoolean unavailable = new AtomicBoolean();
+    private final AtomicBoolean admissionBlocked = new AtomicBoolean();
 
     ChatParticipationDiagnostics(String environment, String task) {
         this.environment = environment;
@@ -34,6 +37,43 @@ final class ChatParticipationDiagnostics {
         if (transactionFailed.compareAndSet(false, true)) {
             record("chat_participation_first_transaction_failure", stage, failure, started);
         }
+    }
+
+    record Phase(String stage, long started, long transactionStarted) {
+        Phase(String stage, long started) {
+            this(stage, started, started);
+        }
+    }
+
+    void admissionBlocked(List<Phase> holders) {
+        if (admissionBlocked.compareAndSet(false, true)) {
+            try {
+                long now = System.nanoTime();
+                var evidence = holders.stream().limit(2).map(holder -> symbol(holder.stage()) + ":"
+                        + Math.max(0, TimeUnit.NANOSECONDS.toMillis(now - holder.started()))).toList();
+                var transactionAges = holders.stream().limit(2)
+                        .map(holder -> Math.max(0, TimeUnit.NANOSECONDS.toMillis(now - holder.transactionStarted())))
+                        .toList();
+                log.warn("event=chat_transition_first_admission_blocked environment={} task={} "
+                        + "holders_stage_age_ms={} holders_transaction_age_ms={}",
+                        environment, task, evidence, transactionAges);
+            } catch (RuntimeException ignored) {
+                // Diagnostics must not change transaction admission.
+            }
+        }
+    }
+
+    boolean unavailable(String reason, long leaseRemaining) {
+        if (unavailable.compareAndSet(false, true)) {
+            try {
+                log.warn("event=chat_participation_first_unavailable environment={} task={} reason={} "
+                        + "local_lease_remaining_ms={}", environment, task, symbol(reason),
+                        TimeUnit.NANOSECONDS.toMillis(leaseRemaining));
+            } catch (RuntimeException ignored) {
+                // Observability must not change the availability decision.
+            }
+        }
+        return false;
     }
 
     private void record(String event, String stage, Throwable failure, long started) {

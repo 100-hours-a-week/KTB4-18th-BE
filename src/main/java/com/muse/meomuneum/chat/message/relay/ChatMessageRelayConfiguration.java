@@ -15,6 +15,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
 import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
+import com.muse.meomuneum.chat.connection.ChatMessagePermissionBatcher;
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
 import com.muse.meomuneum.chat.message.policy.ChatMessageFingerprint;
 import com.muse.meomuneum.chat.message.policy.ChatMessagePolicyProperties;
@@ -30,6 +31,18 @@ import io.micrometer.core.instrument.MeterRegistry;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "chat.message-relay.enabled", havingValue = "true")
 public class ChatMessageRelayConfiguration {
+    @Bean
+    @ConditionalOnProperty(name = "chat.message-relay.delivery-diagnostics.enabled", havingValue = "true")
+    public ChatDeliveryMetrics chatDeliveryMetrics(MeterRegistry registry) {
+        return new ChatDeliveryMetrics(registry);
+    }
+
+    @Bean(destroyMethod = "close")
+    public ChatMessagePermissionBatcher chatMessagePermissionBatcher(ChatParticipationService participation,
+            ObjectProvider<ChatDeliveryMetrics> metrics) {
+        return new ChatMessagePermissionBatcher(participation, metrics.getIfAvailable());
+    }
+
     @Bean
     public DistributedChatMessageService distributedChatMessageService(JdbcTemplate jdbc,
             ChatParticipationService participation, ChatMessageStorageService storage,

@@ -19,7 +19,9 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
 import com.muse.meomuneum.chat.region.domain.Region;
@@ -27,6 +29,7 @@ import com.muse.meomuneum.chat.room.domain.ChatRoom;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.repository.ChatRoomRepository;
+import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.user.domain.User;
@@ -59,6 +62,20 @@ class ChatRoomEntryServiceTest {
                 mock(com.muse.meomuneum.chat.view.ChatViewLifecycle.class),
                 mock(com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy.class),
                 new com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry());
+    }
+
+    @Test
+    void distributedLeaveDetachesTheExactViewBeforeClosingItsTransport() {
+        var participation = mock(com.muse.meomuneum.chat.participation.ChatParticipationService.class);
+        service.setParticipation(participation);
+        var views = (ChatViewLifecycle) ReflectionTestUtils.getField(service, "views");
+        var sockets = (ChatSocketSessions) ReflectionTestUtils.getField(service, "sockets");
+        when(views.discardEnded(7L, 700L, 900L, "view")).thenReturn(java.util.Set.of("socket"));
+        service.leaveTab(7L, sid(7L), 700L, 900L, "view");
+        var order = org.mockito.Mockito.inOrder(participation, views, sockets);
+        order.verify(participation).leave(7L, sid(7L), 700L, 900L, "view");
+        order.verify(views).discardEnded(7L, 700L, 900L, "view");
+        order.verify(sockets).close(java.util.Set.of("socket"), 4100, "CHAT_LEFT");
     }
 
     @Test

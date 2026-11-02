@@ -276,15 +276,29 @@ public class ChatViewLifecycle {
     @Scheduled(fixedDelay = 5000)
     public void checkpointConnections() {
         try {
+            if (participation != null) {
+                var checkpoints = presence.exclusive(() -> connections.entrySet().stream()
+                        .filter(entry -> !entry.getValue().subscriptions.isEmpty())
+                        .map(entry -> {
+                            var connection = entry.getValue();
+                            return new Checkpoint(connection.userId, connection.roomId, connection.membershipId,
+                                    connection.viewId, entry.getKey());
+                        }).toList());
+                for (var checkpoint : checkpoints) {
+                    try {
+                        // DB owner/generation/state guards reject snapshots ended after the local copy.
+                        participation.checkpoint(checkpoint.userId(), checkpoint.roomId(), checkpoint.membershipId(),
+                                checkpoint.viewId(), checkpoint.socketId());
+                    } catch (ChatRoomException ended) {
+                        // A concurrent unsubscribe/leave must neither renew its interval nor stop other checkpoints.
+                    }
+                }
+                return;
+            }
             presence.exclusive(() -> {
                 connections.forEach((socket, connection) -> {
                     if (!connection.subscriptions.isEmpty()) {
-                        if (participation == null) {
-                            storage.checkpoint(connection.viewId, connection.roomId);
-                        } else {
-                            participation.checkpoint(connection.userId, connection.roomId, connection.membershipId,
-                                    connection.viewId, socket);
-                        }
+                        storage.checkpoint(connection.viewId, connection.roomId);
                     }
                 });
                 return null;
@@ -292,6 +306,9 @@ public class ChatViewLifecycle {
         } catch (RuntimeException failure) {
             log.warn("event=chat_view_checkpoint_failed exception={}", failure.getClass().getSimpleName());
         }
+    }
+
+    private record Checkpoint(Long userId, Long roomId, Long membershipId, String viewId, String socketId) {
     }
 
     @Scheduled(cron = "0 0 * * * *", zone = "UTC")

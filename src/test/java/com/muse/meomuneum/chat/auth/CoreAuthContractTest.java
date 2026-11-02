@@ -75,11 +75,46 @@ class CoreAuthContractTest {
     }
 
     @Test
+    void tasksBehindTheSameAddressHaveIndependentLimitsButCannotBypassTheUserLimit() throws Exception {
+        var validation = mock(CoreSessionValidationService.class);
+        when(validation.validate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> List.of(
+                SessionDecision.inactive(call.<List<SessionPair>>getArgument(0).getFirst())));
+        var filter = new CoreInternalAuthFilter(CURRENT, "", validation, () -> 1L);
+        String taskA = UUID.randomUUID().toString();
+        String taskB = UUID.randomUUID().toString();
+        for (int i = 1; i <= 100; i++) {
+            for (String task : List.of(taskA, taskB)) {
+                long user = task.equals(taskA) ? i : i + 100;
+                byte[] body = InternalSessionProtocol.encodeRequest(
+                        List.of(new SessionPair(user, UUID.randomUUID().toString())));
+                assertEquals(200, invoke(filter, CURRENT, body, task).getStatus());
+            }
+        }
+        byte[] body = InternalSessionProtocol.encodeRequest(List.of(pair));
+        assertEquals(503, invoke(filter, CURRENT, body, taskA).getStatus());
+        assertEquals(503, invoke(filter, CURRENT, body, taskB).getStatus());
+        var userFilter = new CoreInternalAuthFilter(CURRENT, "", validation, () -> 1L);
+        for (int i = 0; i < 100; i++) {
+            assertEquals(200, invoke(userFilter, CURRENT, body, i % 2 == 0 ? taskA : taskB).getStatus());
+        }
+        assertEquals(503, invoke(userFilter, CURRENT, body, UUID.randomUUID().toString()).getStatus());
+        var legacy = new CoreInternalAuthFilter(CURRENT, "", validation, () -> 1L);
+        for (int i = 0; i < 100; i++) {
+            assertEquals(200, invoke(legacy, CURRENT, body).getStatus());
+        }
+        assertEquals(503, invoke(legacy, CURRENT, body).getStatus());
+        assertEquals(400, invoke(filter, CURRENT, body, "invalid").getStatus());
+        assertEquals(400, invoke(filter, CURRENT, body, taskA, taskB).getStatus());
+        assertEquals(401, invoke(filter, "invalid-service-key", body, taskA).getStatus());
+    }
+
+    @Test
     void coreReadsActiveOwnerUserAndBothExpirationsWithoutRotatingSessions() {
         var store = mock(HazelcastAuthStateStore.class);
         var users = mock(UserRepository.class);
         var session = mock(HazelcastAuthStateStore.AuthSession.class);
-        when(store.getSession(pair.sid())).thenReturn(session);
+        when(store.getSessions(Set.of(pair.sid()))).thenReturn(java.util.Map.of(pair.sid(), session));
+        when(session.sid()).thenReturn(pair.sid());
         when(users.findActiveIds(List.of(1L))).thenReturn(Set.of(1L));
         when(session.userId()).thenReturn(1L);
         when(session.generation()).thenReturn(7L);
@@ -97,11 +132,51 @@ class CoreAuthContractTest {
                 assertFalse(service.validate(List.of(pair)).getFirst().active());
             }
             when(session.status()).thenReturn(HazelcastAuthStateStore.SessionStatus.ACTIVE);
+            when(session.sid()).thenReturn(UUID.randomUUID().toString());
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(session.sid()).thenReturn(pair.sid());
+            when(session.userId()).thenReturn(2L);
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(session.userId()).thenReturn(1L);
+            when(users.findActiveIds(List.of(1L))).thenReturn(Set.of());
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(users.findActiveIds(List.of(1L))).thenReturn(Set.of(1L));
             when(session.refreshAbsoluteExpiresAt()).thenReturn(Instant.now().minusMillis(1));
             assertFalse(service.validate(List.of(pair)).getFirst().active());
             when(users.findActiveIds(List.of(1L))).thenThrow(new IllegalStateException("database unavailable"));
             assertThrows(IllegalStateException.class, () -> service.validate(List.of(pair)));
         }
+    }
+
+    @Test
+    void hundredPairsUseOneFreshBulkReadInRequestOrderAndNeverFallBackToIndividualReads() {
+        var store = mock(HazelcastAuthStateStore.class);
+        var users = mock(UserRepository.class);
+        var pairs = java.util.stream.LongStream.rangeClosed(1, 100)
+                .mapToObj(id -> new SessionPair(id, UUID.randomUUID().toString())).toList();
+        var ids = pairs.stream().map(SessionPair::sid).collect(java.util.stream.Collectors.toSet());
+        var activeIds = pairs.stream().map(SessionPair::userId).collect(java.util.stream.Collectors.toSet());
+        when(users.findActiveIds(pairs.stream().map(SessionPair::userId).toList())).thenReturn(activeIds);
+        var values = new java.util.HashMap<String, HazelcastAuthStateStore.AuthSession>();
+        for (var item : pairs) {
+            var session = mock(HazelcastAuthStateStore.AuthSession.class);
+            when(session.sid()).thenReturn(item.sid());
+            when(session.userId()).thenReturn(item.userId());
+            when(session.status()).thenReturn(HazelcastAuthStateStore.SessionStatus.ACTIVE);
+            when(session.generation()).thenReturn(3L);
+            when(session.refreshIdleExpiresAt()).thenReturn(Instant.now().plusSeconds(10));
+            when(session.refreshAbsoluteExpiresAt()).thenReturn(Instant.now().plusSeconds(20));
+            values.put(item.sid(), session);
+        }
+        when(store.getSessions(ids)).thenReturn(values, java.util.Map.of());
+        try (var service = new CoreSessionValidationService(store, users)) {
+            var first = service.validate(pairs);
+            assertEquals(pairs, first.stream().map(SessionDecision::pair).toList());
+            assertTrue(first.stream().allMatch(SessionDecision::active));
+            assertTrue(service.validate(pairs).stream().noneMatch(SessionDecision::active));
+        }
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.times(2)).getSessions(ids);
+        org.mockito.Mockito.verifyNoMoreInteractions(store);
     }
 
     @Test
@@ -118,13 +193,17 @@ class CoreAuthContractTest {
         assertFalse(body.contains("refresh"));
     }
 
-    private MockHttpServletResponse invoke(CoreInternalAuthFilter filter, String credential, byte[] body)
+    private MockHttpServletResponse invoke(CoreInternalAuthFilter filter, String credential, byte[] body,
+            String... tasks)
             throws Exception {
         var request = new MockHttpServletRequest("POST", CoreInternalAuthFilter.PATH);
         request.setServletPath(CoreInternalAuthFilter.PATH);
         request.addHeader("Authorization", "Bearer " + credential);
         request.setContentType("application/json");
         request.setContent(body);
+        for (String task : tasks) {
+            request.addHeader("X-Chat-Task-Id", task);
+        }
         var response = new MockHttpServletResponse();
         filter.doFilter(request, response, (req, res) -> {
             throw new AssertionError("internal endpoint escaped");

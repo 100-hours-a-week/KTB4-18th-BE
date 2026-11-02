@@ -16,4 +16,4 @@ ARG BUILD_GIT_COMMIT
 LABEL org.opencontainers.image.title="meomuneum-chat" org.opencontainers.image.revision="$BUILD_GIT_COMMIT"
 USER 10001:10001
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+ENTRYPOINT ["java", "-XX:+UseG1GC", "-jar", "/app/app.jar"]

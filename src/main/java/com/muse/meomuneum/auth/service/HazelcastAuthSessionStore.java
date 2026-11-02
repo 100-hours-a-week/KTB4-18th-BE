@@ -7,7 +7,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -150,7 +149,8 @@ final class HazelcastAuthSessionStore {
     }
 
     Map<String, HazelcastAuthStateStore.AuthSession> getSessions(Set<String> sids) {
-        if (sids.isEmpty() || sids.size() > 100 || sids.stream().anyMatch(sid -> !isValidSessionId(sid))) {
+        if (sids.isEmpty() || sids.size() > 100
+                || sids.stream().anyMatch(sid -> !com.muse.meomuneum.global.security.AuthSessionIds.isValid(sid))) {
             throw new IllegalArgumentException("invalid session read batch");
         }
         try {
@@ -158,14 +158,6 @@ final class HazelcastAuthSessionStore {
                     .requireHazelcast().<String, HazelcastAuthStateStore.AuthSession>getMap(SESSIONS).getAll(sids));
         } catch (RuntimeException exception) {
             throw stateAccess.unavailable(exception);
-        }
-    }
-
-    private boolean isValidSessionId(String sid) {
-        try {
-            return sid != null && UUID.fromString(sid).toString().equals(sid);
-        } catch (IllegalArgumentException invalid) {
-            return false;
         }
     }
 
