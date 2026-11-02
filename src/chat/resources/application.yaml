@@ -72,7 +72,7 @@ chat:
     service-token: ${CORE_AUTH_SERVICE_TOKEN:}
     redis-enabled: ${CHAT_AUTH_REDIS_ENABLED:false}
     producer-ids: ${CORE_AUTH_PRODUCER_IDS:}
-  # Temporary activation for isolated verification only; shared state and recovery remain later steps.
+  # Production activation requires the complete startup contract and prepared runtime state.
   runtime:
     enabled: ${CHAT_RUNTIME_ENABLED:false}
   redis:
