@@ -3,6 +3,7 @@ package com.muse.meomuneum.global.security;
 import java.io.IOException;
 import java.util.List;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -15,7 +16,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
+import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -32,19 +34,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final UserAuthenticationService userAuthenticationService;
-    private final AuthFlowService authFlowService;
+    private final AuthFlowService sessionAuthority;
+    private final DirectAuthProtectedSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-                                   UserAuthenticationService userAuthenticationService, AuthFlowService authFlowService) {
+                                   UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+                                   UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority,
+            DirectAuthProtectedSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
-        this.authFlowService = authFlowService;
+        this.sessionAuthority = sessionAuthority;
+        this.directGuard = directGuard;
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
                                    UserAuthenticationService userAuthenticationService) {
-        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null);
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null, null);
     }
 
     @Override
@@ -85,7 +95,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             claims = jwtTokenProvider.parseAccessToken(authorization.substring(BEARER_PREFIX.length()));
             userAuthenticationService.findActiveUser(claims.userId());
-            if (authFlowService == null) {
+            if (sessionAuthority == null) {
                 SecurityContextHolder.clearContext();
                 errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                 response.setHeader("Retry-After", "1");
@@ -95,20 +105,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
-                AuthFlowService.SessionDecision decision = authFlowService.checkSession(claims.userId(),
-                        claims.sessionId());
+                AuthFlowService.SessionDecision decision = directGuard == null
+                        ? sessionAuthority.checkSession(claims.userId(), claims.sessionId())
+                        : directGuard.check(claims.sessionId(),
+                                () -> sessionAuthority.checkSession(claims.userId(), claims.sessionId()));
                 if (decision == null || decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
                     SecurityContextHolder.clearContext();
                     errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                     response.setHeader("Retry-After", "1");
-                    return;
+                    return;s
                 }
                 if (decision != AuthFlowService.SessionDecision.ACTIVE) {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
             }
-        } catch (DataAccessException exception) {
+        } catch (DataAccessException | DirectAuthFailure exception) {
             SecurityContextHolder.clearContext();
             errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
             response.setHeader("Retry-After", "1");

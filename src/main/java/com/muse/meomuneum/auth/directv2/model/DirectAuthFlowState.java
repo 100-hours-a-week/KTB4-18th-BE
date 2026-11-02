@@ -8,5 +8,5 @@ public record DirectAuthFlowState(String flowId, String flowKeyHash, long epoch,
         String currentOperationId, String recoveryOperationId, String recoverySourceOperationId,
         String recoveryStatus, LocalDateTime recoveryLeaseExpiresAt, Long recoveryClaimFlowCookieGeneration,
         Long recoveryClaimRefreshGeneration, Long recoveryResultFlowCookieGeneration,
-        Long recoveryResultRefreshGeneration) {
+        Long recoveryResultRefreshGeneration, String cookieHash, LocalDateTime cookieExpiresAt) {
 }

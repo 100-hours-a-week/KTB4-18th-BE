@@ -26,13 +26,19 @@ public class AuthFlowController {
     private final AuthFlowService flowService;
     private final RefreshReplayCipher replayCipher;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.muse.meomuneum.auth.directv2.controller.DirectAuthOperationController directController;
+
     public AuthFlowController(AuthFlowService flowService, RefreshReplayCipher replayCipher) {
         this.flowService = flowService;
         this.replayCipher = replayCipher;
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<FlowResponse>> current(HttpServletRequest request) {
+    public ResponseEntity<? extends ApiResponse<?>> current(HttpServletRequest request) {
+        if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.current(request);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setCacheControl("no-store");
         BootstrapResult result = flowService.bootstrap(request, headers);
