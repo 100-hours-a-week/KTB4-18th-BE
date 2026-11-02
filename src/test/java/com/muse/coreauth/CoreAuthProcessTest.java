@@ -73,6 +73,7 @@ class CoreAuthProcessTest {
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
     private static final String SERVICE = "auth-process-synthetic-service-secret-current";
+    private static final String HMAC = "auth-process-synthetic-hmac-secret-at-least-32";
     private static final String NEXT = "auth-process-synthetic-service-secret-next-key";
     private static final String REDIS_PASSWORD = "auth-process-redis-synthetic-password";
     private static final int REDIS_PORT = redisPort();
@@ -107,6 +108,10 @@ class CoreAuthProcessTest {
             .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
     private final List<Node> nodes = new ArrayList<>();
     private final List<Probe> probes = new ArrayList<>();
+    private final Map<String, FlowFixture> flows = new HashMap<>();
+
+    private record FlowFixture(String id, String cookie) {
+    }
     private final AtomicInteger relayMode = new AtomicInteger();
     private final java.util.concurrent.atomic.AtomicBoolean blockNext = new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -143,7 +148,8 @@ class CoreAuthProcessTest {
                     Map.entry("AUTH_STATE_HAZELCAST_MEMBERS", "127.0.0.1:" + hzPort),
                     Map.entry("AUTH_STATE_HAZELCAST_CLUSTER_NAME", config.getClusterName()),
                     Map.entry("AUTH_BACKEND_REPLICA_COUNT", "1"),
-                    Map.entry("AUTH_STATE_HMAC_KEY", "auth-process-synthetic-hmac-secret-at-least-32"),
+                    Map.entry("AUTH_STATE_HMAC_KEY", HMAC),
+                    Map.entry("AUTH_MUTATION_GATE_OPEN", "true"),
                     Map.entry("AUTH_STATE_REPLAY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
                     Map.entry("CORE_AUTH_REDIS_ENABLED", "true"), Map.entry("CORE_AUTH_PRODUCER_ID", PRODUCER),
                     Map.entry("CORE_AUTH_REDIS_ENVIRONMENT", "auth-test"),
@@ -241,6 +247,15 @@ class CoreAuthProcessTest {
                         .response(checked.body().getBytes(StandardCharsets.UTF_8), List.of(pair)).getFirst().active());
                 assertFalse(checked.body().contains("hash"));
             }
+            String dbOnlySid = UUID.randomUUID().toString();
+            sessions.put(dbOnlySid, session(dbOnlySid));
+            var dbPair = new SessionPair(411001, dbOnlySid);
+            jdbc.update("UPDATE auth_browser_sessions SET status='REVOKED' WHERE sid=?", dbOnlySid);
+            var staleHazelcast = internal(core, SERVICE, InternalSessionProtocol.encodeRequest(List.of(dbPair)));
+            assertEquals(200, staleHazelcast.statusCode());
+            assertFalse(InternalSessionProtocol.response(staleHazelcast.body().getBytes(StandardCharsets.UTF_8),
+                    List.of(dbPair)).getFirst().active());
+            assertEquals(HazelcastAuthStateStore.SessionStatus.ACTIVE, sessions.get(dbOnlySid).status());
             assertEquals(401, internal(core, token(revokedSid), new byte[0]).statusCode());
             assertEquals(413, internal(core, SERVICE, new byte[32769]).statusCode());
             assertEquals(400,
@@ -367,9 +382,11 @@ class CoreAuthProcessTest {
             Thread.sleep(1100); // Let every earlier HTTP validation deadline finish before revoking.
             long beforeRevoke = System.nanoTime();
             var logout = request(core, "POST", "/api/v1/auth/logout", token(revokedSid), null,
-                    Map.of("X-CSRF-TOKEN", csrfToken));
-            assertEquals(204, logout.statusCode(), logout.body());
-            assertEquals(HazelcastAuthStateStore.SessionStatus.REVOKED, sessions.get(revokedSid).status());
+                    Map.of("X-CSRF-TOKEN", csrfToken, "Idempotency-Key", UUID.randomUUID().toString(),
+                            "X-Auth-Flow-Id", flows.get(revokedSid).id(), "X-Auth-Flow-Epoch", "1",
+                            "Cookie", "MEO_AUTH_FLOW=" + flows.get(revokedSid).cookie()));
+            assertEquals(200, logout.statusCode(), logout.body());
+            await(() -> sessions.get(revokedSid).status() == HazelcastAuthStateStore.SessionStatus.REVOKED);
             String notification = notifications.poll(2, TimeUnit.SECONDS);
             assertTrue(notification != null, "actual Core Redis publication required");
             var event = com.muse.meomuneum.global.security.AuthRevocationProtocol.decode(notification,
@@ -604,7 +621,8 @@ class CoreAuthProcessTest {
 
     private Node start(String role, Map<String, String> additions, Path trust) throws Exception {
         var log = evidence.resolve(role + "-" + UUID.randomUUID() + ".log");
-        var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString()));
+        var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString(),
+                "-Duser.timezone=UTC"));
         if (trust != null) {
             command.addAll(List.of("-Djavax.net.ssl.trustStore=" + trust,
                     "-Djavax.net.ssl.trustStorePassword=synthetic-fixture-password"));
@@ -736,11 +754,41 @@ class CoreAuthProcessTest {
     }
 
     private HazelcastAuthStateStore.AuthSession session(String sid) {
+        seedBrowserSession(sid);
         Instant now = Instant.now();
         return new HazelcastAuthStateStore.AuthSession(411001L, sid, "fixture",
                 HazelcastAuthStateStore.SessionStatus.ACTIVE,
                 "jti", "hash", null, null, null, null, null, null, null, 0, null, null, 0,
                 now, now, now.plusSeconds(3600), now.plusSeconds(3600), now.plusSeconds(7200), null);
+    }
+
+    private void seedBrowserSession(String sid) {
+        String cookie = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
+        String id = UUID.randomUUID().toString();
+        String hash;
+        try {
+            var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(HMAC.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            hash = java.util.HexFormat.of().formatHex(mac.doFinal(("auth-flow-cookie:" + cookie)
+                    .getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.GeneralSecurityException failure) {
+            throw new IllegalStateException("synthetic flow setup failed", failure);
+        }
+        var jdbc = new JdbcTemplate(new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(),
+                MYSQL.getPassword()));
+        jdbc.update("""
+                INSERT INTO auth_browser_flows(flow_id,flow_cookie_hash,flow_epoch,revision,lifecycle,
+                    active_session_sid,cookie_expires_at,created_at,updated_at)
+                VALUES (?, ?, 1, 1, 'AUTHENTICATED', ?, TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),
+                    UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+                """, id, hash, sid);
+        jdbc.update("""
+                INSERT INTO auth_browser_sessions(sid,flow_id,flow_epoch,user_id,status,idle_expires_at,
+                    absolute_expires_at,created_at,updated_at)
+                VALUES (?, ?, 1, 411001, 'ACTIVE', TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),
+                    TIMESTAMPADD(HOUR,2,UTC_TIMESTAMP(6)),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+                """, sid, id);
+        flows.put(sid, new FlowFixture(id, cookie));
     }
 
     private Path certificate() throws Exception {
