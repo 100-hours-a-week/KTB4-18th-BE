@@ -39,7 +39,10 @@ final class ChatParticipationDiagnostics {
         }
     }
 
-    record Phase(String stage, long started) {
+    record Phase(String stage, long started, long transactionStarted) {
+        Phase(String stage, long started) {
+            this(stage, started, started);
+        }
     }
 
     void admissionBlocked(List<Phase> holders) {
@@ -48,8 +51,12 @@ final class ChatParticipationDiagnostics {
                 long now = System.nanoTime();
                 var evidence = holders.stream().limit(2).map(holder -> symbol(holder.stage()) + ":"
                         + Math.max(0, TimeUnit.NANOSECONDS.toMillis(now - holder.started()))).toList();
-                log.warn("event=chat_transition_first_admission_blocked environment={} task={} holders_stage_age_ms={}",
-                        environment, task, evidence);
+                var transactionAges = holders.stream().limit(2)
+                        .map(holder -> Math.max(0, TimeUnit.NANOSECONDS.toMillis(now - holder.transactionStarted())))
+                        .toList();
+                log.warn("event=chat_transition_first_admission_blocked environment={} task={} "
+                        + "holders_stage_age_ms={} holders_transaction_age_ms={}",
+                        environment, task, evidence, transactionAges);
             } catch (RuntimeException ignored) {
                 // Diagnostics must not change transaction admission.
             }
