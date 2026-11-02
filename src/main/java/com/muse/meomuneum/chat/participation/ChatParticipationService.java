@@ -127,6 +127,11 @@ public final class ChatParticipationService {
     // Admit before acquiring a DB connection: contended room locks must not consume the shared pool.
     private final Semaphore transitionAdmission = new Semaphore(2, true);
     private final Map<Transition, Boolean> activeTransitions = new ConcurrentHashMap<>();
+
+    /** Scheduling hint only: defer background claims while foreground transitions use the shared room row. */
+    public boolean transitionBusy() {
+        return transitionAdmission.availablePermits() < 2 || transitionAdmission.hasQueuedThreads();
+    }
     private volatile long epoch;
     private volatile long localLease;
     private volatile boolean failed;

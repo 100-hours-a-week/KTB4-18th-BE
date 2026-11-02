@@ -1899,6 +1899,147 @@ class ChatParticipationMySqlTest {
     }
 
     @Test
+    void outboxClaimDefersBusyTransitionsAndSkipsPeerRoomLockWithoutLosingHead() throws Exception {
+        String env = "outbox-foreground";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "foreground");
+        var saved = messages(owner, env, FINGERPRINT_KEY, false).send(user, room, joined.membershipId(),
+                "foreground", UUID.randomUUID().toString(), "head", "safe");
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        var admission = (java.util.concurrent.Semaphore) ReflectionTestUtils.getField(owner, "transitionAdmission");
+        admission.acquire();
+        try {
+            assertTrue(owner.transitionBusy());
+            assertEquals(null, store.claim(room));
+        } finally {
+            admission.release();
+        }
+        assertFalse(owner.transitionBusy());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var statement = held.prepareStatement("SELECT room_seq FROM chat_room_runtime "
+                    + "WHERE environment=? AND room_id=? FOR UPDATE")) {
+                statement.setString(1, env);
+                statement.setLong(2, room);
+                statement.executeQuery().close();
+            }
+            try {
+                assertEquals(null, workers.submit(() -> store.claim(room)).get(500, TimeUnit.MILLISECONDS));
+                assertFalse(owner.isFailed());
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? "
+                        + "AND status='PENDING' AND claim_token IS NULL", Integer.class, env));
+            } finally {
+                held.rollback();
+            }
+        }
+        var claimed = store.claim(room);
+        assertEquals(saved.message().messageId(), ((ChatMessageRedisEvent) claimed.event()).messageId());
+        assertTrue(store.publishable(claimed));
+        assertTrue(store.complete(claimed, true));
+    }
+
+    @Test
+    void presenceOutboxBatchRetriesTogetherAndNeverCrossesMessageOrTerminalEvents() {
+        String env = "outbox-presence-batch";
+        var owner = service(env, snapshot -> {
+        });
+        owner.enableControlEvents();
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var joined = owner.join(user, sid, room, claims(user)).membership();
+        connect(owner, user, joined, "presence-batch");
+        messages(owner, env, FINGERPRINT_KEY, false).send(user, room, joined.membershipId(),
+                "presence-batch", UUID.randomUUID().toString(), "separate-message", "safe");
+        owner.leave(user, sid, room, joined.membershipId(), joined.viewSessionId());
+        var expected = jdbc.queryForList("SELECT event_id,event_type FROM chat_message_outbox "
+                + "WHERE environment=? ORDER BY room_seq,event_id", env);
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        var first = store.claim(room);
+        assertEquals(3, first.eventIds().size());
+        assertEquals("CHAT_PRESENCE_CHANGED", ((ChatControlEvent) first.event()).type());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                + "WHERE environment=? AND status<>'PENDING'", Integer.class, env));
+        assertEquals(null, store.claim(room));
+        jdbc.update("UPDATE chat_room_runtime SET dispatch_until=UTC_TIMESTAMP(6) WHERE environment=?", env);
+        var replacement = store.claim(room);
+        assertEquals(first.eventIds(), replacement.eventIds());
+        assertFalse(store.publishable(first));
+        assertFalse(store.complete(first, true));
+        assertTrue(store.publishable(replacement));
+        assertTrue(store.complete(replacement, false));
+        assertEquals(null, store.claim(room));
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=UTC_TIMESTAMP(6) WHERE environment=?", env);
+        var retry = store.claim(room);
+        assertEquals(first.event().eventId(), retry.event().eventId());
+        assertEquals(1, retry.attempts());
+        assertTrue(store.complete(retry, true));
+        var delivered = new java.util.ArrayList<>(retry.eventIds());
+        ChatMessageOutboxStore.Claim claim;
+        int messageCount = 0;
+        int terminalCount = 0;
+        while ((claim = store.claim(room)) != null) {
+            if (claim.event() instanceof ChatMessageRedisEvent) {
+                assertEquals(1, claim.eventIds().size());
+                messageCount++;
+            } else if (!((ChatControlEvent) claim.event()).type().equals("CHAT_PRESENCE_CHANGED")) {
+                assertEquals(1, claim.eventIds().size());
+                terminalCount++;
+            }
+            delivered.addAll(claim.eventIds());
+            assertTrue(store.publishable(claim));
+            assertTrue(store.complete(claim, true));
+        }
+        assertEquals(expected.stream().map(row -> row.get("event_id")).toList(), delivered);
+        assertEquals(1, messageCount);
+        assertEquals(2, terminalCount);
+        assertEquals(expected.size(), jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                + "WHERE environment=? AND status='SENT'", Integer.class, env));
+    }
+
+    @Test
+    void presenceOutboxBatchIsBoundedAndCannotBypassDelayedOrExpiredHead() {
+        String env = "outbox-presence-bound";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        owner.join(user, UUID.randomUUID().toString(), room, claims(user));
+        var ids = new java.util.ArrayList<String>();
+        for (long seq = 1; seq <= 105; seq++) {
+            var event = new ChatControlEvent(UUID.randomUUID().toString(), "CHAT_PRESENCE_CHANGED",
+                    "chat:" + owner.taskId(), Instant.now(), owner.epoch(),
+                    Map.of("room_id", room, "room_seq", seq));
+            ids.add(event.eventId());
+            jdbc.update("""
+                    INSERT INTO chat_message_outbox(event_id,environment,epoch,producer_id,room_id,room_seq,
+                        event_type,event_body,occurred_at,expires_at,next_attempt_at)
+                    VALUES (?,?,?,?,?,?,'CHAT_PRESENCE_CHANGED',?,UTC_TIMESTAMP(6),
+                        TIMESTAMPADD(HOUR,24,UTC_TIMESTAMP(6)),UTC_TIMESTAMP(6))
+                    """, event.eventId(), env, owner.epoch(), event.producerId(), room, seq, event.encode());
+        }
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=TIMESTAMPADD(SECOND,10,UTC_TIMESTAMP(6)) "
+                + "WHERE event_id=?", ids.getFirst());
+        assertEquals(null, store.claim(room));
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=UTC_TIMESTAMP(6), "
+                + "expires_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) WHERE event_id=?", ids.getFirst());
+        assertEquals(null, store.claim(room));
+        assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM chat_message_outbox WHERE event_id=?",
+                String.class, ids.getFirst()));
+        var batch = store.claim(room);
+        assertEquals(ids.subList(1, 101), batch.eventIds());
+        assertEquals(ids.get(100), batch.event().eventId());
+        assertTrue(store.complete(batch, true));
+        var tail = store.claim(room);
+        assertEquals(ids.subList(101, 105), tail.eventIds());
+        assertTrue(store.complete(tail, true));
+        assertEquals(null, store.claim(room));
+    }
+
+    @Test
     void outboxCleanupDoesNotLockUnexpiredRowsAndKeepsPendingMessages() throws Exception {
         String env = "outbox-cleanup-lock";
         var owner = service(env, snapshot -> {
