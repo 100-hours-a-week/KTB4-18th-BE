@@ -3,206 +3,466 @@
   "kind": "explicit-contract-overrides",
   "status": "proposed_not_implemented",
   "base": {
-    "run": "run-20261031T044207Z-f50d14",
-    "file": "api-refresh-recovery-proposal.json",
-    "policy": "unchanged except explicit overrides; this is not OpenAPI or JSON Patch"
+    "repository": "BE-branch/feature/auth-login-no-queue-contract",
+    "git_revision": "771bb76",
+    "openapi": "api/auth-direct-v2.openapi.yaml",
+    "matrix": "auth-contract-matrix.json referenced by OpenAPI; location not found in this worktree, resolve before projection",
+    "prior_overlay": "run-20261031T055357Z-f11fe3/proposal-overlay.json",
+    "precedence": "Apply prior approved overlay first where applicable; then these explicit deltas. Semantic proposal, not OpenAPI or JSON Patch."
   },
-  "precedence": "This overlay overrides only listed base contract targets. integration-contract.md supplies normative semantics; project artifacts must be projected and cross-validated before implementation.",
-  "sources": [
-    "run-20261031T050747Z-2430a5/backend-design.md",
-    "run-20261031T052448Z-f6d86e/backend-design.md"
-  ],
-  "overrides": [
-    {
-      "target": "GET /token/refresh/operations/{operationId}/session-recovery/{recoveryOperationId} and /current",
-      "replace": {
-        "Origin.required": false,
-        "Origin.rule": "present: singleton valid exact allowlist; absent: singleton Sec-Fetch-Site exactly same-origin; proof and DB checks always required",
-        "response": "all statuses Cache-Control: no-store, no Set-Cookie, token, credentials, mutation or TTL extension",
-        "csrf": "not required"
-      }
-    },
-    {
-      "target": "POST /token/refresh",
-      "add": {
-        "header": {
-          "name": "X-Auth-Client-Expires-At",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
-            "semanticMaximum": "9007199254740991",
-            "unit": "Unix epoch milliseconds"
-          },
-          "singleton": true
-        },
-        "400.error": "INVALID_CLIENT_EXPIRY"
+  "protocol_routing": {
+    "path": "/api/v1/auth/token/refresh",
+    "method": "POST",
+    "header": "X-Auth-Login-Protocol",
+    "cases": [
+      {
+        "marker": "absent",
+        "cookie_mode": "LEGACY",
+        "route": "legacy",
+        "contract": "existing legacy behavior unchanged"
       },
-      "modify": {
-        "sameIdMismatch": "live receipt: changed startingEpoch or original expiry returns 409 AUTH_OPERATION_ID_REUSED; tombstone: matching ID and epoch returns 409 AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry, epoch mismatch returns 409 AUTH_OPERATION_ID_REUSED; no token/cookie"
-      }
-    },
-    {
-      "target": "POST /token/refresh/operations/{operationId}/session-recovery",
-      "add": {
-        "header": {
-          "name": "X-Auth-Recovery-Client-Expires-At",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
-            "semanticMaximum": "9007199254740991",
-            "unit": "Unix epoch milliseconds"
-          },
-          "singleton": true
-        },
-        "400.error": "INVALID_CLIENT_EXPIRY"
+      {
+        "marker": "absent",
+        "cookie_mode": "GENERATION_SCOPED",
+        "route": "reject",
+        "http_status": 503,
+        "code": "AUTH_STATE_UNAVAILABLE",
+        "legacy_fallback": false,
+        "credentials": false,
+        "set_cookie": false
       },
-      "modify": {
-        "sameIdMismatch": "live receipt: changed startingEpoch or original expiry returns 409 AUTH_OPERATION_ID_REUSED; tombstone: matching ID and epoch returns 409 AUTH_OPERATION_RECEIPT_EXPIRED regardless of expiry, epoch mismatch returns 409 AUTH_OPERATION_ID_REUSED; no token/cookie"
+      {
+        "marker": "single exact direct-v2",
+        "route": "direct-v2",
+        "contract": "direct-v2 only; no legacy fallback"
+      },
+      {
+        "marker": "invalid, empty, duplicate or combined",
+        "http_status": 400,
+        "code": "INVALID_LOGIN_PROTOCOL",
+        "route": "reject",
+        "legacy_fallback": false
+      },
+      {
+        "marker": "direct-v2 refresh in LEGACY cookie mode or new mutation when gate disabled",
+        "route": "direct-v2",
+        "legacy_fallback": false,
+        "http_status": 503,
+        "code": "AUTH_STATE_UNAVAILABLE",
+        "note": "LEGACY mode blocks both new direct refresh and exact credential/cookie replay with 503 AUTH_STATE_UNAVAILABLE and no token or Set-Cookie. Authorized read-only status remains separate. Headerless legacy remains unchanged in LEGACY mode; GENERATION_SCOPED applies the explicit markerless cutover rejection. Generic 503 does not prove disabled or no commit."
       }
-    },
+    ]
+  },
+  "operations": [
     {
-      "target": "components.schemas.CurrentOperationSummary",
-      "add": {
-        "required": [
-          "clientExpiresAt",
-          "effectiveExpiresAt"
-        ],
-        "properties": {
-          "clientExpiresAt": {
-            "oneOf": [
+      "target": "paths./token/refresh.post",
+      "updates": {
+        "first_dispatch": {
+          "allowed_when": [
+            "new normal revisit",
+            "ACTIVE flow and canonical authenticated session",
+            "proof and generation-scoped cookie validated",
+            "no locally unresolved operation",
+            "new UUID and immutable client expiry persisted and read back",
+            "current live execution has not dispatched this UUID",
+            "server locking and browser-cookie activation gates passed",
+            "live document generated and persisted its own tuple, and has direct in-memory evidence that this exact tuple was not dispatched; copied sessionStorage alone is not provenance"
+          ],
+          "current_operation_null_proves_no_prior_request": false,
+          "max_automatic_dispatches": 1,
+          "never": "retry a lost operation automatically or disguise it as a new ID"
+        },
+        "same_epoch_competition": {
+          "linearization": "MySQL flow lock and atomic commit",
+          "a_first": "Previously sent A may commit if valid; B has already been dispatched, and after B loses no retry or replacement ID is sent.",
+          "b_first": "A fails current tuple/proof checks",
+          "loser": {
+            "credential": false,
+            "set_cookie": false,
+            "possible_responses": [
               {
-                "type": "string",
-                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
-                "description": "Unix epoch milliseconds, <= 9007199254740991"
+                "http_status": 409,
+                "codes": [
+                  "AUTH_FLOW_EPOCH_STALE",
+                  "AUTH_REFRESH_STALE",
+                  "AUTH_OPERATION_SUPERSEDED"
+                ]
               },
               {
-                "type": "null"
+                "http_status": 428,
+                "codes": [
+                  "AUTH_FLOW_REQUIRED",
+                  "AUTH_FLOW_COOKIE_INVALID"
+                ]
               }
-            ]
-          },
-          "effectiveExpiresAt": {
-            "oneOf": [
-              {
-                "type": "string",
-                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
-                "description": "Fixed DB-clock cutoff as canonical epoch milliseconds, live receipt only"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            ],
+            "condition": "Use exact route-allowed error corresponding to proved state and security filter precedence; do not assert every stale cookie is a 409."
           }
         },
-        "semantics": "string for known live REFRESH; null for other kinds or unknown legacy",
-        "state_rules": {
-          "operation_null": "summary absent",
-          "REFRESH_live_new": "clientExpiresAt and effectiveExpiresAt both canonical strings",
-          "REFRESH_legacy_unknown": "both null",
-          "LOGIN_or_LOGOUT": "both null"
-        }
-      },
-      "preserve": "additionalProperties false and existing status rules"
-    },
-    {
-      "target": "components.schemas.RefreshRecoveryStatusData, RefreshRecoveryCurrentData, RefreshRecoveryLeaseExpiredData",
-      "add": {
-        "required": [
-          "clientExpiresAt",
-          "effectiveExpiresAt"
-        ],
-        "properties": {
-          "clientExpiresAt": {
-            "oneOf": [
-              {
-                "type": "string",
-                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
-                "description": "Unix epoch milliseconds, <= 9007199254740991"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "effectiveExpiresAt": {
-            "oneOf": [
-              {
-                "type": "string",
-                "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
-                "description": "Fixed DB-clock cutoff as canonical epoch milliseconds, live receipt only"
-              },
-              {
-                "type": "null"
-              }
-            ]
+        "success": {
+          "http_status": 200,
+          "result": "committed or canonical exact replay",
+          "generation_scoped_only_for_new_reentry": false,
+          "set_cookie": "physical lines for this result generation only; never overwrite or delete later generation",
+          "generation_scoped_only_for_new_direct_refresh": true
+        },
+        "errors": {
+          "400": [
+            "INVALID_LOGIN_PROTOCOL",
+            "INVALID_OPERATION_ID",
+            "INVALID_AUTH_FLOW_TUPLE",
+            "INVALID_CLIENT_EXPIRY"
+          ],
+          "401": [
+            "AUTH_SESSION_INVALID"
+          ],
+          "403": [
+            "CSRF_DENIED",
+            "ORIGIN_NOT_ALLOWED"
+          ],
+          "409": [
+            "AUTH_FLOW_ID_MISMATCH",
+            "AUTH_FLOW_EPOCH_STALE",
+            "AUTH_OPERATION_ID_REUSED",
+            "AUTH_OPERATION_SUPERSEDED",
+            "AUTH_OPERATION_RECEIPT_EXPIRED",
+            "AUTH_REFRESH_STALE"
+          ],
+          "428": [
+            "AUTH_FLOW_REQUIRED",
+            "AUTH_FLOW_COOKIE_INVALID"
+          ],
+          "503": [
+            "AUTH_STATE_UNAVAILABLE"
+          ]
+        },
+        "error_credentials": false,
+        "error_set_cookie": false,
+        "receipt_first_proof_order": {
+          "prelock": "Validate marker, structural headers and CSRF/Origin without requiring current-generation flow proof. Resolve flow safely without revealing identity from unauthenticated inputs.",
+          "under_flow_lock": [
+            "Locate exact flow/kind/operationId receipt or tombstone before applying new-ID current-proof and epoch gates.",
+            "Live receipt: compare original stored flow and refresh HMAC in constant time OR exact canonical result proof, then verify identity, expiry, cutoff and canonical result. In LEGACY mode no credential/cookie replay: return 503 AUTH_STATE_UNAVAILABLE after security checks; authenticated read-only status remains available.",
+            "Scrubbed tombstone or absent receipt: validate current DB-selected flow proof and refresh/session proof independently of ID existence; missing or invalid flow proof yields 428, invalid refresh/session proof yields 401 independent of receipt presence. Valid proof allows same-epoch tombstone expired, different-epoch ID_REUSED.",
+            "Absent receipt requires current proof, starting epoch, unexpired original client expiry and canonical session before new mutation. LEGACY mode blocks all direct refresh, including replay."
+          ],
+          "failure": "Ambiguous flow, invalid proof, unavailable state or missing required evidence fail closed without credentials or Set-Cookie."
+        },
+        "definitive_b_loss": {
+          "http_status": 409,
+          "code": "AUTH_REFRESH_STALE",
+          "normative_meaning": "This code on direct refresh is reserved for a proven uncommitted new-ID loser whose durable negative tombstone has committed; it must not be emitted for potentially committed B.",
+          "all_conditions": [
+            "flow lock held; exact B receipt and tombstone absent",
+            "A is live canonical winner and result remains valid",
+            "B original flow and refresh proofs match A original fingerprints in constant time",
+            "B presented previous generation and lost the current state race",
+            "the server has not committed B and can guarantee B cannot subsequently commit under that tuple",
+            "create and commit a durable negative B tombstone in the same transaction before sending 409",
+            "reserve capacity and successfully persist tombstone; limit or DB failure cannot emit definitive code"
+          ],
+          "other_ambiguous_failures": "Use route-allowed 428/409/503 without mislabeling as definitive; FE preserves B. If this stronger code meaning cannot be guaranteed, B deletion is disabled until a distinct verified wire signal is designed.",
+          "frontend": [
+            "verify response status and exact code under this contract",
+            "compare all four stored fields to dispatched B",
+            "delete only exact B and read back empty",
+            "user-initiated current-operation GET and exact A tuple readback",
+            "separate user action before authorized same-ID A recovery"
+          ],
+          "no_token": true,
+          "no_set_cookie": true,
+          "negative_tombstone": {
+            "scope": "flowId, kind=REFRESH, operationId B, startingEpoch; negative terminal state and purge deadline",
+            "retention_seconds": 86400,
+            "retention_origin": "negative tombstone commit DB time",
+            "scrub": "no tokens, cookie values, proofs, HMAC fingerprints, ciphertext or credential result",
+            "repeated_b": "after independent route authorization, matching identity and epoch => 409 AUTH_OPERATION_RECEIPT_EXPIRED, mismatched epoch => 409 AUTH_OPERATION_ID_REUSED; neither returns credentials or Set-Cookie",
+            "proof_privacy": "Independently validate current canonical flow generation and proof plus DB-selected refresh proof and active canonical session. Invalid flow proof yields receipt-independent 428; invalid refresh/session proof yields receipt-independent 401. Binding proof alone cannot authorize refresh POST.",
+            "admission": "Under flow-first lock count and atomically insert plus commit under the shared flow-wide 20 rejections per 900 seconds budget, including negative REFRESH. No forced eviction; cap, DB failure or uncertain commit => 503 AUTH_STATE_UNAVAILABLE, no definitive response; FE preserves B.",
+            "limit": "Protection lasts until physical purge under documented 24h horizon; do not assert indefinite ID prohibition."
           }
         },
-        "semantics": "known live row value; null for NONE, NOT_RECEIVED, EXPIRED tombstone or unknown legacy",
-        "state_rules": {
-          "exact_NOT_RECEIVED": "both null",
-          "exact_IN_PROGRESS_or_SUCCEEDED": "both strings for new live receipt; both null if legacy unknown",
-          "current_NONE_or_EXPIRED": "both null",
-          "current_IN_PROGRESS_SUCCEEDED_RESULT_STALE": "both strings for new live receipt; both null if legacy unknown; RESULT_STALE cannot replay",
-          "lease_expired_409": "both strings for new live receipt; both null if legacy unknown",
-          "other_errors": "base route-specific error schema; normally data null"
+        "all_failure_responses": {
+          "statuses": [
+            400,
+            401,
+            403,
+            409,
+            428,
+            500,
+            503
+          ],
+          "token": false,
+          "set_cookie": false,
+          "commit_inference": "No credentials alone does not prove no commit; only definitive_b_loss carries the specified no-commit meaning. Transport errors, 5xx and all other ambiguous outcomes preserve B.",
+          "scope": "Application-generated direct refresh failures; upstream gateway 502/504 is external infrastructure and cannot be promised by the application. FE treats such responses as ambiguous and retains B."
+        },
+        "db_authority_projection_failure": {
+          "success_condition": "writer DB confirms session, receipt and required outbox commit and canonical result; immediate Hazelcast projection failure alone does not turn success into failure",
+          "success_http_status": 200,
+          "success_credentials": "canonical token and generation-scoped Set-Cookie",
+          "projection": "leave delivery pending for durable retry; MySQL writer is authentication authority",
+          "unknown_condition": "DB or required outbox commit outcome or canonical validation unavailable",
+          "unknown_http_status": 503,
+          "unknown_code": "AUTH_STATE_UNAVAILABLE",
+          "unknown_token": false,
+          "unknown_set_cookie": false,
+          "frontend": "preserve exact operation tuple; no automatic retransmission; gateway 502/504, timeout and disconnect are ambiguous independently",
+          "status": "proposed; actual OpenAPI projection and paired tests required"
         }
-      },
-      "preserve": "additionalProperties false, existing status and 409 rules"
-    },
-    {
-      "target": "persistence and retry",
-      "add": {
-        "auth_login_operations.owner_token": "BINARY(16) NULL DEFAULT NULL",
-        "auth_direct_operation_receipts.result_session_sid": "VARCHAR(64) NULL DEFAULT NULL",
-        "auth_direct_operation_receipts.original_flow_cookie_hmac": "BINARY(32) NULL DEFAULT NULL",
-        "auth_direct_operation_receipts.encrypted_result_flow_cookie": "TEXT NULL DEFAULT NULL",
-        "auth_direct_operation_receipts.client_expires_at_ms": "BIGINT NULL DEFAULT NULL",
-        "invariant": "new applicable live rows require original expiry, immutable while live; exact retry binds expiry and proof only on live receipt; on expiry scrub client expiry to NULL; legacy null is unknown and no backfill",
-        "aad_payload_type": "direct-operation-flow-cookie",
-        "auth_refresh_recovery_operations.client_expires_at_ms": "BIGINT NULL DEFAULT NULL",
-        "state_and_scrub": "login terminal clears owner/lease; direct and recovery tombstones scrub client expiry, sensitive results, proof, owner and lease. Retain flow ID, kind, operation ID, startingEpoch, purge horizon and, for recovery, source FK reference until physical purge.",
-        "proof_and_aad": "original_flow_cookie_hmac binds original REFRESH/LOGOUT flow proof. When REFRESH or LOGOUT issues result flow proof, exact result flow cookie ciphertext is required; successful LOGOUT always issues an active flow cookie, increments generation and requires ciphertext. v2 direct-operation-flow-cookie AAD binds table, REFRESH or LOGOUT kind and immutable row tuple; cross-column/row swaps fail.",
-        "server_cutoff": "At first receipt: source min(client expiry, DB receipt time+900s, source receipt expiry); recovery min(recovery client expiry, DB receipt time+900s, source server cutoff, source and recovery receipt expiry). DB checks before every mutation; immutable while live and scrubbed at expiry.",
-        "source_fk": "Actual migration has no source FK. Add recovery fixed REFRESH kind CHECK and composite RESTRICT FK (flow_id, source_operation_kind, source_refresh_operation_id) to direct receipt primary key; purge recovery before source.",
-        "auth_direct_operation_receipts.effective_expires_at_ms": "BIGINT NULL DEFAULT NULL",
-        "auth_refresh_recovery_operations.effective_expires_at_ms": "BIGINT NULL DEFAULT NULL",
-        "auth_refresh_recovery_operations.binding_generation": "BIGINT NULL DEFAULT NULL",
-        "auth_refresh_recovery_operations.claim_flow_cookie_generation": "BIGINT NULL DEFAULT NULL",
-        "auth_refresh_recovery_operations.claim_refresh_generation": "BIGINT NULL DEFAULT NULL",
-        "recovery_generation_invariant": "All three generation values are required by application for live recovery; null fails closed. Scrub all three to NULL on tombstone; DB CHECK is not claimed to enforce the live requirement."
       }
     },
     {
-      "target": "CORS",
-      "add": {
-        "allowedRequestHeaders": [
-          "X-Auth-Client-Expires-At",
-          "X-Auth-Recovery-Client-Expires-At"
-        ]
-      },
-      "preserve": "existing credentials, exact origins, preflight and CSRF semantics"
+      "target": "paths./flow/current-operation.get",
+      "updates": {
+        "source_recovery": "Use existing canonical REFRESH currentOperation with original flowId, startingEpoch, operationId, clientExpiresAt and effectiveExpiresAt, plus DB-bound binding and applicable replay proof. Verify schema and readback; explicit user action before mutation.",
+        "superseded_or_missing_proof": "No recovery POST; reauthenticate when proof recovery is unavailable. null is not evidence A was never sent.",
+        "success": {
+          "http_status": 200,
+          "cache_control": "no-store",
+          "set_cookie": false,
+          "credential": false
+        },
+        "proof_failure": {
+          "http_status": 404,
+          "code": "AUTH_FLOW_NOT_FOUND"
+        },
+        "binding_only": "proofState REBOOTSTRAP_REQUIRED; binding does not authorize ordinary refresh"
+      }
+    },
+    {
+      "target": "paths./logout.post",
+      "updates": {
+        "refresh_first": "If a valid identifiable original proof establishes the older logout tuple is superseded, propose 409 AUTH_OPERATION_SUPERSEDED, no token or Set-Cookie. Invalid or missing usable proof follows existing 428 AUTH_FLOW_COOKIE_INVALID or AUTH_FLOW_REQUIRED, rather than assuming an epoch change.",
+        "frontend": "Do not mark logout complete. No automatic replay or tuple rewrite. Explicit proof recovery and user-initiated new logout only after canonical state is established; otherwise reauthenticate/fail closed.",
+        "logout_first": "Once logout commits, earlier refresh cannot issue credentials or Set-Cookie; actual route-specific 409, 428 or 401 follows proof/state validation.",
+        "errors": {
+          "409": [
+            "AUTH_FLOW_ID_MISMATCH",
+            "AUTH_FLOW_EPOCH_STALE",
+            "AUTH_OPERATION_ID_REUSED",
+            "AUTH_OPERATION_SUPERSEDED",
+            "AUTH_OPERATION_RECEIPT_EXPIRED"
+          ],
+          "428": [
+            "AUTH_FLOW_REQUIRED",
+            "AUTH_FLOW_COOKIE_INVALID"
+          ]
+        }
+      }
     }
   ],
-  "qa_required": [
-    "cross-artifact OpenAPI/matrix/FE/BE conformance and closed schemas",
-    "FE-87 independent original deadlines, storage loss/readback, clock rollback/skew and no automatic mutation",
-    "actual security chain and browser Origin/Fetch Metadata/CORS/proof no-store cases; trusted edge evidence",
-    "pre/post proof replay, exact expiry binding, SID and owner fencing races, AAD swap/tag/nonce/v1",
-    "MySQL fresh/upgrade/legacy-null, scrub, fixed TTL, tombstone/FK/cleanup race",
-    "8 BE + 3 FE stacked compatibility, deployment gate and migration provenance",
-    "Verify all six exact columns NULL DEFAULT NULL, application state constraints, tombstone expiry NULL scrub/minimal identity retention and physical purge; mutate every AAD component and swap rows/columns; other auth TTL/security regression.",
-    "Verify exact same active flow cookie and generation on REFRESH and LOGOUT replay; successful LOGOUT always requires ciphertext and active flow proof; TEXT AEAD round trip and REFRESH/LOGOUT AAD kind swaps fail.",
-    "Live cutoff mismatch yields ID_REUSED; expired tombstone matching ID and epoch yields RECEIPT_EXPIRED independent of supplied cutoff, epoch mismatch yields ID_REUSED, no token/cookie; discovery EXPIRED has null expiry and cleanup delay does not extend validity.",
-    "Project overlay onto original proposal and mechanically validate OpenAPI, exact bounded decimal regex, all required nullable fields, routes, errors and FE/BE/matrix agreement. Verify DB cutoff formula, GET after reload, no receipt/identity fail closed, composite source FK and recovery-first purge.",
-    "FE-PR-01 owns strict types/parsers and missing/null/invalid/status/error tests for both required nullable fields. FE-PR-02 owns response validation and recovery integration tests; BE-PR-05/08 own responses. NONE/NOT_RECEIVED with tuple retained or lost but no confirmed receipt/cutoff must produce zero POST.",
-    "Fresh/upgrade MySQL metadata verifies BIGINT NULL DEFAULT NULL for recovery binding_generation, claim_flow_cookie_generation and claim_refresh_generation; service tests verify all three required on live and NULL scrub on tombstone."
+  "retention": {
+    "live_payload_seconds": 900,
+    "tombstone_seconds_after_receipt_expiry": 86400,
+    "no_extension_on_retry": true,
+    "server_cutoff": "min(client expiry, first DB receipt plus 900 seconds, receipt expiry); recovery also clamps to source cutoff and source receipt expiry",
+    "tombstone": "scrub credential/proof payload; after independent current canonical route proof, matching epoch returns 409 AUTH_OPERATION_RECEIPT_EXPIRED. Negative tombstone retains 86400 seconds from commit, full receipt tombstone 86400 seconds from effective deadline. Original client expiry remains binding after purge; indefinite ID uniqueness is not promised."
+  },
+  "activation_and_rollback": {
+    "reentry_requires": "GENERATION_SCOPED mode and verified cookie isolation, DB fence, origin/csrf, capacity/eviction and actual browser/MySQL races",
+    "legacy_fixed_name": "DB cookie_mode LEGACY blocks all direct-v2 refresh mutation AND existing exact credential/cookie replay with 503 AUTH_STATE_UNAVAILABLE and no token or Set-Cookie. Proof-checked read-only status remains separate; marker-absent legacy route remains unchanged. Roll-forward cutover and fixed-name fencing need separate proof.",
+    "application_rollback": "After generation-scoped cutover, gate off and roll back only to a verified binary compatible with both the current schema and generation-scoped cookies; fixed-cookie-only binaries are prohibited. No direct marker fallback to legacy.",
+    "schema": "forward-only compatible migration; keep schema and roll forward. Never modify applied Flyway or automatically roll back schema; establish compatibility before application rollback"
+  },
+  "conformance_vectors": [
+    {
+      "id": "protocol_absent_legacy_mode",
+      "expect": {
+        "route": "legacy"
+      },
+      "cookie_mode": "LEGACY"
+    },
+    {
+      "id": "protocol_absent_generation_scoped",
+      "cookie_mode": "GENERATION_SCOPED",
+      "expect": {
+        "route": "reject",
+        "status": 503,
+        "code": "AUTH_STATE_UNAVAILABLE",
+        "token": false,
+        "set_cookie": false,
+        "fallback": false
+      }
+    },
+    {
+      "id": "protocol_invalid",
+      "expect": {
+        "status": 400,
+        "code": "INVALID_LOGIN_PROTOCOL",
+        "fallback": false
+      }
+    },
+    {
+      "id": "gate_disabled",
+      "expect": {
+        "status": 503,
+        "code": "AUTH_STATE_UNAVAILABLE",
+        "fallback": false
+      }
+    },
+    {
+      "id": "a_commits_before_b",
+      "expect": {
+        "winner": "A",
+        "b_credentials": false,
+        "b_set_cookie": false,
+        "automatic_retry": false
+      }
+    },
+    {
+      "id": "b_commits_before_a",
+      "expect": {
+        "winner": "B",
+        "a_credentials": false,
+        "a_set_cookie": false
+      }
+    },
+    {
+      "id": "logout_commits_before_a",
+      "expect": {
+        "a_credentials": false,
+        "a_set_cookie": false
+      }
+    },
+    {
+      "id": "refresh_first_old_logout_identified",
+      "expect": {
+        "status": 409,
+        "code": "AUTH_OPERATION_SUPERSEDED",
+        "logout_completed": false
+      }
+    },
+    {
+      "id": "refresh_first_old_logout_no_valid_proof",
+      "expect": {
+        "status": 428,
+        "codes": [
+          "AUTH_FLOW_REQUIRED",
+          "AUTH_FLOW_COOKIE_INVALID"
+        ],
+        "logout_completed": false
+      }
+    },
+    {
+      "id": "a_lost_canonical_live_with_proofs",
+      "expect": {
+        "same_id_recovery": "explicit-user-action-only"
+      }
+    },
+    {
+      "id": "a_superseded_or_no_proof",
+      "expect": {
+        "recovery_post_count": 0,
+        "action": "reauthenticate"
+      }
+    },
+    {
+      "id": "legacy_mode_new_direct_refresh",
+      "expect": {
+        "status": 503,
+        "code": "AUTH_STATE_UNAVAILABLE",
+        "mutation": false,
+        "token": false,
+        "set_cookie": false,
+        "fallback": false
+      }
+    },
+    {
+      "id": "legacy_mode_exact_receipt_replay",
+      "expect": {
+        "status": 503,
+        "code": "AUTH_STATE_UNAVAILABLE",
+        "token": false,
+        "set_cookie": false,
+        "authenticated_status_get_allowed": true
+      }
+    },
+    {
+      "id": "a_first_b_proven_loser",
+      "expect": {
+        "status": 409,
+        "code": "AUTH_REFRESH_STALE",
+        "b_committed": false,
+        "token": false,
+        "set_cookie": false,
+        "b_exact_tuple_delete_then_readback": true,
+        "a_recovery": "separate_user_action_only",
+        "negative_tombstone_committed_before_response": true
+      }
+    },
+    {
+      "id": "b_ambiguous_failure_or_success_possible",
+      "expect": {
+        "b_tuple": "preserve",
+        "overwrite_with_a": false,
+        "automatic_post": false
+      }
+    },
+    {
+      "id": "replay_original_proof_after_rotation",
+      "expect": {
+        "current_proof_required_before_receipt_lookup": false,
+        "original_hmac_proof_checked": true
+      }
+    },
+    {
+      "id": "rollback_after_generation_cutover",
+      "expect": {
+        "gate": "off",
+        "app_binary": "schema_and_generation_cookie_compatible",
+        "schema": "roll_forward"
+      }
+    },
+    {
+      "id": "b_negative_tombstone_quota_or_db_failure",
+      "expect": {
+        "definitive_409": false,
+        "b_tuple": "preserve"
+      }
+    },
+    {
+      "id": "b_rearrival_after_negative_tombstone",
+      "expect": {
+        "authorized_same_id_epoch_status": 409,
+        "code": "AUTH_OPERATION_RECEIPT_EXPIRED",
+        "mutation": false,
+        "token": false,
+        "set_cookie": false,
+        "unauthorized": "generic failure without receipt identity disclosure"
+      }
+    },
+    {
+      "id": "copied_tab_sessionstorage_without_live_provenance",
+      "expect": {
+        "automatic_post": false,
+        "tuple": "preserve"
+      }
+    },
+    {
+      "id": "gateway_502_504",
+      "expect": {
+        "scope": "external infrastructure",
+        "b_tuple": "preserve",
+        "infer_no_commit": false
+      }
+    }
   ],
-  "limitations": [
-    "server receipt TTL is based on DB receipt time and does not prove client elapsed time",
-    "Server DB-time cutoff bounds accepted retries after receipt and supports reload with valid binding proof and live original identity, but cannot establish client elapsed time before receipt or prior clock accuracy.",
-    "legacy missing expiry cannot be reconstructed; GET-only or reauthentication"
-  ],
-  "scope_boundary": "New expiry headers and fields apply only to REFRESH and refresh recovery. Preserve all other operation TTL, proof, CSRF, Origin, replay and security rules.",
-  "recovery_admission": "NONE/NOT_RECEIVED without confirmed receipt and cutoff: zero retry POST regardless of retained tuple; GET-only/reauth. NONE alone does not prove no previous attempt. A first POST for an explicit new recovery is permitted only within the living execution when ID and original cutoff were stored and read back and memory directly proves that this operation has not crossed its dispatch boundary, with verified live canonical source and both deadlines. Reload, conflict or uncertainty is GET-only/reauth; server fencing handles concurrent tabs."
+  "verification": "Current 771bb76 OpenAPI has NOT been projected with this overlay; proposed proof, quota, retention and privacy semantics require contract projection, implementation and synchronized matrix, FE/BE parsers and tests. This is not implementation or test evidence.",
+  "db_authority_login_refresh": {
+    "scope": [
+      "login",
+      "direct-v2 refresh"
+    ],
+    "committed_canonical_plus_hazelcast_failure": "200 success with canonical credentials and generation cookies; durable outbox retry",
+    "db_outbox_commit_or_canonical_unknown": "503 AUTH_STATE_UNAVAILABLE without credentials; operation may already be committed",
+    "external_gateway_failures": "ambiguous; preserve operation tuple",
+    "implemented": false
+  },
+  "markerless_cutover": {
+    "legacy_mode": "existing markerless refresh route remains unchanged",
+    "generation_scoped_mode": "reject markerless fixed-cookie refresh mutation with 503 AUTH_STATE_UNAVAILABLE, no token, no Set-Cookie and no fallback",
+    "pre_cutover_gate": "compatible clients and proof that old processes and in-flight fixed-cookie responses cannot affect new authority; otherwise OFF",
+    "status": "proposed; implementation and actual browser verification required"
+  }
 }
