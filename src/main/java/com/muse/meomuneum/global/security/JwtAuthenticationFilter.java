@@ -14,6 +14,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
+import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -31,18 +33,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final ActiveUserLookup userAuthenticationService;
     private final AccessSessionAuthority sessionAuthority;
+    private final DirectAuthProtectedSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+            ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority,
+            DirectAuthProtectedSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
         this.sessionAuthority = sessionAuthority;
+        this.directGuard = directGuard;
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             ActiveUserLookup userAuthenticationService) {
-        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null);
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null, null);
     }
 
     @Override
@@ -93,8 +103,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
-                AccessSessionAuthority.Decision decision = sessionAuthority.verifySession(claims.userId(),
-                        claims.sessionId());
+                AccessSessionAuthority.Decision decision = directGuard == null
+                        ? sessionAuthority.verifySession(claims.userId(), claims.sessionId())
+                        : directGuard.check(claims.sessionId(),
+                                () -> sessionAuthority.verifySession(claims.userId(), claims.sessionId()));
                 if (decision == null || decision == AccessSessionAuthority.Decision.UNAVAILABLE) {
                     SecurityContextHolder.clearContext();
                     errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
@@ -106,7 +118,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     return;
                 }
             }
-        } catch (DataAccessException exception) {
+        } catch (DataAccessException | DirectAuthFailure exception) {
             SecurityContextHolder.clearContext();
             errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
             response.setHeader("Retry-After", "1");

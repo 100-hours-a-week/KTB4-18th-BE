@@ -26,6 +26,7 @@ import org.springframework.web.filter.CorsFilter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.auth.directv2.repository.DirectAuthProjectionRepository;
 import com.muse.meomuneum.global.security.DeferredAuthCorsRejectionFilter;
 import com.muse.meomuneum.global.security.DirectAuthAdmissionFilter;
 import com.muse.meomuneum.global.security.DirectAuthAdmissionFlag;
@@ -54,6 +55,11 @@ public class SecurityConfig {
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             UserAuthenticationService userAuthenticationService,
             ObjectProvider<AuthFlowService> authFlowServiceProvider,
+            ObjectProvider<DirectAuthProjectionRepository> projectionProvider,
+            com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard directGuard,
+            @Value("${auth.direct-v2.refresh-verified:false}") boolean refreshVerified,
+            @Value("${auth.direct-v2.refresh-recovery-verified:false}") boolean recoveryVerified,
+            @Value("${auth.direct-v2.rebootstrap-verified:false}") boolean rebootstrapVerified,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
             @Value("${auth.local-mock-login.enabled:false}") boolean localMockLoginEnabled,
@@ -130,7 +136,7 @@ public class SecurityConfig {
                 .addFilterBefore(new DirectAuthProtocolMarkerFilter(errorResponseWriter), CsrfFilter.class)
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService,
-                                authFlowServiceProvider.getIfAvailable()),
+                                authFlowServiceProvider.getIfAvailable(), directGuard),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter),
@@ -138,7 +144,9 @@ public class SecurityConfig {
                 .addFilterBefore(new DeferredAuthCorsRejectionFilter(errorResponseWriter),
                         RequestOriginValidationFilter.class)
                 .addFilterAfter(new DirectAuthAdmissionFilter(new DirectAuthAdmissionFlag(environment),
-                        errorResponseWriter), RequestOriginValidationFilter.class);
+                        errorResponseWriter, projectionProvider.getIfAvailable(), refreshVerified, recoveryVerified,
+                        rebootstrapVerified),
+                        RequestOriginValidationFilter.class);
         if (localMockLoginEnabled && environment.acceptsProfiles(Profiles.of("local-mock & !prod"))) {
             http.addFilterBefore(new LocalMockLoginNoStoreFilter(), CorsFilter.class);
         }

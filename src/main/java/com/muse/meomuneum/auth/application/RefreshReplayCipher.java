@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.auth.config.AuthStateProperties;
+import com.muse.meomuneum.auth.directv2.model.DirectAuthNonceTicket;
 import com.muse.meomuneum.auth.directv2.repository.DirectAuthNonceAllocator;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 
@@ -75,11 +76,23 @@ public class RefreshReplayCipher {
         }
     }
 
+    public DirectAuthNonceTicket reserveV2(int count, Runnable proof) {
+        try {
+            return allocator().reserve(keyId(derivedKey()), count, proof);
+        } catch (GeneralSecurityException failure) {
+            throw new AuthStateUnavailableException(failure);
+        }
+    }
+
     public String encryptV2(String value, ReplayContext context) {
+        throw new AuthStateUnavailableException();
+    }
+
+    public String encryptV2(String value, ReplayContext context, DirectAuthNonceTicket ticket) {
         try {
             byte[] aad = context.aad();
             byte[] derived = derivedKey();
-            byte[] iv = allocator().reserve(keyId(derived));
+            byte[] iv = ticket.consume(keyId(derived));
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(derived, "AES"), new GCMParameterSpec(TAG_BITS, iv));
             cipher.updateAAD(aad);

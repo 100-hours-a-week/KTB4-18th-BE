@@ -38,6 +38,9 @@ public class AuthController {
     private final JwtTokenProvider jwtTokenProvider;
     private final RefreshReplayCipher replayCipher;
 
+    @Autowired(required = false)
+    private com.muse.meomuneum.auth.directv2.controller.DirectAuthOperationController directController;
+
     @Autowired
     public AuthController(AuthService authService, CsrfTokenService csrfTokenService,
             AuthFlowService authFlowService, JwtTokenProvider jwtTokenProvider, RefreshReplayCipher replayCipher) {
@@ -64,6 +67,9 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<?>> login(@Valid @RequestBody LoginRequest request,
             HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
+        if ("direct-v2".equals(servletRequest.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.login(request, servletRequest);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setCacheControl("no-store");
         TokenResponse tokenResponse;
@@ -100,6 +106,9 @@ public class AuthController {
 
     @PostMapping("/token/refresh")
     public ResponseEntity<ApiResponse<?>> refresh(HttpServletRequest request) {
+        if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.refresh(request);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setCacheControl("no-store");
         try {
@@ -136,6 +145,12 @@ public class AuthController {
 
     @PostMapping("/login/recovery")
     public ResponseEntity<ApiResponse<TokenResponse>> recoverLogin(HttpServletRequest request) {
+        if (request.getHeader("X-Auth-Login-Protocol") != null) {
+            HttpHeaders rejected = new HttpHeaders();
+            rejected.setCacheControl("no-store");
+            return new ResponseEntity<>(ApiResponse.<TokenResponse>of("INVALID_LOGIN_PROTOCOL", null), rejected,
+                    HttpStatus.BAD_REQUEST);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setCacheControl("no-store");
         TokenResponse response = authService.recoverLogin(request, headers);
@@ -148,6 +163,9 @@ public class AuthController {
 
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request) {
+        if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.logout(request);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setCacheControl("no-store");
         try {

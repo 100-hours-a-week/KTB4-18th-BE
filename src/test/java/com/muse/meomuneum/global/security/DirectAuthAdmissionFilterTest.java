@@ -20,7 +20,7 @@ class DirectAuthAdmissionFilterTest {
             assertThat(apply("POST", path, "direct-v2", true).getStatus()).isEqualTo(200);
         }
         assertThat(apply("POST", "/api/v1/auth/login", null, false).getStatus()).isEqualTo(200);
-        assertThat(apply("POST", "/api/v1/auth/token/refresh", "direct-v2", false).getStatus()).isEqualTo(200);
+        assertThat(apply("POST", "/api/v1/auth/token/refresh", "direct-v2", false).getStatus()).isEqualTo(503);
         assertThat(apply("GET", "/api/v1/auth/flow/current-operation", "direct-v2", false).getStatus()).isEqualTo(200);
     }
 
