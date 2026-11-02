@@ -191,7 +191,9 @@ class AppSeparationProcessTest {
                 assertTrue(child.waitFor(15, TimeUnit.SECONDS));
                 assertTrue(child.exitValue() != 0);
                 String output = Files.readString(log);
-                assertTrue(output.contains("Chat runtime requires isolated verification"));
+                assertTrue(output.contains(profile.equals("prod")
+                        ? "Invalid Chat startup setting: chat.core-auth.enabled"
+                        : "Chat runtime requires isolated verification"));
                 assertFalse(output.contains("HikariPool"));
                 assertFalse(output.contains("SimpleBrokerMessageHandler"));
             } finally {
