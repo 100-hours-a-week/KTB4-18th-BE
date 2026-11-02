@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import com.muse.meomuneum.auth.internal.CoreBrowserSessionLookup;
 import com.muse.meomuneum.auth.internal.CoreInternalAuthFilter;
 import com.muse.meomuneum.auth.internal.CoreSessionValidationService;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
@@ -121,7 +122,7 @@ class CoreAuthContractTest {
         when(session.status()).thenReturn(HazelcastAuthStateStore.SessionStatus.ACTIVE);
         when(session.refreshIdleExpiresAt()).thenReturn(Instant.now().plusSeconds(10));
         when(session.refreshAbsoluteExpiresAt()).thenReturn(Instant.now().plusSeconds(20));
-        try (var service = new CoreSessionValidationService(store, users)) {
+        try (var service = new CoreSessionValidationService(store, users, activeBrowserSessions())) {
             var active = service.validate(List.of(pair)).getFirst();
             assertTrue(active.active());
             assertEquals(7, active.generation());
@@ -169,7 +170,7 @@ class CoreAuthContractTest {
             values.put(item.sid(), session);
         }
         when(store.getSessions(ids)).thenReturn(values, java.util.Map.of());
-        try (var service = new CoreSessionValidationService(store, users)) {
+        try (var service = new CoreSessionValidationService(store, users, activeBrowserSessions())) {
             var first = service.validate(pairs);
             assertEquals(pairs, first.stream().map(SessionDecision::pair).toList());
             assertTrue(first.stream().allMatch(SessionDecision::active));
@@ -210,4 +211,42 @@ class CoreAuthContractTest {
         });
         return response;
     }
+    @Test
+    void dbRevocationAndExpirationOverrideStaleActiveHazelcastWithoutEvents() {
+        var store = mock(HazelcastAuthStateStore.class);
+        var users = mock(UserRepository.class);
+        var lookup = mock(CoreBrowserSessionLookup.class);
+        var session = mock(HazelcastAuthStateStore.AuthSession.class);
+        when(users.findActiveIds(List.of(1L))).thenReturn(Set.of(1L));
+        when(store.getSessions(Set.of(pair.sid()))).thenReturn(java.util.Map.of(pair.sid(), session));
+        when(session.sid()).thenReturn(pair.sid());
+        when(session.userId()).thenReturn(1L);
+        when(session.generation()).thenReturn(1L);
+        when(session.status()).thenReturn(HazelcastAuthStateStore.SessionStatus.ACTIVE);
+        when(session.refreshIdleExpiresAt()).thenReturn(Instant.now().plusSeconds(3600));
+        when(session.refreshAbsoluteExpiresAt()).thenReturn(Instant.now().plusSeconds(7200));
+        when(lookup.findActiveSessions(List.of(pair)))
+                .thenReturn(java.util.Map.of(pair, new SessionDecision(pair, true, 1, 500)));
+        try (var service = new CoreSessionValidationService(store, users, lookup)) {
+            var active = service.validate(List.of(pair)).getFirst();
+            assertTrue(active.active());
+            assertTrue(active.remainingMillis() <= 500);
+            when(lookup.findActiveSessions(List.of(pair))).thenReturn(java.util.Map.of());
+            assertFalse(service.validate(List.of(pair)).getFirst().active());
+            when(lookup.findActiveSessions(List.of(pair)))
+                    .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("synthetic outage"));
+            assertThrows(IllegalStateException.class, () -> service.validate(List.of(pair)));
+        }
+    }
+
+    private CoreBrowserSessionLookup activeBrowserSessions() {
+        var lookup = mock(CoreBrowserSessionLookup.class);
+        when(lookup.findActiveSessions(org.mockito.ArgumentMatchers.anyList())).thenAnswer(invocation -> {
+            List<SessionPair> pairs = invocation.getArgument(0);
+            return pairs.stream().collect(java.util.stream.Collectors.toMap(item -> item,
+                    item -> new SessionDecision(item, true, 1, 60000)));
+        });
+        return lookup;
+    }
+
 }

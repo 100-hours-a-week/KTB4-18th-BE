@@ -12,7 +12,6 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.auth.application.AuthFlowService;
 
 class DirectAuthBearerBypassTest {
     @Test
@@ -58,9 +57,9 @@ class DirectAuthBearerBypassTest {
         var claims = new TokenClaims(1L, java.util.List.of("USER"), java.time.Instant.now().plusSeconds(60),
                 "session", "token");
         when(provider.parseAccessToken("valid")).thenReturn(claims);
-        var authority = mock(AuthFlowService.class);
-        for (var decision : AuthFlowService.SessionDecision.values()) {
-            when(authority.checkSession(1L, "session")).thenReturn(decision);
+        var authority = mock(AccessSessionAuthority.class);
+        for (var decision : AccessSessionAuthority.Decision.values()) {
+            when(authority.verifySession(1L, "session")).thenReturn(decision);
             var request = new MockHttpServletRequest("GET", "/api/v1/users/me");
             request.addHeader("Authorization", "Bearer valid");
             var response = new MockHttpServletResponse();
@@ -68,17 +67,17 @@ class DirectAuthBearerBypassTest {
             new JwtAuthenticationFilter(provider, new SecurityErrorResponseWriter(new ObjectMapper()), lookup,
                     authority)
                     .doFilter(request, response, chain);
-            if (decision == AuthFlowService.SessionDecision.ACTIVE) {
+            if (decision == AccessSessionAuthority.Decision.ACTIVE) {
                 assertThat(chain.getRequest()).isNotNull();
                 assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
             } else {
                 assertThat(chain.getRequest()).isNull();
                 assertThat(response.getStatus())
-                        .isEqualTo(decision == AuthFlowService.SessionDecision.REJECTED ? 401 : 503);
+                        .isEqualTo(decision == AccessSessionAuthority.Decision.REJECTED ? 401 : 503);
             }
             SecurityContextHolder.clearContext();
         }
-        when(authority.checkSession(1L, "session")).thenReturn(null);
+        when(authority.verifySession(1L, "session")).thenReturn(null);
         var nullRequest = new MockHttpServletRequest("GET", "/api/v1/users/me");
         nullRequest.addHeader("Authorization", "Bearer valid");
         var nullResponse = new MockHttpServletResponse();

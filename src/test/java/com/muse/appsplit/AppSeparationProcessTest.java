@@ -74,6 +74,19 @@ class AppSeparationProcessTest {
                 VALUES (98701,'split@example.test','unused-test-hash','splituser','USER',UTC_TIMESTAMP(6))
                 """);
         String sid = UUID.randomUUID().toString();
+        String flow = UUID.randomUUID().toString();
+        jdbc.update("""
+                INSERT INTO auth_browser_flows(flow_id,flow_cookie_hash,flow_epoch,revision,lifecycle,
+                    active_session_sid,cookie_expires_at,created_at,updated_at)
+                VALUES (?, ?, 1, 1, 'AUTHENTICATED', ?, TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),
+                    UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+                """, flow, "1".repeat(64), sid);
+        jdbc.update("""
+                INSERT INTO auth_browser_sessions(sid,flow_id,flow_epoch,user_id,status,idle_expires_at,
+                    absolute_expires_at,created_at,updated_at)
+                VALUES (?, ?, 1, 98701, 'ACTIVE', TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),
+                    TIMESTAMPADD(HOUR,2,UTC_TIMESTAMP(6)),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+                """, sid, flow);
         String token = accessToken(sid);
         HttpServer geography = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         geography.createContext("/", exchange -> {
@@ -290,7 +303,8 @@ class AppSeparationProcessTest {
             port = free.getLocalPort();
         }
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString(),
-                "-jar", System.getProperty("app.split." + role + "-jar"), "--server.address=127.0.0.1",
+                "-Duser.timezone=UTC", "-jar", System.getProperty("app.split." + role + "-jar"),
+                "--server.address=127.0.0.1",
                 "--server.port=" + port, "--chat.message-cleanup.enabled=false"));
         if (enabled) {
             command.add("--spring.profiles.active=chat-isolated");
@@ -308,6 +322,7 @@ class AppSeparationProcessTest {
                 Map.entry("AUTH_CORS_ALLOWED_ORIGINS", ORIGIN), Map.entry("AUTH_STATE_HAZELCAST_ENABLED", "false"),
                 Map.entry("CHAT_RUNTIME_ENABLED", Boolean.toString(enabled))));
         if (role.equals("core")) {
+            builder.environment().put("AUTH_STATE_HMAC_KEY", "split-synthetic-distinct-hmac-key-at-least-32");
             builder.environment().putAll(Map.of("RECOMMENDATION_AI_BASE_URL", "http://127.0.0.1:1",
                     "SPEECH_TRANSCRIPTION_AI_BASE_URL", "http://127.0.0.1:1",
                     "LOCATION_REVERSE_GEOCODING_BASE_URL", "http://127.0.0.1:" + geographyPort,

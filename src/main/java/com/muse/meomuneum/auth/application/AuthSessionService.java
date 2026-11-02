@@ -14,8 +14,8 @@ import com.muse.meomuneum.auth.exception.AuthStateNotFoundException;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
-import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
 import com.muse.meomuneum.global.config.JwtProperties;
+import com.muse.meomuneum.global.security.AuthSessionRevokedEvent;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.TokenClaims;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -44,8 +44,7 @@ public final class AuthSessionService {
         this.refreshCoordinator = new AuthSessionRefreshCoordinator(jwtTokenProvider, jwtProperties,
                 refreshTokenCookieFactory, userAuthenticationService, authStateStore, replayCipher,
                 authFlowService, authStateProperties, tokenLocator);
-        this.logoutService = new AuthSessionLogoutService(authStateStore, refreshTokenCookieFactory, events,
-                tokenLocator);
+        this.logoutService = new AuthSessionLogoutService(authStateStore, refreshTokenCookieFactory, tokenLocator);
     }
 
     public TokenResponse refresh(HttpServletRequest request, HttpHeaders headers) {
@@ -113,7 +112,7 @@ public final class AuthSessionService {
 
     public void publishSessionRevocation(Long userId, String sid) {
         if (userId != null && sid != null) {
-            events.publishEvent(new ChatSessionLogoutEvent(userId, sid));
+            events.publishEvent(AuthSessionRevokedEvent.invalidation(userId, sid));
         }
     }
 }

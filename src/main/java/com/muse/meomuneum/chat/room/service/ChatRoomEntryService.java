@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -251,7 +250,7 @@ public class ChatRoomEntryService {
             Set<String> sessions = new HashSet<>();
             membershipIds.forEach(id -> sessions.addAll(presence.remove(event.userId(), id)));
             return Set.copyOf(sessions);
-        }));
+        });
         sockets.close(ended, 4100, "CHAT_LOGGED_OUT");
     }
 

@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -22,12 +24,14 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muse.meomuneum.auth.exception.AuthErrorCode;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.chat.auth.ChatAccessSessionAuthority;
 import com.muse.meomuneum.chat.auth.ChatCoreAuthFilter;
 import com.muse.meomuneum.chat.auth.ChatCoreSessionVerifier;
 import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
 import com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle;
 import com.muse.meomuneum.global.config.CorsConfig;
 import com.muse.meomuneum.global.config.JwtProperties;
+import com.muse.meomuneum.global.security.AccessSessionAuthority;
 import com.muse.meomuneum.global.security.ActiveUserLookup;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -92,8 +96,14 @@ public class ChatBoundaryConfiguration {
     @Bean
     public SecurityFilterChain chatSecurity(HttpSecurity http, JwtTokenProvider tokens, ActiveUserLookup users,
             SecurityErrorResponseWriter errors, ObjectProvider<ChatSessionVerifier> verifiers,
-            @Value("${auth.cors.allowed-origins}") String origins)
+            @Value("${auth.cors.allowed-origins}") String origins, Environment environment)
             throws Exception {
+        var verifier = verifiers.getIfAvailable();
+        AccessSessionAuthority authority = verifier == null ? null : new ChatAccessSessionAuthority(verifier);
+        if (verifier == null && environment.acceptsProfiles(Profiles.of("chat-isolated & !prod"))) {
+            // Signature-only compatibility is limited to the explicit single-app verification profile.
+            authority = (userId, sid) -> AccessSessionAuthority.Decision.ACTIVE;
+        }
         http.cors(Customizer.withDefaults()).csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
@@ -105,10 +115,9 @@ public class ChatBoundaryConfiguration {
                                 SecurityErrorCode.ACCESS_UNAUTHORIZED))
                         .accessDeniedHandler((request, response, failure) -> errors.write(request, response,
                                 SecurityErrorCode.ACCESS_DENIED)))
-                .addFilterBefore(new JwtAuthenticationFilter(tokens, errors, users),
+                .addFilterBefore(new JwtAuthenticationFilter(tokens, errors, users, authority),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new RequestOriginValidationFilter(origins, errors), JwtAuthenticationFilter.class);
-        var verifier = verifiers.getIfAvailable();
         if (verifier != null) {
             http.addFilterAfter(new ChatCoreAuthFilter(verifier), JwtAuthenticationFilter.class);
         }
