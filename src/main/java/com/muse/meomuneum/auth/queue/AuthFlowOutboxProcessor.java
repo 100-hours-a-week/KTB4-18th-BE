@@ -18,7 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
-import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
+import com.muse.meomuneum.global.security.AuthSessionRevokedEvent;
 
 /**
  * Materializes committed database revocations in Hazelcast. Database checks remain authoritative, so this worker is
@@ -66,12 +66,11 @@ public class AuthFlowOutboxProcessor {
                     if (flowService.shouldApplyOutboxAction(event.flowId(), event.flowEpoch(), event.revision(),
                             event.eventKind(), event.targetId())) {
                         Long userId = materialize(event);
-                        if (event.eventKind().startsWith("SESSION_REVOKED_")) {
-                            if (userId == null) {
-                                userId = flowService.sessionOwnerUserId(event.targetId());
-                            }
+                        if (event.eventKind().startsWith("SESSION_REVOKED_") && userId == null) {
+                            // A materialized Hazelcast revocation already emitted the common event.
+                            userId = flowService.sessionOwnerUserId(event.targetId());
                             if (userId != null) {
-                                events.publishEvent(new ChatSessionLogoutEvent(userId, event.targetId()));
+                                events.publishEvent(AuthSessionRevokedEvent.invalidation(userId, event.targetId()));
                             }
                         }
                     }
