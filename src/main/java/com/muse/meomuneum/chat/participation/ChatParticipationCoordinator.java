@@ -42,21 +42,23 @@ public final class ChatParticipationCoordinator {
 
     @Scheduled(fixedDelay = 5000)
     public void project() {
+        long started = System.nanoTime();
         try {
             participation.refreshProjections();
         } catch (RuntimeException unavailable) {
-            participation.failClosed();
+            participation.failClosed("coordinator_projection", unavailable, started);
         }
     }
 
     @Scheduled(fixedDelay = 250)
     public void closeInvalid() {
+        long started = System.nanoTime();
         try {
             if (participation.isDraining()) {
                 return;
             }
             if (!participation.available()) {
-                participation.failClosed();
+                participation.failClosed("coordinator_unavailable", null, started);
                 return;
             }
             if (controls != null) {
@@ -67,7 +69,7 @@ public final class ChatParticipationCoordinator {
             registry.snapshot().keySet().stream().filter(socket -> !valid.contains(socket))
                     .forEach(socket -> sockets.close(java.util.Set.of(socket), 4100, "CHAT_LEFT"));
         } catch (RuntimeException unavailable) {
-            participation.failClosed();
+            participation.failClosed("coordinator_reconcile", unavailable, started);
         }
     }
 }
