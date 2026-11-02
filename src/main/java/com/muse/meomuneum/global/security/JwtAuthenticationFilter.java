@@ -31,18 +31,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final ActiveUserLookup userAuthenticationService;
+    private final AuthFlowService authFlowService;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            ActiveUserLookup userAuthenticationService) {
+            ActiveUserLookup userAuthenticationService, AuthFlowService authFlowService) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
         this.authFlowService = authFlowService;
     }
 
-    /** Test compatibility constructor; production always supplies the DB authority. */
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService) {
+            ActiveUserLookup userAuthenticationService) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null);
     }
 
@@ -53,7 +53,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (requestUri.startsWith(LOGIN_QUEUE_PREFIX) || LOGIN_RECOVERY_PATH.equals(requestUri)) {
             return true;
         }
-        return ("POST".equals(method)
+        boolean directRead = "GET".equals(method) && (requestUri.equals("/api/v1/auth/flow")
+                || requestUri.equals("/api/v1/auth/flow/current-operation")
+                || requestUri.matches("/api/v1/auth/login/operations/[^/]+")
+                || requestUri.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery/[^/]+"));
+        boolean directWrite = "POST".equals(method) && (requestUri.equals("/api/v1/auth/flows")
+                || requestUri.equals("/api/v1/auth/flow/rebootstrap")
+                || requestUri.matches("/api/v1/auth/login/operations/[^/]+/session-recovery")
+                || requestUri.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery"));
+        return directRead || directWrite || ("POST".equals(method)
                 && (LOGIN_PATH.equals(requestUri) || REFRESH_PATH.equals(requestUri) || LOGOUT_PATH.equals(requestUri)))
                 || ("GET".equals(method) && CSRF_PATH.equals(requestUri));
     }
@@ -88,7 +96,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
                 AuthFlowService.SessionDecision decision = authFlowService.checkSession(claims.userId(),
                         claims.sessionId());
-                if (decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
+                if (decision == null || decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
                     SecurityContextHolder.clearContext();
                     errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                     response.setHeader("Retry-After", "1");

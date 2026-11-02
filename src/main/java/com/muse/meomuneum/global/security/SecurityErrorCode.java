@@ -11,7 +11,12 @@ public enum SecurityErrorCode implements ErrorCode {
                     "csrf validation failed"), MUSIC_FORBIDDEN("SECURITY_MUSIC_403", HttpStatus.FORBIDDEN,
                             "forbidden"), AUTH_ORIGIN_DENIED("AUTH_ORIGIN_DENIED", HttpStatus.FORBIDDEN,
                                     "AUTH_ORIGIN_DENIED"), AUTH_STATE_UNAVAILABLE("AUTH_STATE_UNAVAILABLE",
-                                            HttpStatus.SERVICE_UNAVAILABLE, "AUTH_STATE_UNAVAILABLE");
+                                            HttpStatus.SERVICE_UNAVAILABLE, "AUTH_STATE_UNAVAILABLE"),
+
+    INVALID_LOGIN_PROTOCOL("INVALID_LOGIN_PROTOCOL", HttpStatus.BAD_REQUEST,
+            "INVALID_LOGIN_PROTOCOL"), LOGIN_PROTOCOL_DISABLED("LOGIN_PROTOCOL_DISABLED",
+                    HttpStatus.SERVICE_UNAVAILABLE, "LOGIN_PROTOCOL_DISABLED"), ORIGIN_NOT_ALLOWED("ORIGIN_NOT_ALLOWED",
+                            HttpStatus.FORBIDDEN, "ORIGIN_NOT_ALLOWED");
 
     private final String code;
     private final String message;

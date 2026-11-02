@@ -34,6 +34,11 @@ public class SecurityErrorResponseWriter {
         response.setStatus(errorCode.status().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        objectMapper.writeValue(response.getOutputStream(), ApiResponse.failure(errorCode.message()));
+        String message = errorCode.message();
+        if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))
+                && errorCode == SecurityErrorCode.CSRF_DENIED) {
+            message = "CSRF_DENIED";
+        }
+        objectMapper.writeValue(response.getOutputStream(), ApiResponse.failure(message));
     }
 }
