@@ -207,7 +207,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                 sockets.close(Set.of(headers.getSessionId()), 4103, "CHAT_VIEW_UNAVAILABLE");
                 throw failure;
             }
-            Identity identity = new Identity(claims.userId(), claims.expiresAt(), roomId, membershipId);
+            Identity identity = new Identity(claims.userId(), authContext.authSessionId(), claims.expiresAt(),
+                    roomId, membershipId);
             authSessions.register(headers.getSessionId(), authContext, claims.expiresAt());
             attributes.put("chat.identity", identity);
             identities.put(headers.getSessionId(), identity);
