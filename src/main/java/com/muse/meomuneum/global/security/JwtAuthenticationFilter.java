@@ -14,7 +14,6 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -31,14 +30,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final ActiveUserLookup userAuthenticationService;
-    private final AuthFlowService authFlowService;
+    private final AccessSessionAuthority sessionAuthority;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            ActiveUserLookup userAuthenticationService, AuthFlowService authFlowService) {
+            ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
-        this.authFlowService = authFlowService;
+        this.sessionAuthority = sessionAuthority;
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
@@ -84,7 +83,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             claims = jwtTokenProvider.parseAccessToken(authorization.substring(BEARER_PREFIX.length()));
             userAuthenticationService.findActiveUser(claims.userId());
-            if (authFlowService == null) {
+            if (sessionAuthority == null) {
                 SecurityContextHolder.clearContext();
                 errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                 response.setHeader("Retry-After", "1");
@@ -94,15 +93,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
-                AuthFlowService.SessionDecision decision = authFlowService.checkSession(claims.userId(),
+                AccessSessionAuthority.Decision decision = sessionAuthority.verifySession(claims.userId(),
                         claims.sessionId());
-                if (decision == null || decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
+                if (decision == null || decision == AccessSessionAuthority.Decision.UNAVAILABLE) {
                     SecurityContextHolder.clearContext();
                     errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                     response.setHeader("Retry-After", "1");
                     return;
                 }
-                if (decision != AuthFlowService.SessionDecision.ACTIVE) {
+                if (decision != AccessSessionAuthority.Decision.ACTIVE) {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
