@@ -28,11 +28,13 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final ChatAuthSessionRegistry authSessions;
     private final String[] origins;
     private final ThreadPoolTaskScheduler scheduler;
+    private final int outboundThreads;
 
     public ChatWebSocketConfig(ChatStompInterceptor interceptor, ChatPresenceRegistry presence,
             ChatSocketSessions sockets, ChatSubscriptionReceipts receipts, ChatMessageOutboundGuard outboundGuard,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
-            ThreadPoolTaskScheduler chatHeartbeatScheduler, ChatAuthSessionRegistry authSessions) {
+            ThreadPoolTaskScheduler chatHeartbeatScheduler, ChatAuthSessionRegistry authSessions,
+            @Value("${chat.message-relay.enabled:false}") boolean relayEnabled) {
         this.interceptor = interceptor;
         this.receipts = receipts;
         this.outboundGuard = outboundGuard;
@@ -41,6 +43,8 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
         this.origins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).toArray(String[]::new);
         this.scheduler = chatHeartbeatScheduler;
         this.authSessions = authSessions;
+        // Blocked handlers supply one bounded cohort to a single DB worker, not one connection per handler.
+        outboundThreads = relayEnabled ? ChatMessagePermissionBatcher.MAX_BATCH_SIZE : 0;
     }
 
     @Override
@@ -66,6 +70,9 @@ public class ChatWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureClientOutboundChannel(ChannelRegistration registration) {
         registration.interceptors(outboundGuard);
+        if (outboundThreads > 0) {
+            registration.taskExecutor().corePoolSize(outboundThreads).maxPoolSize(outboundThreads);
+        }
     }
 
     @Override

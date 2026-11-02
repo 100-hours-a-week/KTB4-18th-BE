@@ -2039,6 +2039,11 @@ final class HazelcastLoginQueueStateStore {
         userSessionIndexStore.release(userId, sid);
     }
 
+    /** Fresh bounded read only; never rotates a session or extends its expiration. */
+    public Map<String, AuthSession> getSessions(java.util.Set<String> sids) {
+        return sessionStore.getSessions(sids);
+    }
+
     public AuthSession getSession(String sid) {
         return sessionStore.getSession(sid);
     }

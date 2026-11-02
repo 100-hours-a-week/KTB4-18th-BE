@@ -12,6 +12,11 @@ spring:
       data-source-properties:
         connectTimeout: 1000
         socketTimeout: 2000
+        # Cache SQL preparation only; every execution still reads current DB authority.
+        useServerPrepStmts: "true"
+        cachePrepStmts: "true"
+        prepStmtCacheSize: "250"
+        prepStmtCacheSqlLimit: "8192"
   jpa:
     hibernate:
       ddl-auto: validate

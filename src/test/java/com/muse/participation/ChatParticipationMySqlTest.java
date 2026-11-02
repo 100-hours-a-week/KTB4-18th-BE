@@ -24,6 +24,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
+import javax.sql.DataSource;
+
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -109,6 +111,10 @@ class ChatParticipationMySqlTest {
         dataSource.setUsername(MYSQL.getUsername());
         dataSource.setPassword(MYSQL.getPassword());
         dataSource.setMaximumPoolSize(16);
+        dataSource.addDataSourceProperty("useServerPrepStmts", "true");
+        dataSource.addDataSourceProperty("cachePrepStmts", "true");
+        dataSource.addDataSourceProperty("prepStmtCacheSize", "250");
+        dataSource.addDataSourceProperty("prepStmtCacheSqlLimit", "8192");
         jdbc = new JdbcTemplate(dataSource);
         var before = jdbc.queryForList("SELECT * FROM chat_rooms ORDER BY id");
         Flyway latest = Flyway.configure().dataSource(dataSource).load();
@@ -378,6 +384,81 @@ class ChatParticipationMySqlTest {
     }
 
     @Test
+    void transitionsProjectOnlyChangedViewsAndPeriodicRefreshRepairsTheFullRoom() {
+        var projected = new java.util.ArrayList<ChatParticipationProjection.Snapshot>();
+        var owner = service("projection-delta", projected::add);
+        long firstUser = user();
+        var first = owner.join(firstUser, UUID.randomUUID().toString(), room, claims(firstUser)).membership();
+        long secondUser = user();
+        var second = owner.join(secondUser, UUID.randomUUID().toString(), room, claims(secondUser)).membership();
+        assertEquals(2, projected.getLast().occupied());
+        assertEquals(List.of(second.viewSessionId()),
+                projected.getLast().views().stream().map(ChatParticipationProjection.View::id).toList());
+        owner.claim(firstUser, membershipSid(first.membershipId()), room, first.membershipId(),
+                first.viewSessionId(), "delta-socket");
+        assertEquals(List.of(first.viewSessionId()),
+                projected.getLast().views().stream().map(ChatParticipationProjection.View::id).toList());
+        owner.refreshProjections();
+        assertEquals(Set.of(first.viewSessionId(), second.viewSessionId()), projected.getLast().views().stream()
+                .map(ChatParticipationProjection.View::id).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
+    void realRedisIndependentDeltaViewsSurviveReverseCountUpdatesAndFullRefreshRepairsMissingKeys()
+            throws Exception {
+        String environment = "delta-reverse";
+        try (var redis = runtimeRedis(environment);
+                var worker = Executors.newVirtualThreadPerTaskExecutor()) {
+            var channels = channels(environment);
+            var projection = new RedisChatParticipationProjection(redis, channels);
+            var firstCommitted = new CountDownLatch(1);
+            var releaseFirst = new CountDownLatch(1);
+            var firstSnapshot = new java.util.concurrent.atomic.AtomicReference<ChatParticipationProjection.Snapshot>();
+            var firstOwner = service(environment, snapshot -> {
+                firstSnapshot.set(snapshot);
+                firstCommitted.countDown();
+                try {
+                    if (!releaseFirst.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test projection not released");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                projection.write(snapshot);
+            });
+            var secondOwner = service(environment, projection);
+            long firstUser = user();
+            var pending = worker.submit(() -> firstOwner.join(firstUser, UUID.randomUUID().toString(), room,
+                    claims(firstUser)).membership());
+            assertTrue(firstCommitted.await(2, TimeUnit.SECONDS));
+            long secondUser = user();
+            ChatRoomMembershipResponse second;
+            try {
+                second = secondOwner.join(secondUser, UUID.randomUUID().toString(), room,
+                        claims(secondUser)).membership();
+                String firstKey = channels.roomStateKey(room, 1, "views") + ":"
+                        + firstSnapshot.get().views().getFirst().id();
+                assertFalse(redis.commands().sync().exists(firstKey) > 0,
+                        "the second transition must not rewrite the unchanged first view");
+            } finally {
+                releaseFirst.countDown();
+            }
+            var first = pending.get(2, TimeUnit.SECONDS);
+            String firstKey = channels.roomStateKey(room, 1, "views") + ":" + first.viewSessionId();
+            String secondKey = channels.roomStateKey(room, 1, "views") + ":" + second.viewSessionId();
+            assertEquals(1L, redis.commands().sync().exists(firstKey));
+            assertEquals(1L, redis.commands().sync().exists(secondKey));
+            assertEquals(Long.toString(secondOwner.snapshot(room).version()),
+                    redis.commands().sync().hget(channels.roomStateKey(room, 1, "presence"), "version"));
+            redis.commands().sync().del(firstKey);
+            secondOwner.refreshProjections();
+            assertEquals(1L, redis.commands().sync().exists(firstKey));
+            assertEquals(2, secondOwner.snapshot(room).occupied());
+        }
+    }
+
+    @Test
     void confirmedRegionMoveCommitsPreviousDepartureWhenTargetIsFullAndKeepsOtherSid() {
         var service = service("moving", snapshot -> {
         });
@@ -411,6 +492,253 @@ class ChatParticipationMySqlTest {
         assertEquals(1, service.snapshot(target).occupied());
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_members "
                 + "WHERE user_id=? AND auth_session_id=? AND deleted_at IS NULL", Integer.class, user, movingSid));
+    }
+
+    @Test
+    void socketAuthorizationDoesNotWaitForTheRoomMutationLock() throws Exception {
+        String environment = "socket-read-guard";
+        var owner = service(environment, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "read-guard");
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try {
+                try (var lock = held.prepareStatement("""
+                        SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=? FOR UPDATE
+                        """)) {
+                    lock.setString(1, environment);
+                    lock.setLong(2, room);
+                    lock.executeQuery().close();
+                }
+                workers.submit(() -> owner.assertSocket(user, room, joined.membershipId(), "read-guard"))
+                        .get(500, TimeUnit.MILLISECONDS);
+            } finally {
+                held.rollback();
+            }
+        }
+        assertThrows(ChatRoomException.class,
+                () -> owner.assertSocket(user, room, joined.membershipId(), "wrong-socket"));
+        owner.disconnected(user, room, joined.membershipId(), joined.viewSessionId(), "read-guard");
+        assertThrows(ChatRoomException.class,
+                () -> owner.assertSocket(user, room, joined.membershipId(), "read-guard"));
+    }
+
+    @Test
+    void readOnlySocketAuthorizationRetainsIdentityEpochLeaseBanAndCoreFences() {
+        String environment = "socket-read-fences";
+        var owner = service(environment, snapshot -> {
+        });
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var joined = owner.join(user, sid, room, claims(user)).membership();
+        owner.claim(user, sid, room, joined.membershipId(), joined.viewSessionId(), "fenced-read");
+        owner.assertSocket(user, room, joined.membershipId(), "fenced-read");
+        owner.ready(user, room, joined.membershipId(), joined.viewSessionId(), "fenced-read");
+        long version = owner.snapshot(room).version();
+        Runnable check = () -> owner.assertSocket(user, room, joined.membershipId(), "fenced-read");
+        check.run();
+        assertThrows(ChatRoomException.class,
+                () -> owner.assertSocket(user, room + 1, joined.membershipId(), "fenced-read"));
+        jdbc.update("UPDATE chat_view_runtime SET owner_generation=owner_generation+1 WHERE view_id=?",
+                joined.viewSessionId());
+        assertThrows(ChatRoomException.class, check::run);
+        jdbc.update("UPDATE chat_view_runtime SET owner_generation=owner_generation-1 WHERE view_id=?",
+                joined.viewSessionId());
+        jdbc.update("UPDATE chat_view_runtime SET state='RESERVED',deadline=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE view_id=?", joined.viewSessionId());
+        assertThrows(ChatRoomException.class, check::run);
+        jdbc.update("UPDATE chat_view_runtime SET state='CONNECTED',deadline=NULL WHERE view_id=?",
+                joined.viewSessionId());
+        jdbc.update("UPDATE chat_view_sessions SET ended_at=UTC_TIMESTAMP(6) WHERE id=?", joined.viewSessionId());
+        assertThrows(ChatRoomException.class, check::run);
+        jdbc.update("UPDATE chat_view_sessions SET ended_at=NULL WHERE id=?", joined.viewSessionId());
+        jdbc.update("UPDATE chat_room_members SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", joined.membershipId());
+        assertThrows(ChatRoomException.class, check::run);
+        jdbc.update("UPDATE chat_room_members SET deleted_at=NULL WHERE id=?", joined.membershipId());
+        jdbc.update("UPDATE users SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", user);
+        assertEquals(ChatRoomErrorCode.USER_NOT_FOUND,
+                assertThrows(ChatRoomException.class, check::run).getErrorCode());
+        jdbc.update("UPDATE users SET deleted_at=NULL WHERE id=?", user);
+        jdbc.update("""
+                INSERT INTO chat_bans(user_id,reason,created_at,expires_at)
+                VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))
+                """, user);
+        assertEquals(ChatRoomErrorCode.CHAT_BANNED,
+                assertThrows(ChatRoomException.class, check::run).getErrorCode());
+        jdbc.update("UPDATE chat_bans SET deleted_at=UTC_TIMESTAMP(6) WHERE user_id=?", user);
+        jdbc.update("UPDATE chat_runtime_control SET mode='RECOVERING' WHERE environment=?", environment);
+        assertThrows(ChatParticipationUnavailableException.class, check::run);
+        jdbc.update("UPDATE chat_runtime_control SET mode='RUNNING',epoch=epoch+1 WHERE environment=?", environment);
+        assertThrows(ChatParticipationUnavailableException.class, check::run);
+        jdbc.update("UPDATE chat_runtime_control SET epoch=epoch-1 WHERE environment=?", environment);
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, owner.taskId());
+        assertThrows(ChatParticipationUnavailableException.class, check::run);
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,15,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, owner.taskId());
+        check.run();
+        assertEquals(version, owner.snapshot(room).version());
+        var access = (ChatSessionAccessPolicy) ReflectionTestUtils.getField(owner, "access");
+        org.mockito.Mockito.doThrow(new ChatRoomException(ChatRoomErrorCode.AUTH_REQUIRED))
+                .when(access).authorize(user, sid);
+        assertEquals(ChatRoomErrorCode.AUTH_REQUIRED,
+                assertThrows(ChatRoomException.class, check::run).getErrorCode());
+    }
+
+    @Test
+    void oneLockedUserDoesNotBlockAnotherUsersTransitionBeforeTheRoomLock() throws Exception {
+        String environment = "transition-pipeline";
+        var owner = service(environment, snapshot -> {
+        });
+        List<Long> users = List.of(user(), user());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try {
+                try (var lock = held.prepareStatement("SELECT id FROM users WHERE id=? FOR UPDATE")) {
+                    lock.setLong(1, users.getFirst());
+                    lock.executeQuery().close();
+                }
+                var blocked = workers.submit(() -> owner.join(users.getFirst(), UUID.randomUUID().toString(), room,
+                        claims(users.getFirst())));
+                awaitCondition(() -> dataSource.getHikariPoolMXBean().getActiveConnections() >= 2);
+                var independent = workers.submit(() -> owner.join(users.getLast(), UUID.randomUUID().toString(), room,
+                        claims(users.getLast())));
+                assertTrue(independent.get(500, TimeUnit.MILLISECONDS).created());
+                held.rollback();
+                assertTrue(blocked.get(3, TimeUnit.SECONDS).created());
+            } finally {
+                held.rollback();
+            }
+        }
+    }
+
+    @Test
+    void contendedTransitionsLeaveAConnectionForRuntimeAndAuthenticationReads() throws Exception {
+        String environment = "pool-admission";
+        try (var smallPool = new HikariDataSource()) {
+            smallPool.setJdbcUrl(MYSQL.getJdbcUrl());
+            smallPool.setUsername(MYSQL.getUsername());
+            smallPool.setPassword(MYSQL.getPassword());
+            smallPool.setMaximumPoolSize(3);
+            smallPool.setMinimumIdle(3);
+            smallPool.setConnectionTimeout(250);
+            var owner = service(environment, snapshot -> {
+            }, smallPool);
+            long initial = user();
+            owner.join(initial, UUID.randomUUID().toString(), room, claims(initial));
+            List<Long> users = List.of(user(), user(), user());
+            try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                    var held = dataSource.getConnection()) {
+                held.setAutoCommit(false);
+                try {
+                    try (var lock = held.prepareStatement("""
+                            SELECT room_seq FROM chat_room_runtime WHERE environment=? AND room_id=? FOR UPDATE
+                            """)) {
+                        lock.setString(1, environment);
+                        lock.setLong(2, room);
+                        lock.executeQuery().close();
+                    }
+                    var started = new CountDownLatch(3);
+                    var attempts = users.stream().map(user -> workers.submit(() -> {
+                        started.countDown();
+                        return owner.join(user, UUID.randomUUID().toString(), room, claims(user));
+                    })).toList();
+                    assertTrue(started.await(1, TimeUnit.SECONDS));
+                    awaitCondition(() -> smallPool.getHikariPoolMXBean().getActiveConnections() >= 1);
+                    // Extra contenders must wait outside the DB pool, leaving one connection for reads.
+                    long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150);
+                    while (smallPool.getHikariPoolMXBean().getActiveConnections() < 3
+                            && System.nanoTime() < until) {
+                        Thread.sleep(5);
+                    }
+                    assertEquals(1, new JdbcTemplate(smallPool).queryForObject("SELECT 1", Integer.class));
+                    held.rollback();
+                    for (var attempt : attempts) {
+                        assertTrue(attempt.get(3, TimeUnit.SECONDS).created());
+                    }
+                } finally {
+                    held.rollback();
+                }
+            }
+            assertEquals(4, owner.snapshot(room).occupied());
+        }
+    }
+
+    @Test
+    void slowPostCommitProjectionDoesNotHoldTransitionAdmission() throws Exception {
+        var projecting = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var calls = new AtomicInteger();
+        var owner = service("projection-admission", snapshot -> {
+            if (calls.incrementAndGet() == 1) {
+                projecting.countDown();
+                try {
+                    assertTrue(release.await(5, TimeUnit.SECONDS));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+            }
+        });
+        List<Long> users = List.of(user(), user());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = workers.submit(() -> owner.join(users.getFirst(), UUID.randomUUID().toString(), room,
+                    claims(users.getFirst())));
+            try {
+                assertTrue(projecting.await(2, TimeUnit.SECONDS));
+                var second = workers.submit(() -> owner.join(users.getLast(), UUID.randomUUID().toString(), room,
+                        claims(users.getLast())));
+                assertTrue(second.get(800, TimeUnit.MILLISECONDS).created());
+            } finally {
+                release.countDown();
+            }
+            assertTrue(first.get(2, TimeUnit.SECONDS).created());
+        }
+        assertEquals(2, owner.snapshot(room).occupied());
+    }
+
+    @Test
+    void sweepingABusyExpiredPeerDoesNotBlockOrCloseTheHealthyTask() throws Exception {
+        String environment = "sweep-busy-peer";
+        var healthy = service(environment, snapshot -> {
+        });
+        var expired = service(environment, snapshot -> {
+        });
+        long user = user();
+        var joined = expired.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(expired, user, joined, "expired-busy");
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, expired.taskId());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try {
+                try (var lock = held.prepareStatement("""
+                        SELECT task_id FROM chat_runtime_tasks WHERE environment=? AND task_id=? FOR SHARE
+                        """)) {
+                    lock.setString(1, environment);
+                    lock.setString(2, expired.taskId());
+                    lock.executeQuery().close();
+                }
+                workers.submit(healthy::sweep).get(500, TimeUnit.MILLISECONDS);
+                assertTrue(healthy.available());
+                assertFalse(healthy.isFailed());
+                assertFalse(expired.socketValid(user, joined.membershipId(), "expired-busy"));
+                assertEquals("ACTIVE", jdbc.queryForObject("SELECT state FROM chat_runtime_tasks "
+                        + "WHERE environment=? AND task_id=?", String.class, environment, expired.taskId()));
+            } finally {
+                held.rollback();
+            }
+        }
+        healthy.sweep();
+        assertEquals("FENCED", jdbc.queryForObject("SELECT state FROM chat_runtime_tasks "
+                + "WHERE environment=? AND task_id=?", String.class, environment, expired.taskId()));
+        assertTrue(healthy.available());
+        assertEquals("OFFLINE", state(joined.viewSessionId()));
     }
 
     @Test
@@ -551,6 +879,298 @@ class ChatParticipationMySqlTest {
     }
 
     @Test
+    void presenceProofCannotReplaceFreshHandlerAuthorityOrCrossIdentityBoundaries() {
+        var owner = service("presence-proof", snapshot -> {
+        });
+        var other = service("presence-proof", snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "presence-proof");
+        var proof = owner.issueSocketEnqueuePermissions(room);
+        assertTrue(owner.permitsSocketEnqueue(user, "presence-proof", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user + 1, "presence-proof", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user, "other", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user, "presence-proof", room + 1, proof));
+        assertFalse(other.permitsSocketEnqueue(user, "presence-proof", room, proof));
+        assertFalse(owner.permitsSocketEnqueue(user, "presence-proof", room, new Object()));
+        assertEquals(List.of(false), owner.permitsMessageBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, "presence-proof", room, 0))));
+        jdbc.update("INSERT INTO chat_bans(user_id,reason,created_at,expires_at) "
+                + "VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))", user);
+        assertEquals(List.of(false), owner.permitsSocketBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, "presence-proof", room, 0))));
+        assertFalse(owner.permitsSocketEnqueue(user, "presence-proof", room, null));
+    }
+
+    @Test
+    void handlerBatchBindsEachRequestAndReadsRevocationsAgainUsingViewPrimaryKeys() throws Exception {
+        var owner = service("handler-batch", snapshot -> {
+        });
+        long first = user();
+        long second = user();
+        var one = owner.join(first, UUID.randomUUID().toString(), room, claims(first)).membership();
+        var two = owner.join(second, UUID.randomUUID().toString(), room, claims(second)).membership();
+        connect(owner, first, one, "batch-one");
+        connect(owner, second, two, "batch-two");
+        var message = send(owner, first, one.membershipId(), "batch-one");
+        var requests = List.of(
+                new ChatParticipationService.MessagePermission(first, "batch-one", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(second, "batch-two", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(first, "batch-two", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(first, "missing", room, message.messageId()),
+                new ChatParticipationService.MessagePermission(second, "batch-two", room + 1, message.messageId()));
+        var observed = org.mockito.Mockito.spy((JdbcTemplate) ReflectionTestUtils.getField(owner, "jdbc"));
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        assertEquals(List.of(true, true, false, false, false), owner.permitsMessageBatch(requests));
+        assertEquals(java.util.Collections.nCopies(32, true),
+                owner.permitsMessageBatch(java.util.Collections.nCopies(32, requests.getFirst())));
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        var parameters = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.times(2)).queryForList(sql.capture(),
+                org.mockito.ArgumentMatchers.eq(Integer.class), parameters.capture());
+        var plan = jdbc.queryForList("EXPLAIN FORMAT=TRADITIONAL " + sql.getValue(), parameters.getValue());
+        var viewPlan = plan.stream().filter(row -> "v".equals(row.get("table"))).findFirst().orElseThrow();
+        assertEquals("PRIMARY", viewPlan.get("key"), plan.toString());
+        assertEquals(1, ((Number) viewPlan.get("rows")).intValue(), plan.toString());
+        // Exercise every batch size on one physical connection: reuse metadata, never permission results.
+        try (var connection = dataSource.getConnection()) {
+            var single = new org.springframework.jdbc.datasource.SingleConnectionDataSource(connection, true);
+            var batchJdbc = org.mockito.Mockito.spy(new JdbcTemplate(single));
+            ReflectionTestUtils.setField(owner, "jdbc", batchJdbc);
+            var preparationCounts = new java.util.ArrayList<Long>();
+            long prepares = statementCounter(connection, "Com_stmt_prepare");
+            long reprepares = statementCounter(connection, "Com_stmt_reprepare");
+            for (int size = 1; size <= 32; size++) {
+                assertEquals(java.util.Collections.nCopies(size, true),
+                        owner.permitsMessageBatch(java.util.Collections.nCopies(size, requests.getFirst())));
+                preparationCounts.add(statementCounter(connection, "Com_stmt_prepare") - prepares);
+            }
+            long preparedAfterFirst = statementCounter(connection, "Com_stmt_prepare");
+            long reprepareDelta = statementCounter(connection, "Com_stmt_reprepare") - reprepares;
+            var batchSql = org.mockito.ArgumentCaptor.forClass(String.class);
+            org.mockito.Mockito.verify(batchJdbc, org.mockito.Mockito.times(32)).queryForList(batchSql.capture(),
+                    org.mockito.ArgumentMatchers.eq(Integer.class), org.mockito.ArgumentMatchers.any(Object[].class));
+            var debug = java.nio.file.Path.of("build/chat-delivery-db-local");
+            java.nio.file.Files.createDirectories(debug);
+            java.nio.file.Files.writeString(debug.resolve("batch-preparation-shapes.json"),
+                    new ObjectMapper().writeValueAsString(Map.of("cumulative_prepares", preparationCounts,
+                            "sql_lengths", batchSql.getAllValues().stream().map(String::length).toList(),
+                            "unique_shapes", new java.util.HashSet<>(batchSql.getAllValues()).size(),
+                            "automatic_reprepares", reprepareDelta)));
+            assertEquals(6, new java.util.HashSet<>(batchSql.getAllValues()).size());
+            assertTrue(preparedAfterFirst - prepares - reprepareDelta <= 6,
+                    "new client preparations must use at most six shapes: " + preparationCounts);
+            for (int size = 1; size <= 32; size++) {
+                assertEquals(java.util.Collections.nCopies(size, true),
+                        owner.permitsMessageBatch(java.util.Collections.nCopies(size, requests.getFirst())));
+            }
+            assertEquals(preparedAfterFirst, statementCounter(connection, "Com_stmt_prepare"),
+                    "another pass must execute fresh reads without preparing these SQL shapes again");
+        }
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        jdbc.update("INSERT INTO chat_bans(user_id,reason,created_at,expires_at) "
+                + "VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))", second);
+        assertEquals(List.of(true, false, false, false, false), owner.permitsMessageBatch(requests));
+        var evidence = java.nio.file.Path.of("build/chat-delivery-db-local");
+        java.nio.file.Files.createDirectories(evidence);
+        java.nio.file.Files.writeString(evidence.resolve("batch-permission-view-access.json"),
+                new ObjectMapper().writeValueAsString(Map.of("key", viewPlan.get("key"),
+                        "access_type", viewPlan.get("type"), "rows", 1)));
+        assertThrows(IllegalArgumentException.class,
+                () -> owner.permitsMessageBatch(java.util.Collections.nCopies(33, requests.getFirst())));
+    }
+
+    @Test
+    void messageDeliveryKeepsEveryDbFenceWithoutRepeatingMembershipAndSocketReads() throws Exception {
+        String environment = "delivery-one-read";
+        var owner = service(environment, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "one-read");
+        var message = send(owner, user, joined.membershipId(), "one-read");
+        var observed = org.mockito.Mockito.spy((JdbcTemplate) ReflectionTestUtils.getField(owner, "jdbc"));
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        assertTrue(owner.permitsMessage(user, "one-read", room, message.messageId()));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.times(1)).queryForObject(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Integer.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.never()).queryForList(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Long.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        var parameters = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        org.mockito.Mockito.verify(observed).queryForObject(sql.capture(),
+                org.mockito.ArgumentMatchers.eq(Integer.class), parameters.capture());
+        var plan = jdbc.queryForList("EXPLAIN FORMAT=TRADITIONAL " + sql.getValue(), parameters.getValue());
+        var viewPlan = plan.stream().filter(row -> "v".equals(row.get("table"))).findFirst()
+                .orElseThrow(() -> new AssertionError(plan.toString()));
+        assertEquals("PRIMARY", viewPlan.get("key"));
+        assertEquals(1, ((Number) viewPlan.get("rows")).intValue());
+        try (var connection = dataSource.getConnection()) {
+            long beforePrepared = statementCounter(connection, "Com_stmt_prepare");
+            long beforeExecuted = statementCounter(connection, "Com_stmt_execute");
+            for (int i = 0; i < 10; i++) {
+                try (var prepared = connection.prepareStatement(sql.getValue())) {
+                    assertTrue(prepared.isWrapperFor(Class.forName("com.mysql.cj.jdbc.ServerPreparedStatement")),
+                            () -> "Expected server preparation; actual statement: " + prepared.getClass().getName());
+                    Object[] values = parameters.getValue();
+                    for (int arg = 0; arg < values.length; arg++) {
+                        prepared.setObject(arg + 1, values[arg]);
+                    }
+                    try (var result = prepared.executeQuery()) {
+                        assertTrue(result.next());
+                        assertEquals(1, result.getInt(1));
+                    }
+                }
+            }
+            assertTrue(statementCounter(connection, "Com_stmt_prepare") - beforePrepared <= 1);
+            assertEquals(10, statementCounter(connection, "Com_stmt_execute") - beforeExecuted);
+        }
+        var evidence = java.nio.file.Path.of("build/chat-delivery-db-local");
+        java.nio.file.Files.createDirectories(evidence);
+        java.nio.file.Files.writeString(evidence.resolve("permission-view-access.json"),
+                new ObjectMapper().writeValueAsString(Map.of("key", viewPlan.get("key"),
+                        "access_type", viewPlan.get("type"), "rows", 1)));
+        assertMessagePermission(false, owner, user + 1, "one-read", room, message.messageId());
+        assertMessagePermission(false, owner, user, "wrong-socket", room, message.messageId());
+        assertMessagePermission(false, owner, user, "one-read", room + 1, message.messageId());
+        jdbc.update("UPDATE chat_view_runtime SET owner_generation=owner_generation+1 WHERE view_id=?",
+                joined.viewSessionId());
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_view_runtime SET owner_generation=owner_generation-1 WHERE view_id=?",
+                joined.viewSessionId());
+        jdbc.update("UPDATE chat_runtime_control SET mode='RECOVERING' WHERE environment=?", environment);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_runtime_control SET mode='RUNNING',epoch=epoch+1 WHERE environment=?", environment);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_runtime_control SET epoch=epoch-1 WHERE environment=?", environment);
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, owner.taskId());
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,15,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, owner.taskId());
+        jdbc.update("UPDATE users SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", user);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE users SET deleted_at=NULL WHERE id=?", user);
+        jdbc.update("INSERT INTO chat_bans(user_id,reason,created_at,expires_at) "
+                + "VALUES (?,'PROFANITY',UTC_TIMESTAMP(6),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)))", user);
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_bans SET deleted_at=UTC_TIMESTAMP(6) WHERE user_id=?", user);
+        jdbc.update("UPDATE chat_room_members SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", joined.membershipId());
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        jdbc.update("UPDATE chat_room_members SET deleted_at=NULL WHERE id=?", joined.membershipId());
+        assertMessagePermission(true, owner, user, "one-read", room, message.messageId());
+        owner.paused(user, room, joined.membershipId(), joined.viewSessionId(), "one-read");
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        owner.ready(user, room, joined.membershipId(), joined.viewSessionId(), "one-read");
+        assertMessagePermission(false, owner, user, "one-read", room, message.messageId());
+        var fresh = send(owner, user, joined.membershipId(), "one-read");
+        assertMessagePermission(true, owner, user, "one-read", room, fresh.messageId());
+        jdbc.update("""
+                INSERT INTO chat_view_intervals(view_session_id,process_id,started_at,start_after_message_id,
+                    verified_at,verified_through_message_id,environment,epoch,owner_task_id,owner_generation,
+                    start_after_room_seq,verified_through_room_seq)
+                SELECT view_session_id,process_id,started_at,start_after_message_id,verified_at,
+                    verified_through_message_id,environment,epoch,owner_task_id,owner_generation,
+                    start_after_room_seq,verified_through_room_seq
+                FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL
+                """, joined.viewSessionId());
+        assertMessagePermission(false, owner, user, "one-read", room, fresh.messageId());
+    }
+
+    @Test
+    void pausedSenderIsDeniedEvenIfALocalRoutingSnapshotStillExists() {
+        var owner = service("send-paused-race", snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "paused-sender");
+        owner.paused(user, room, joined.membershipId(), joined.viewSessionId(), "paused-sender");
+        assertThrows(ChatRoomException.class,
+                () -> send(owner, user, joined.membershipId(), "paused-sender"));
+    }
+
+    @Test
+    void enqueueBatchIsBoundToIssuerMessageUserAndGenerationAcrossDeferredThreads() throws Exception {
+        var owner = service("enqueue-batch", snapshot -> {
+        });
+        long first = user();
+        long second = user();
+        var joined = owner.join(first, UUID.randomUUID().toString(), room, claims(first)).membership();
+        var other = owner.join(second, UUID.randomUUID().toString(), room, claims(second)).membership();
+        connect(owner, first, joined, "batch-first");
+        connect(owner, second, other, "batch-second");
+        var message = send(owner, first, joined.membershipId(), "batch-first");
+        var observed = org.mockito.Mockito.spy((JdbcTemplate) ReflectionTestUtils.getField(owner, "jdbc"));
+        ReflectionTestUtils.setField(owner, "jdbc", observed);
+        var permissions = owner.messageEnqueuePermissions(room, message.messageId());
+        assertEquals(Set.of("batch-first", "batch-second"), permissions.sockets());
+        assertThrows(UnsupportedOperationException.class, () -> permissions.sockets().clear());
+        for (int i = 0; i < 10; i++) {
+            assertTrue(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+            assertTrue(owner.permitsMessageEnqueue(second, "batch-second", room, message.messageId(), permissions));
+        }
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            assertTrue(executor.submit(() -> owner.permitsMessageEnqueue(first, "batch-first", room,
+                    message.messageId(), permissions)).get(1, TimeUnit.SECONDS));
+        }
+        assertFalse(owner.permitsMessageEnqueue(second, "batch-first", room, message.messageId(), permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "missing", room, message.messageId(), permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room + 1, message.messageId(), permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId() + 1, permissions));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), Boolean.TRUE));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(),
+                Map.of("user", first, "room", room, "message", message.messageId())));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.times(1)).queryForList(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Object[].class));
+        org.mockito.Mockito.verify(observed, org.mockito.Mockito.never()).queryForObject(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Integer.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        Object localClaims = ReflectionTestUtils.getField(owner, "claims");
+        Object generation = ReflectionTestUtils.invokeMethod(localClaims, "remove", "batch-first");
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+        ReflectionTestUtils.invokeMethod(localClaims, "put", "batch-first", generation);
+        long originalEpoch = owner.epoch();
+        ReflectionTestUtils.setField(owner, "epoch", originalEpoch + 1);
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+        ReflectionTestUtils.setField(owner, "epoch", originalEpoch);
+        var foreign = service("enqueue-foreign-issuer", snapshot -> {
+        });
+        assertFalse(foreign.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions));
+        jdbc.update("UPDATE chat_room_members SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", joined.membershipId());
+        assertTrue(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), permissions),
+                "routing evidence is a point-in-time result; the actual handler must query current DB state");
+        assertFalse(owner.permitsMessage(first, "batch-first", room, message.messageId()));
+        assertFalse(owner.permitsMessageEnqueue(first, "batch-first", room, message.messageId(), null));
+        owner.setRuntimePermit(() -> false);
+        assertFalse(owner.permitsMessageEnqueue(second, "batch-second", room, message.messageId(), permissions));
+    }
+
+    private long statementCounter(java.sql.Connection connection, String name) throws Exception {
+        try (var statement = connection.createStatement();
+                var result = statement.executeQuery("SHOW SESSION STATUS LIKE '" + name + "'")) {
+            assertTrue(result.next());
+            return result.getLong(2);
+        }
+    }
+
+    private void assertMessagePermission(boolean expected, ChatParticipationService owner, long user,
+            String socket, long roomId, long messageId) {
+        assertEquals(expected, owner.permitsMessage(user, socket, roomId, messageId));
+        boolean socketAllowed = owner.permitsSocket(user, socket, roomId);
+        assertEquals(List.of(socketAllowed), owner.permitsSocketBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, socket, roomId, 0))));
+        assertEquals(socketAllowed, owner.permitsSocketEnqueue(user, socket, roomId,
+                owner.issueSocketEnqueuePermissions(roomId)));
+        assertEquals(List.of(expected), owner.permitsMessageBatch(List.of(
+                new ChatParticipationService.MessagePermission(user, socket, roomId, messageId))));
+        var permissions = owner.messageEnqueuePermissions(roomId, messageId);
+        assertEquals(expected, owner.permitsMessageEnqueue(user, socket, roomId, messageId, permissions));
+    }
+
+    @Test
     void delayedOutboundFrameCannotCrossUnsubscribeAndNewInterval() {
         var owner = service("outbound", snapshot -> {
         });
@@ -560,7 +1180,7 @@ class ChatParticipationMySqlTest {
         connect(owner, user, joined, "queued");
         var message = send(owner, user, joined.membershipId(), "queued");
         var presence = mock(ChatPresenceRegistry.class);
-        when(presence.hasRoomSubscription("queued", room)).thenReturn(true);
+        when(presence.hasLocalRoomSubscription("queued", room)).thenReturn(true);
         var guard = new ChatMessageOutboundGuard(presence);
         var registry = new ChatAuthSessionRegistry();
         registry.register("queued", new ChatAuthSessionRegistry.Context(user, sid));
@@ -572,12 +1192,15 @@ class ChatParticipationMySqlTest {
         headers.setHeader("chatRoomId", room);
         headers.setHeader("chatMessageId", message.messageId());
         headers.setHeader("chatRecipients", Set.of("queued"));
+        headers.setHeader("chatEnqueuePermissions", owner.messageEnqueuePermissions(room, message.messageId()));
         var frame = MessageBuilder.createMessage(new byte[0],
                 headers.getMessageHeaders());
+        assertEquals(frame, guard.preSend(frame, null));
         assertEquals(frame, guard.beforeHandle(frame, null, null));
         owner.paused(user, room, joined.membershipId(), joined.viewSessionId(), "queued");
         owner.ready(user, room, joined.membershipId(), joined.viewSessionId(), "queued");
-        assertEquals(null, guard.beforeHandle(frame, null, null));
+        assertEquals(null, guard.beforeHandle(frame, null, null),
+                "routing evidence must never bypass actual handler's fresh DB boundary check");
         assertFalse(owner.permitsMessage(user, "queued", room, message.messageId()));
         var fresh = send(owner, user, joined.membershipId(), "queued");
         assertTrue(owner.permitsMessage(user, "queued", room, fresh.messageId()));
@@ -665,7 +1288,7 @@ class ChatParticipationMySqlTest {
         var expected = jdbc.queryForList("""
                 SELECT m.id FROM chat_room_messages m JOIN chat_view_intervals i ON i.view_session_id=?
                 WHERE m.room_id=? AND m.id>i.start_after_message_id AND m.id<=i.end_message_id
-                    AND m.created_at>=i.started_at ORDER BY m.id DESC
+                    AND m.created_at>=i.started_at ORDER BY m.id DESC LIMIT 10
                 """, Long.class, view, room);
         var current = service.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
         connect(service, user, current, "after-cutover");
@@ -1131,6 +1754,45 @@ class ChatParticipationMySqlTest {
             "synthetic-chat-message-fingerprint-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
     @Test
+    void distributedPresenceUsesCommittedControlHintsWithoutInlineDuplicateBroadcast() {
+        String environment = "presence-outbox-only";
+        var projections = new AtomicInteger();
+        var owner = service(environment, snapshot -> projections.incrementAndGet());
+        var local = controlled(environment, owner);
+        var published = mock(org.springframework.context.ApplicationEventPublisher.class);
+        ReflectionTestUtils.setField(owner, "events", published);
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "outbox-only");
+        assertEquals(3, projections.get());
+        org.mockito.Mockito.verifyNoInteractions(published);
+        String hint = jdbc.queryForObject("SELECT event_body FROM chat_message_outbox WHERE environment=? "
+                + "AND event_type='CHAT_PRESENCE_CHANGED' ORDER BY room_seq LIMIT 1", String.class, environment);
+        local.consumer.receive(channels(environment).roomChannel(room), channels(environment), hint);
+        org.mockito.Mockito.verify(published).publishEvent(org.mockito.ArgumentMatchers.argThat(
+                (Object event) -> event instanceof com.muse.meomuneum.chat.connection.ChatPresenceChangedEvent changed
+                        && changed.count() == 1 && changed.revision() == owner.snapshot(room).version()));
+        assertEquals(1, local.consumer.appliedEvents());
+    }
+
+    @Test
+    void checkpointAndMessageCommitDoNotRebroadcastUnchangedPresence() {
+        var projections = new AtomicInteger();
+        var owner = service("quiet-checkpoint", snapshot -> projections.incrementAndGet());
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "quiet");
+        int before = projections.get();
+        owner.checkpoint(user, room, joined.membershipId(), joined.viewSessionId(), "quiet");
+        send(owner, user, joined.membershipId(), "quiet");
+        owner.checkpoint(user, room, joined.membershipId(), joined.viewSessionId(), "quiet");
+        assertEquals(before, projections.get());
+        assertTrue(owner.socketValid(user, joined.membershipId(), "quiet"));
+        assertEquals(1, queries(owner).query(user, room, joined.membershipId(), joined.viewSessionId(),
+                "history", null, 10).items().size());
+    }
+
+    @Test
     void durableReceiptSurvivesOwnerChangeAndPolicyIsSharedAcrossTasksAndKeyRotation() {
         String env = "message-policy";
         var owner = service(env, snapshot -> {
@@ -1234,6 +1896,201 @@ class ChatParticipationMySqlTest {
                 failing));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_send_policy WHERE user_id=?", Integer.class,
                 failing));
+    }
+
+    @Test
+    void outboxClaimDefersBusyTransitionsAndSkipsPeerRoomLockWithoutLosingHead() throws Exception {
+        String env = "outbox-foreground";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "foreground");
+        var saved = messages(owner, env, FINGERPRINT_KEY, false).send(user, room, joined.membershipId(),
+                "foreground", UUID.randomUUID().toString(), "head", "safe");
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        var admission = (java.util.concurrent.Semaphore) ReflectionTestUtils.getField(owner, "transitionAdmission");
+        admission.acquire();
+        try {
+            assertTrue(owner.transitionBusy());
+            assertEquals(null, store.claim(room));
+        } finally {
+            admission.release();
+        }
+        assertFalse(owner.transitionBusy());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var statement = held.prepareStatement("SELECT room_seq FROM chat_room_runtime "
+                    + "WHERE environment=? AND room_id=? FOR UPDATE")) {
+                statement.setString(1, env);
+                statement.setLong(2, room);
+                statement.executeQuery().close();
+            }
+            try {
+                assertEquals(null, workers.submit(() -> store.claim(room)).get(500, TimeUnit.MILLISECONDS));
+                assertFalse(owner.isFailed());
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? "
+                        + "AND status='PENDING' AND claim_token IS NULL", Integer.class, env));
+            } finally {
+                held.rollback();
+            }
+        }
+        var claimed = store.claim(room);
+        assertEquals(saved.message().messageId(), ((ChatMessageRedisEvent) claimed.event()).messageId());
+        assertTrue(store.publishable(claimed));
+        assertTrue(store.complete(claimed, true));
+    }
+
+    @Test
+    void presenceOutboxBatchRetriesTogetherAndNeverCrossesMessageOrTerminalEvents() {
+        String env = "outbox-presence-batch";
+        var owner = service(env, snapshot -> {
+        });
+        owner.enableControlEvents();
+        long user = user();
+        String sid = UUID.randomUUID().toString();
+        var joined = owner.join(user, sid, room, claims(user)).membership();
+        connect(owner, user, joined, "presence-batch");
+        messages(owner, env, FINGERPRINT_KEY, false).send(user, room, joined.membershipId(),
+                "presence-batch", UUID.randomUUID().toString(), "separate-message", "safe");
+        owner.leave(user, sid, room, joined.membershipId(), joined.viewSessionId());
+        var expected = jdbc.queryForList("SELECT event_id,event_type FROM chat_message_outbox "
+                + "WHERE environment=? ORDER BY room_seq,event_id", env);
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        var first = store.claim(room);
+        assertEquals(3, first.eventIds().size());
+        assertEquals("CHAT_PRESENCE_CHANGED", ((ChatControlEvent) first.event()).type());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                + "WHERE environment=? AND status<>'PENDING'", Integer.class, env));
+        assertEquals(null, store.claim(room));
+        jdbc.update("UPDATE chat_room_runtime SET dispatch_until=UTC_TIMESTAMP(6) WHERE environment=?", env);
+        var replacement = store.claim(room);
+        assertEquals(first.eventIds(), replacement.eventIds());
+        assertFalse(store.publishable(first));
+        assertFalse(store.complete(first, true));
+        assertTrue(store.publishable(replacement));
+        assertTrue(store.complete(replacement, false));
+        assertEquals(null, store.claim(room));
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=UTC_TIMESTAMP(6) WHERE environment=?", env);
+        var retry = store.claim(room);
+        assertEquals(first.event().eventId(), retry.event().eventId());
+        assertEquals(1, retry.attempts());
+        assertTrue(store.complete(retry, true));
+        var delivered = new java.util.ArrayList<>(retry.eventIds());
+        ChatMessageOutboxStore.Claim claim;
+        int messageCount = 0;
+        int terminalCount = 0;
+        while ((claim = store.claim(room)) != null) {
+            if (claim.event() instanceof ChatMessageRedisEvent) {
+                assertEquals(1, claim.eventIds().size());
+                messageCount++;
+            } else if (!((ChatControlEvent) claim.event()).type().equals("CHAT_PRESENCE_CHANGED")) {
+                assertEquals(1, claim.eventIds().size());
+                terminalCount++;
+            }
+            delivered.addAll(claim.eventIds());
+            assertTrue(store.publishable(claim));
+            assertTrue(store.complete(claim, true));
+        }
+        assertEquals(expected.stream().map(row -> row.get("event_id")).toList(), delivered);
+        assertEquals(1, messageCount);
+        assertEquals(2, terminalCount);
+        assertEquals(expected.size(), jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                + "WHERE environment=? AND status='SENT'", Integer.class, env));
+    }
+
+    @Test
+    void presenceOutboxBatchIsBoundedAndCannotBypassDelayedOrExpiredHead() {
+        String env = "outbox-presence-bound";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        owner.join(user, UUID.randomUUID().toString(), room, claims(user));
+        var ids = new java.util.ArrayList<String>();
+        for (long seq = 1; seq <= 105; seq++) {
+            var event = new ChatControlEvent(UUID.randomUUID().toString(), "CHAT_PRESENCE_CHANGED",
+                    "chat:" + owner.taskId(), Instant.now(), owner.epoch(),
+                    Map.of("room_id", room, "room_seq", seq));
+            ids.add(event.eventId());
+            jdbc.update("""
+                    INSERT INTO chat_message_outbox(event_id,environment,epoch,producer_id,room_id,room_seq,
+                        event_type,event_body,occurred_at,expires_at,next_attempt_at)
+                    VALUES (?,?,?,?,?,?,'CHAT_PRESENCE_CHANGED',?,UTC_TIMESTAMP(6),
+                        TIMESTAMPADD(HOUR,24,UTC_TIMESTAMP(6)),UTC_TIMESTAMP(6))
+                    """, event.eventId(), env, owner.epoch(), event.producerId(), room, seq, event.encode());
+        }
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=TIMESTAMPADD(SECOND,10,UTC_TIMESTAMP(6)) "
+                + "WHERE event_id=?", ids.getFirst());
+        assertEquals(null, store.claim(room));
+        jdbc.update("UPDATE chat_message_outbox SET next_attempt_at=UTC_TIMESTAMP(6), "
+                + "expires_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) WHERE event_id=?", ids.getFirst());
+        assertEquals(null, store.claim(room));
+        assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM chat_message_outbox WHERE event_id=?",
+                String.class, ids.getFirst()));
+        var batch = store.claim(room);
+        assertEquals(ids.subList(1, 101), batch.eventIds());
+        assertEquals(ids.get(100), batch.event().eventId());
+        assertTrue(store.complete(batch, true));
+        var tail = store.claim(room);
+        assertEquals(ids.subList(101, 105), tail.eventIds());
+        assertTrue(store.complete(tail, true));
+        assertEquals(null, store.claim(room));
+    }
+
+    @Test
+    void outboxCleanupDoesNotLockUnexpiredRowsAndKeepsPendingMessages() throws Exception {
+        String env = "outbox-cleanup-lock";
+        var owner = service(env, snapshot -> {
+        });
+        long user = user();
+        var joined = owner.join(user, UUID.randomUUID().toString(), room, claims(user)).membership();
+        connect(owner, user, joined, "cleanup");
+        var saved = messages(owner, env, FINGERPRINT_KEY, false).send(user, room, joined.membershipId(),
+                "cleanup", UUID.randomUUID().toString(), "live", "safe");
+        var store = new ChatMessageOutboxStore(jdbc, new DataSourceTransactionManager(dataSource), owner, env);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var statement = held.prepareStatement("SELECT event_id FROM chat_message_outbox "
+                    + "WHERE environment=? AND message_id=? FOR UPDATE")) {
+                statement.setString(1, env);
+                statement.setLong(2, saved.message().messageId());
+                statement.executeQuery().close();
+            }
+            try {
+                workers.submit(store::cleanup).get(500, TimeUnit.MILLISECONDS);
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                        + "WHERE environment=? AND status='PENDING'", Integer.class, env));
+            } finally {
+                held.rollback();
+            }
+        }
+        jdbc.update("UPDATE chat_message_outbox SET expires_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=?", env);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+                var held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var statement = held.prepareStatement("SELECT event_id FROM chat_message_outbox "
+                    + "WHERE environment=? AND message_id=? FOR UPDATE")) {
+                statement.setString(1, env);
+                statement.setLong(2, saved.message().messageId());
+                statement.executeQuery().close();
+            }
+            try {
+                workers.submit(store::cleanup).get(500, TimeUnit.MILLISECONDS);
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox "
+                        + "WHERE environment=? AND status='PENDING'", Integer.class, env));
+            } finally {
+                held.rollback();
+            }
+        }
+        store.cleanup();
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE environment=?",
+                Integer.class, env));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages WHERE id=?", Integer.class,
+                saved.message().messageId()));
     }
 
     @Test
@@ -1521,6 +2378,12 @@ class ChatParticipationMySqlTest {
     }
 
     private ChatParticipationService service(String environment, ChatParticipationProjection projection) {
+        return service(environment, projection, dataSource);
+    }
+
+    private ChatParticipationService service(String environment, ChatParticipationProjection projection,
+            DataSource source) {
+        var jdbc = new JdbcTemplate(source);
         var users = mock(UserRepository.class);
         when(users.findActiveByIdForUpdate(anyLong())).thenReturn(Optional.of(mock(User.class)));
         var members = mock(ChatRoomMemberRepository.class);
@@ -1541,7 +2404,7 @@ class ChatParticipationMySqlTest {
         var storage = new ChatViewStorageService(jdbc, members, users, mock(ChatBanStorageService.class),
                 Clock.systemUTC());
         ReflectionTestUtils.setField(storage, "distributedPresence", true);
-        var service = new ChatParticipationService(jdbc, new DataSourceTransactionManager(dataSource), storage,
+        var service = new ChatParticipationService(jdbc, new DataSourceTransactionManager(source), storage,
                 mock(ChatSessionAccessPolicy.class), projection, event -> {
                 }, new ChatSocketSessions(), environment);
         service.start();

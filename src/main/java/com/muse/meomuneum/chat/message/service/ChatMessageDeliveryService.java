@@ -84,14 +84,17 @@ public class ChatMessageDeliveryService {
     }
 
     public void send(Long userId, Long roomId, Long membershipId, String sessionId, String destination, byte[] body) {
-        presence.exclusive(() -> {
+        Supplier<Void> operation = () -> {
             String clientId = "";
             try {
                 entry.authorizeConnection(userId, roomId, membershipId, sessionId);
                 if (!("/app/chat-rooms/" + roomId + "/messages").equals(destination)) {
                     throw new ChatMessageRejection("DESTINATION_DENIED");
                 }
-                if (!presence.hasRoomSubscription(sessionId, roomId)) {
+                boolean subscribed = distributed == null
+                        ? presence.hasRoomSubscription(sessionId, roomId)
+                        : presence.hasLocalRoomSubscription(sessionId, roomId);
+                if (!subscribed) {
                     throw new ChatMessageRejection("NOT_READY");
                 }
                 JsonNode request = parse(body);
@@ -162,7 +165,13 @@ public class ChatMessageDeliveryService {
                         new ChatMessageRejection("SEND_FAILED"));
             }
             return null;
-        });
+        };
+        if (distributed == null) {
+            presence.exclusive(operation);
+        } else {
+            // The DB transaction fences membership/view ownership. Never hold the transport monitor over DB/ACK I/O.
+            operation.get();
+        }
     }
 
     private JsonNode parse(byte[] body) {

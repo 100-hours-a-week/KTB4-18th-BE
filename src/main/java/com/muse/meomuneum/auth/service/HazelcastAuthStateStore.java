@@ -372,6 +372,11 @@ public class HazelcastAuthStateStore {
         return delegate.activeTicketCount();
     }
 
+    /** Fresh bounded read only; never rotates a session or extends its expiration. */
+    public Map<String, AuthSession> getSessions(java.util.Set<String> sids) {
+        return delegate.getSessions(sids);
+    }
+
     public AuthSession getSession(String sid) {
         return delegate.getSession(sid);
     }

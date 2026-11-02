@@ -152,7 +152,8 @@ public class ChatRoomEntryService {
         requireAuthSession(authSessionId);
         if (participation != null) {
             participation.leave(userId, authSessionId, roomId, membershipId, viewId);
-            sockets.close(presence.removeTab(userId, membershipId, viewId), 4100, "CHAT_LEFT");
+            // The DB transition is terminal; detach the view before transport callbacks can re-enter it.
+            sockets.close(views.discardEnded(userId, roomId, membershipId, viewId), 4100, "CHAT_LEFT");
             return;
         }
         Set<String> ended = presence.exclusive(() -> {

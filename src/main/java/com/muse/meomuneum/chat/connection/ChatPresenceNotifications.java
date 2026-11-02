@@ -30,11 +30,29 @@ public class ChatPresenceNotifications {
         this.mapper = mapper;
     }
 
+    private com.muse.meomuneum.chat.participation.ChatParticipationService participation;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setParticipation(com.muse.meomuneum.chat.participation.ChatParticipationService value) {
+        participation = value;
+    }
+
     @EventListener
     public void changed(ChatPresenceChangedEvent event) {
         Map<String, Set<String>> targets = event.sessionId() == null
                 ? presence.roomSubscriptions(event.roomId())
                 : Map.of(event.sessionId(), Set.of(event.subscriptionId()));
+        if (targets.isEmpty()) {
+            return;
+        }
+        long started = System.nanoTime();
+        Object proof;
+        try {
+            proof = participation == null ? null : participation.issueSocketEnqueuePermissions(event.roomId());
+        } catch (RuntimeException unavailable) {
+            participation.failClosed("presence_enqueue_permission", unavailable, started);
+            return;
+        }
         try {
             byte[] body = mapper.writeValueAsBytes(new ChatMessageEvent("CHAT_PRESENCE", Map.of(
                     "room_id", event.roomId(), "connected_count", event.count(), "version", event.revision())));
@@ -46,6 +64,7 @@ public class ChatPresenceNotifications {
                 headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
                 headers.setHeader("chatRecipients", Set.of(session));
                 headers.setHeader("chatRoomId", event.roomId());
+                headers.setHeader("chatSocketEnqueuePermissions", proof);
                 outbound.getObject().send(MessageBuilder.createMessage(body, headers.getMessageHeaders()));
             }));
         } catch (JsonProcessingException impossible) {

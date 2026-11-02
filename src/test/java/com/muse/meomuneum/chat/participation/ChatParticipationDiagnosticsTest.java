@@ -9,11 +9,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.sql.DataSource;
 
@@ -30,6 +32,10 @@ import org.springframework.transaction.TransactionDefinition;
 
 import com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy;
 import com.muse.meomuneum.chat.connection.ChatSocketSessions;
+import com.muse.meomuneum.chat.redis.ChatRedisChannels;
+import com.muse.meomuneum.chat.redis.ChatRedisConnection;
+import com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle;
+import com.muse.meomuneum.chat.runtime.ChatRuntimeMetrics;
 import com.muse.meomuneum.chat.view.ChatViewStorageService;
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 
@@ -39,17 +45,20 @@ import ch.qos.logback.core.read.ListAppender;
 
 class ChatParticipationDiagnosticsTest {
     private final Logger logger = (Logger) LoggerFactory.getLogger(ChatParticipationDiagnostics.class);
+    private final Logger runtimeLogger = (Logger) LoggerFactory.getLogger(ChatRuntimeLifecycle.class);
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
 
     @BeforeEach
     void attach() {
         appender.start();
         logger.addAppender(appender);
+        runtimeLogger.addAppender(appender);
     }
 
     @AfterEach
     void detach() {
         logger.detachAppender(appender);
+        runtimeLogger.detachAppender(appender);
         appender.stop();
     }
 
@@ -136,6 +145,82 @@ class ChatParticipationDiagnosticsTest {
     }
 
     @Test
+    void expiredRuntimePermitIsObservedBeforeHeartbeatLatchesTheServiceClosed() {
+        var sockets = mock(ChatSocketSessions.class);
+        var service = service(mock(PlatformTransactionManager.class), sockets);
+        ReflectionTestUtils.setField(service, "localLease", System.nanoTime() + TimeUnit.SECONDS.toNanos(14));
+        var runtime = runtime(service);
+        ReflectionTestUtils.setField(runtime, "running", true);
+        ReflectionTestUtils.setField(runtime, "permitUntil", System.nanoTime() - TimeUnit.SECONDS.toNanos(2));
+
+        assertThat(runtime.permitted()).isFalse();
+        assertThat(appender.list).isEmpty();
+        assertThat(service.available()).isFalse();
+        assertThat(service.isFailed()).isFalse();
+        assertThat(appender.list).hasSize(2);
+        assertThat(appender.list.getFirst().getFormattedMessage()).contains(
+                "event=chat_runtime_first_denied", "running=true", "participation_failed=false",
+                "blocked=false", "stopped=false", "permit_expired=true", "permit_remaining_ms=-",
+                "last_check_start_age_ms=-1", "last_check_complete_age_ms=-1", "check_in_progress=false");
+        assertThat(appender.list.getLast().getFormattedMessage()).contains(
+                "event=chat_participation_first_unavailable", "reason=runtime_permit")
+                .containsPattern("local_lease_remaining_ms=[1-9][0-9]*");
+
+        service.heartbeat();
+        assertThat(service.isFailed()).isTrue();
+        verify(sockets).closeAll(1013, "CHAT_SERVICE_UNAVAILABLE");
+        assertThat(appender.list).hasSize(3);
+        assertThat(appender.list.getLast().getFormattedMessage()).contains("stage=heartbeat_unavailable");
+    }
+
+    @Test
+    void blockedRuntimeWithAnUnexpiredPermitIsDistinguishedAndDoesNotSpamLogs() {
+        var service = service(mock(PlatformTransactionManager.class), mock(ChatSocketSessions.class));
+        var runtime = runtime(service);
+        ReflectionTestUtils.setField(runtime, "running", true);
+        ReflectionTestUtils.setField(runtime, "permitUntil", System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
+        assertThat(runtime.permitted()).isTrue();
+        ((AtomicBoolean) ReflectionTestUtils.getField(runtime, "blocked")).set(true);
+        for (int i = 0; i < 10; i++) {
+            assertThat(service.available()).isFalse();
+        }
+        assertThat(appender.list).hasSize(2);
+        assertThat(appender.list.getFirst().getFormattedMessage()).contains(
+                "blocked=true", "permit_expired=false", "participation_failed=false");
+        assertThat(appender.list.getFirst().getThrowableProxy()).isNull();
+    }
+
+    @Test
+    void transportAndLocalLeaseFailuresAreDistinctAndEarlierGuardsStillShortCircuit() {
+        var transport = service(mock(PlatformTransactionManager.class), mock(ChatSocketSessions.class));
+        transport.setMessageTransportReady(() -> false);
+        ReflectionTestUtils.setField(transport, "localLease", System.nanoTime() + TimeUnit.SECONDS.toNanos(14));
+        assertThat(transport.available()).isFalse();
+        assertThat(appender.list.getLast().getFormattedMessage()).contains("reason=message_transport");
+
+        var lease = service(mock(PlatformTransactionManager.class), mock(ChatSocketSessions.class));
+        ReflectionTestUtils.setField(lease, "localLease", System.nanoTime() - TimeUnit.SECONDS.toNanos(2));
+        assertThat(lease.available()).isFalse();
+        assertThat(appender.list.getLast().getFormattedMessage()).contains("reason=local_lease_expired");
+
+        var draining = service(mock(PlatformTransactionManager.class), mock(ChatSocketSessions.class));
+        draining.setRuntimePermit(() -> {
+            throw new AssertionError("later guard must not execute");
+        });
+        draining.beginDrain();
+        assertThat(draining.available()).isFalse();
+        assertThat(appender.list.getLast().getFormattedMessage()).contains("reason=draining");
+    }
+
+    private ChatRuntimeLifecycle runtime(ChatParticipationService service) {
+        var jdbc = mock(JdbcTemplate.class);
+        when(jdbc.getDataSource()).thenReturn(mock(DataSource.class));
+        return new ChatRuntimeLifecycle(jdbc, service, mock(ChatRedisConnection.class), mock(ChatRedisChannels.class),
+                mock(ChatSocketSessions.class), mock(ChatRuntimeMetrics.class), "diagnostic-test",
+                Duration.ofSeconds(1));
+    }
+
+    @Test
     void logsOriginalTransactionFailureBeforeReturningTheSameSanitizedException() {
         var manager = mock(PlatformTransactionManager.class);
         when(manager.getTransaction(any(TransactionDefinition.class)))
@@ -155,6 +240,22 @@ class ChatParticipationDiagnosticsTest {
                 .contains("event=chat_participation_first_transaction_failure", "stage=transaction_start",
                         "sql_state=08001", "sql_code=1040")
                 .doesNotContain("sql-password-canary", "raw-query-canary", "unused-synthetic-sid");
+    }
+
+    @Test
+    void admissionEvidenceIsBoundedSanitizedAndEmittedOnlyOnce() {
+        var diagnostics = new ChatParticipationDiagnostics("test", "synthetic-task");
+        long started = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(100);
+        var holders = java.util.List.of(new ChatParticipationDiagnostics.Phase("room_lock_and_boundaries", started),
+                new ChatParticipationDiagnostics.Phase("secret\ncanary", started),
+                new ChatParticipationDiagnostics.Phase("third_holder", started));
+        diagnostics.admissionBlocked(holders);
+        diagnostics.admissionBlocked(holders);
+        assertThat(appender.list).hasSize(1);
+        assertThat(appender.list.getFirst().getFormattedMessage())
+                .contains("event=chat_transition_first_admission_blocked", "room_lock_and_boundaries:", "unknown:")
+                .doesNotContain("secret", "canary", "third_holder", "\n");
+        assertThat(appender.list.getFirst().getThrowableProxy()).isNull();
     }
 
     private ChatParticipationService service(PlatformTransactionManager manager, ChatSocketSessions sockets) {
