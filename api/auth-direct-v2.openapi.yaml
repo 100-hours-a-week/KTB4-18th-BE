@@ -1,9 +1,9 @@
 ---
 openapi: 3.1.0
 info:
-  title: Proposed Meomuneum direct-v2 authentication contract
-  version: 2.4.0
-  description: 'PROPOSAL: Not implemented; not an active runtime API. Normative direct-v2 authentication wire contract. Headerless legacy routes retain their existing separate behavior where explicitly specified. Browser-managed cookies are never read or constructed by FE. Refresh/logout operation replay is defined by original startingEpoch plus either exact original-cookie proof or exact result-cookie proof, with MySQL canonical state. GET /flow/current-operation is read-only and separate from bootstrap. It validates every current flow-proof candidate: exactly one valid flow proof wins even if an unrelated valid binding proof is present; multiple distinct valid flows return generic AUTH_FLOW_NOT_FOUND without cookie-order choice or binding fallback; binding fallback is considered only when no flow proof validates and is constrained to the same flow key. Proposed refresh response-loss recovery requires DB-bound browser-binding proof and explicit user action. GET /flow/current-operation may omit flow tuple headers when sessionStorage is unreadable; FE must not guess them.'
+  title: Meomuneum direct-v2 authentication contract
+  version: 2.4.1
+  description: 'Direct-v2 authentication wire contract implemented by the compatible backend runtime when auth.direct-v2.enabled is enabled. Headerless legacy routes retain their existing separate behavior where explicitly specified. Browser-managed cookies are never read or constructed by FE. Refresh/logout operation replay is defined by original startingEpoch plus either exact original-cookie proof or exact result-cookie proof, with MySQL canonical state. GET /flow/current-operation is read-only and separate from bootstrap. It validates every current flow-proof candidate: exactly one valid flow proof wins even if an unrelated valid binding proof is present; multiple distinct valid flows return generic AUTH_FLOW_NOT_FOUND without cookie-order choice or binding fallback; binding fallback is considered only when no flow proof validates and is constrained to the same flow key. Refresh response-loss recovery requires DB-bound browser-binding proof and explicit user action. GET /flow/current-operation may omit flow tuple headers when sessionStorage is unreadable; FE must not guess them.'
 servers:
 - url: "/api/v1/auth"
 paths:
@@ -88,7 +88,7 @@ paths:
   "/login":
     post:
       operationId: directLogin
-      description: 'Browser MUST use credentials: include. HttpOnly proof cookie is browser-managed; FE never reads or writes Cookie. For the same flow-scoped operation ID, the service rechecks the ID under the flow lock before stale-epoch, capacity, active-owner or receipt decisions. Same startingEpoch joins/replays the existing operation; a different startingEpoch returns AUTH_OPERATION_ID_REUSED. During the tombstone horizon the same exact ID returns AUTH_OPERATION_RECEIPT_EXPIRED, never re-runs BCrypt.'
+      description: 'Browser MUST use credentials: include. HttpOnly proof cookie is browser-managed; FE never reads or writes Cookie. For the same flow-scoped operation ID, the service rechecks the ID under the flow lock before stale-epoch, capacity, active-owner or receipt decisions. Same startingEpoch and identical original client expiry join/replay the existing operation; a different startingEpoch or client expiry returns AUTH_OPERATION_ID_REUSED. LOGIN expiry follows x-login-expiry-contract; existing protocol, CSRF, Origin and tuple error precedence is preserved. During the tombstone horizon the same exact ID returns AUTH_OPERATION_RECEIPT_EXPIRED, never re-runs BCrypt.'
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
@@ -135,6 +135,13 @@ paths:
           type: string
           format: uri
           minLength: 1
+      - in: header
+        name: X-Auth-Client-Expires-At
+        required: true
+        description: Single physical header for direct-v2 only, containing String(sessionStorage.expiresAt) from the tuple first created with operationId. Preserve this original canonical positive Unix epoch millisecond string exactly on retries; the server never rewrites it. Missing, empty, whitespace, duplicate physical headers, merged values, noncanonical or unsafe values return 400 INVALID_CLIENT_EXPIRY without credentials or Set-Cookie. Wire-valid values still require writer DB strict-future and maximum-900-second admission; markerless legacy does not require this header.
+        schema:
+          type: string
+          pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
       security:
       - DirectFlowProofCookie: []
         CsrfCookie: []
@@ -193,7 +200,8 @@ paths:
               schema:
                 "$ref": "#/components/schemas/InProgressEnvelope"
         '400':
-          description: Invalid protocol/tuple.
+          description: Invalid protocol/tuple/request or missing/invalid client expiry (INVALID_CLIENT_EXPIRY); no credentials or Set-Cookie. Existing protocol, CSRF, Origin and tuple error precedence is preserved.
+          headers: {}
           content:
             application/json:
               schema:
@@ -2389,6 +2397,7 @@ components:
             - INVALID_OPERATION_ID
             - INVALID_AUTH_FLOW_TUPLE
             - INVALID_LOGIN_REQUEST
+            - INVALID_CLIENT_EXPIRY
           data:
             type: 'null'
         additionalProperties: false
@@ -2882,6 +2891,7 @@ components:
           - ACTIVE
           - REBOOTSTRAP_REQUIRED
     CurrentOperationSummary:
+      description: Known live canonical LOGIN returns both recorded original expiries from the same authenticated writer DB snapshot, bound to flowId, startingEpoch, operationId, kind, status, resultEpoch, resultRevision and current flow/session authority. LOGIN live success and proven live failure/rejection require the original pair; unknown legacy, absent, expired or scrubbed receipt returns null/null or a no-credential error. Null never proves token installation or recovery. Schema acceptance alone cannot prove DB canonicality or liveness; see x-login-expiry-contract.
       type: object
       additionalProperties: false
       required:
@@ -2899,13 +2909,13 @@ components:
       - effectiveExpiresAt
       properties:
         clientExpiresAt:
-          description: Immutable initial client expiry as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          description: Immutable original operation tuple client expiry as canonical Unix epoch milliseconds, equal to String(sessionStorage.expiresAt) for known live canonical LOGIN; never infer from receiptExpiresAt date-time or access token expires_in. Unknown legacy or absent/expired/scrubbed receipt returns paired null.
           oneOf:
           - type: string
             pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
           - type: 'null'
         effectiveExpiresAt:
-          description: Fixed server DB-clock retry cutoff as canonical Unix epoch milliseconds; null for unknown legacy or absent/scrubbed receipt.
+          description: Immutable writer DB cutoff in canonical Unix epoch milliseconds; for LOGIN, effective_ms = floor(min(client_ms*1000, t0_us+900000000, receipt_us)/1000). GET and retries never recalculate or extend it; access token expires_in is a separate relative TTL. Unknown legacy or absent/expired/scrubbed receipt returns paired null.
           oneOf:
           - type: string
             pattern: "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$"
@@ -2971,7 +2981,7 @@ components:
       - if:
           properties:
             kind:
-              enum: [LOGIN, LOGOUT]
+              enum: [LOGOUT]
           required: [kind]
         then:
           properties:
@@ -5565,9 +5575,19 @@ x-refresh-expiry-overlay:
   sourceCutoff: Minimum of client expiry, DB first receipt time plus 900 seconds, and source receipt expiry.
   recoveryCutoff: Minimum of recovery client expiry, DB first receipt time plus 900 seconds, source cutoff, source receipt expiry and recovery receipt expiry.
   validity: DB time must be strictly before the fixed cutoff and receipt expiry for each mutation, retry, replay or reclaim. Expired cutoff returns AUTH_OPERATION_RECEIPT_EXPIRED without credentials.
-  fields: Required nullable clientExpiresAt and effectiveExpiresAt return paired recorded values for known live rows; unknown legacy returns both null. LOGIN, LOGOUT, NOT_RECEIVED, NONE and EXPIRED return both null. RESULT_STALE never permits replay.
+  fields: Required nullable clientExpiresAt and effectiveExpiresAt return paired recorded values for known live rows; unknown legacy returns both null. Known live canonical LOGIN returns its original client expiry and fixed effective cutoff; unknown legacy or absent/expired/scrubbed LOGIN returns null/null or a no-credential error, never recovery evidence. LOGOUT, NOT_RECEIVED, NONE and EXPIRED return both null. RESULT_STALE never permits replay.
   recoveryAdmission: NONE or NOT_RECEIVED without confirmed receipt and cutoff never permits retry. An explicit new first POST requires verified canonical source, both deadlines, saved and read-back new identity and expiry, and direct in-memory evidence that dispatch has not occurred. Reload or uncertainty is GET-only or reauthentication.
   binding: Browser binding proof survives reload only within its fixed 1800 second cookie lifetime; absence or invalid proof requires reauthentication. Reads never extend it.
   persistence: Login owner_token is BINARY(16) NULL DEFAULT NULL. Direct result_session_sid, original_flow_cookie_hmac and encrypted_result_flow_cookie are nullable default null; live REFRESH and LOGOUT bind original proof and exact result flow cookie ciphertext using v2 direct-operation-flow-cookie AAD. REFRESH also fences canonical session SID and generations. Tombstones scrub sensitive results and retain identity and purge horizon.
   recoveryPersistence: Recovery binding_generation, claim_flow_cookie_generation and claim_refresh_generation are BIGINT NULL DEFAULT NULL, required for live rows and scrubbed on tombstone. A fixed REFRESH kind and composite RESTRICT source receipt FK preserve source identity; purge recovery before source.
   originBoundary: The two exact recovery GET routes only accept an exact singleton allowlisted Origin when present; only absent Origin permits singleton Sec-Fetch-Site same-origin. No Referer fallback. Browser binding and canonical DB validation remain mandatory. Proxy must preserve header absence and reject duplicates; deployment requires trusted forwarding and CORS verification.
+
+x-login-expiry-contract:
+  status: proposed_not_implemented
+  request: Direct-v2 POST /login requires one physical X-Auth-Client-Expires-At containing String(sessionStorage.expiresAt), from the initial sessionStorage tuple created with operationId. Retry exactly the same tuple and expiry; a 1ms change is AUTH_OPERATION_ID_REUSED. Missing, empty, whitespace, duplicate or merged headers, 0, 01, +1, -1, 1.0, 1e3 and values above 9007199254740991 return 400 INVALID_CLIENT_EXPIRY without credentials or Set-Cookie. Markerless legacy does not require this header. Existing protocol, CSRF, Origin and tuple error precedence remains unchanged.
+  admission: Writer DB first claim time t0_us and receipt deadline receipt_us are UTC Unix epoch microseconds; client_ms is the original positive safe integer milliseconds. Admit only t0_us < client_ms*1000 <= t0_us+900000000. Wire-valid 1 and 9007199254740991 still require this DB admission check. Compute client_ms*1000 within signed 64-bit range without overflow; never truncate fractional t0_us before admission.
+  cutoff: cutoff_us = min(client_ms*1000, t0_us+900000000, receipt_us); effective_ms = floor(cutoff_us/1000). All microseconds-to-milliseconds conversions use floor, never round, half-up or ceil. effective_ms*1000 <= cutoff_us; expiry may be up to 999us earlier, never later. If effective_ms*1000 <= t0_us, fail closed without a live claim, completion or recovery.
+  validity: Only writer DB now_us < effective_ms*1000 permits live completion, recovery, retry or worker action; equality and later fail closed. Compare original-precision now_us, never rounded now_ms. Preserve receipt DB retention and tombstone reuse prevention. GET and retries never recalculate or extend either expiry.
+  persistence: Follow-up runtime and additive migration must atomically store original client_expires_at_ms and fixed effective_expires_at_ms under the flow lock in the first claim transaction. Terminal results retain this immutable pair; exact retry, result loss, process restart and late worker races cannot replace it. Read both in the same authenticated writer DB snapshot with operation identity, kind, status, resultEpoch, resultRevision and current flow/session authority. This proposal does not implement or prove HTTP parsing, SQL/JVM precision, DB persistence, proof or concurrency correctness.
+  projection: Known live canonical LOGIN success and proven live failure/rejection return the original string pair. Failure/rejection returns no credentials or Set-Cookie. Unknown legacy, absent, expired, scrubbed or tombstone data is null/null or a no-credential error; never infer, backfill or use null as token-installation/recovery evidence. Do not add a LOGIN EXPIRED status. LOGOUT and existing REFRESH/recovery null-state rules are preserved.
+  units: clientExpiresAt and effectiveExpiresAt are absolute Unix epoch millisecond strings; access token expires_in is an independent relative TTL. Never compare or substitute that TTL or rename receiptExpiresAt date-time as client expiry. Runtime, migration, actual HTTP duplicate-header handling and MySQL precision/concurrency evidence require a separate follow-up run.

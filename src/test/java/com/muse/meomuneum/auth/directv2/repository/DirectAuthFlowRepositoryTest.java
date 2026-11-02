@@ -13,25 +13,28 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
 
 import com.muse.meomuneum.auth.directv2.application.DirectAuthTransactionRunner;
 
-@Testcontainers
 class DirectAuthFlowRepositoryTest {
-    @Container
-    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0");
+    private com.muse.meomuneum.auth.directv2.application.DirectAuthRuntimeFixture fixture;
+
+    @org.junit.jupiter.api.AfterEach
+    void closeFixture() {
+        if (fixture != null) {
+            fixture.close();
+        }
+    }
     private JdbcTemplate jdbc;
     private DirectAuthFlowRepository repository;
     private DirectAuthTransactionRunner transactions;
 
     @BeforeEach
-    void setup() {
-        var dataSource = new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
+    void setup() throws Exception {
+        fixture = new com.muse.meomuneum.auth.directv2.application.DirectAuthRuntimeFixture(
+                com.muse.meomuneum.auth.directv2.application.DirectAuthLoginLogoutTest.users());
+        var dataSource = fixture.jdbc.getDataSource();
         jdbc = new JdbcTemplate(dataSource);
         repository = new DirectAuthFlowRepository(jdbc);
         transactions = new DirectAuthTransactionRunner(new DataSourceTransactionManager(dataSource));

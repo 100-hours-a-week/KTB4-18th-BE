@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -21,7 +22,7 @@ class DirectAuthExpiryStateRulesTest {
     @Test
     void expiryRulesCoverEachOverlayStateAndRequiredNullablePair() throws Exception {
         Map<String, Object> schemas = schemas();
-        verify(map(schemas.get("CurrentOperationSummary")), "kind", List.of("LOGIN", "LOGOUT"),
+        verify(map(schemas.get("CurrentOperationSummary")), "kind", List.of("LOGOUT"),
                 List.of("LOGIN", "REFRESH", "LOGOUT"));
         verify(map(schemas.get("RefreshRecoveryStatusData")), "status", List.of("NOT_RECEIVED"),
                 List.of("NOT_RECEIVED", "IN_PROGRESS", "SUCCEEDED"));
@@ -49,6 +50,171 @@ class DirectAuthExpiryStateRulesTest {
         schema.put("allOf", new ArrayList<>(allOf));
         ((List<?>) schema.get("allOf")).remove(1);
         assertThrows(AssertionError.class, () -> verify(schema, "status", nullStates, statuses));
+    }
+
+    @Test
+    void loginLiveAndLegacyPairsRemainDistinctFromNullOnlyStates() throws Exception {
+        Map<String, Object> schemas = schemas();
+        Map<String, Object> current = map(schemas.get("CurrentOperationSummary"));
+        for (String status : List.of("IN_PROGRESS", "SUCCEEDED", "NOT_ADMITTED", "INVALID_CREDENTIALS",
+                "SUPERSEDED", "REAUTH_REQUIRED")) {
+            assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", "1800000001001", "1800000001000", status))
+                    .as("known live canonical LOGIN " + status + " wire projection").isTrue();
+        }
+        assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", "1800000000123", "1800000000000"))
+                .as("original absolute expiry pair independent of expires_in=900").isTrue();
+        assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", "1", "1", "EXPIRED")).isFalse();
+        assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", null, null))
+                .as("unknown legacy, absent, expired or scrubbed wire projection").isTrue();
+        for (String boundary : List.of("1", "9007199254740991")) {
+            assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", boundary, boundary)).isTrue();
+        }
+        for (Object invalid : List.of("", " ", "0", "01", "+1", "-1", "1.0", "1e3", "1,2",
+                "9007199254740992", 1L)) {
+            assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", invalid, "1")).isFalse();
+            assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", "1", invalid)).isFalse();
+        }
+        assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", null, "1")).isFalse();
+        assertThat(acceptsExpiryProjection(current, "kind", "LOGIN", "1", null)).isFalse();
+        for (String[] state : List.of(new String[]{"CurrentOperationSummary", "kind", "LOGOUT"},
+                new String[]{"RefreshRecoveryStatusData", "status", "NOT_RECEIVED"},
+                new String[]{"RefreshRecoveryCurrentData", "status", "NONE"},
+                new String[]{"RefreshRecoveryCurrentData", "status", "EXPIRED"})) {
+            Map<String, Object> schema = map(schemas.get(state[0]));
+            assertThat(acceptsExpiryProjection(schema, state[1], state[2], null, null)).isTrue();
+            assertThat(acceptsExpiryProjection(schema, state[1], state[2], "1", "1")).isFalse();
+        }
+    }
+
+    @Test
+    void loginNullOnlyLogoutRelaxationAndUnpairedMutationsAreRejected() throws Exception {
+        Map<String, Object> current = map(schemas().get("CurrentOperationSummary"));
+        List<?> rules = (List<?>) current.get("allOf");
+        Map<String, Object> kinds = map(map(map(map(rules.get(0)).get("if")).get("properties")).get("kind"));
+        kinds.put("enum", List.of("LOGIN", "LOGOUT"));
+        assertThrows(AssertionError.class, () -> assertThat(acceptsExpiryProjection(
+                current, "kind", "LOGIN", "1", "1")).isTrue());
+        kinds.put("enum", List.of("LOGOUT"));
+        current.put("allOf", new ArrayList<>(rules));
+        ((List<?>) current.get("allOf")).remove(0);
+        assertThrows(AssertionError.class, () -> assertThat(acceptsExpiryProjection(
+                current, "kind", "LOGOUT", "1", "1")).isFalse());
+        current.put("allOf", new ArrayList<>(rules));
+        ((List<?>) current.get("allOf")).remove(1);
+        assertThrows(AssertionError.class, () -> assertThat(acceptsExpiryProjection(
+                current, "kind", "LOGIN", null, "1")).isFalse());
+    }
+
+    @Test
+    void fractionalWriterClockAdmissionAndFloorCutoffNeverExtendTheDeadline() {
+        for (long t0 : List.of(1800000000000001L, 1800000000000999L)) {
+            long maximum = 1800000900000L;
+            assertThat(t0 < maximum * 1000 && maximum * 1000 <= t0 + 900000000).isTrue();
+            assertThat((maximum + 1) * 1000 <= t0 + 900000000).isFalse();
+            assertThat(1800000000000L * 1000 > t0).isFalse();
+            assertThat(1800000000001L * 1000 > t0).isTrue();
+            assertThat(Math.floorDiv(Math.min(maximum * 1000, t0 + 900000000), 1000))
+                    .isEqualTo(maximum);
+            for (long source : List.of(t0, t0 + 900000000)) {
+                long expected = source < t0 + 900000000 ? 1800000000000L : maximum;
+                assertThat(Math.floorDiv(source, 1000)).isEqualTo(expected);
+                assertThrows(AssertionError.class, () -> assertThat((source + 999) / 1000)
+                        .as("fractional first-claim/900s ceil mutation").isEqualTo(expected));
+                if (source % 1000 == 999) {
+                    assertThrows(AssertionError.class, () -> assertThat((source + 500) / 1000)
+                            .as("fractional first-claim/900s round mutation").isEqualTo(expected));
+                }
+            }
+            for (long receipt : List.of(1800000001000001L, 1800000001000999L)) {
+                long cutoff = Math.min(Math.min(maximum * 1000, t0 + 900000000), receipt);
+                long effective = Math.floorDiv(cutoff, 1000);
+                assertThat(effective).isEqualTo(1800000001000L);
+                assertThat(effective * 1000).isLessThanOrEqualTo(cutoff);
+                assertThat(cutoff - effective * 1000).isBetween(1L, 999L);
+                assertThat(withinCutoff(effective * 1000 - 1, effective)).isTrue();
+                for (long now : List.of(effective * 1000, effective * 1000 + 1,
+                        cutoff - 1, cutoff, cutoff + 1)) {
+                    assertThat(withinCutoff(now, effective)).isFalse();
+                }
+                assertThrows(AssertionError.class, () -> assertThat((cutoff + 999) / 1000)
+                        .as("ceil mutation").isEqualTo(1800000001000L));
+                if (receipt % 1000 == 999) {
+                    assertThrows(AssertionError.class, () -> assertThat((cutoff + 500) / 1000)
+                            .as("nearest mutation").isEqualTo(1800000001000L));
+                }
+            }
+            for (long receipt : List.of(t0 - 1, t0)) {
+                long cutoff = Math.min(Math.min(maximum * 1000, t0 + 900000000), receipt);
+                long effective = Math.floorDiv(cutoff, 1000);
+                assertThat(withinCutoff(t0, effective))
+                        .as("receipt cutoff at or before first claim fails closed").isFalse();
+            }
+            long laterCutoff = Math.min(Math.min(maximum * 1000, t0 + 900000000), t0 + 1);
+            assertThat(withinCutoff(t0, Math.floorDiv(laterCutoff, 1000))).isEqualTo(t0 % 1000 == 999);
+        }
+        long aligned = 1800000000000000L;
+        for (long delta : List.of(-1L, 0L, 1L, 900000L, 900001L)) {
+            long client = aligned / 1000 + delta;
+            assertThat(aligned < client * 1000 && client * 1000 <= aligned + 900000000)
+                    .as("aligned t0 delta " + delta).isEqualTo(delta == 1 || delta == 900000);
+        }
+        assertThat(9007199254740991L * 1000).isEqualTo(9007199254740991000L);
+    }
+
+    private static boolean withinCutoff(long nowUs, long effectiveMs) {
+        return nowUs < effectiveMs * 1000;
+    }
+
+    private static boolean acceptsExpiryProjection(Map<String, Object> schema, String selector, String state,
+            Object client, Object effective, String... statuses) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put(selector, state);
+        values.put("clientExpiresAt", client);
+        values.put("effectiveExpiresAt", effective);
+        values.putIfAbsent("status", statuses.length == 0 ? "SUCCEEDED" : statuses[0]);
+        Map<String, Object> properties = map(schema.get("properties"));
+        if (!matchesProjection(properties, values)) {
+            return false;
+        }
+        for (String field : FIELDS) {
+            List<?> variants = (List<?>) map(properties.get(field)).get("oneOf");
+            if (variants.stream().map(DirectAuthExpiryStateRulesTest::map)
+                    .noneMatch(rule -> matchesValue(rule, values.get(field)))) {
+                return false;
+            }
+        }
+        for (Object entry : (List<?>) schema.get("allOf")) {
+            Map<String, Object> rule = map(entry);
+            Map<String, Object> when = map(rule.get("if"));
+            if (!values.keySet().containsAll((List<?>) when.get("required"))) {
+                continue;
+            }
+            boolean applies = matchesProjection(map(when.get("properties")), values);
+            Object branch = rule.get(applies ? "then" : "else");
+            if (branch != null && !matchesProjection(map(map(branch).get("properties")), values)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean matchesProjection(Map<String, Object> properties, Map<String, Object> values) {
+        return properties.entrySet().stream().filter(entry -> values.containsKey(entry.getKey()))
+                .allMatch(entry -> matchesValue(map(entry.getValue()), values.get(entry.getKey())));
+    }
+
+    private static boolean matchesValue(Map<String, Object> rule, Object value) {
+        if (rule.containsKey("enum") && !((List<?>) rule.get("enum")).contains(value)) {
+            return false;
+        }
+        if ("null".equals(rule.get("type"))) {
+            return value == null;
+        }
+        if ("string".equals(rule.get("type"))) {
+            return value instanceof String text &&
+                    (!rule.containsKey("pattern") || text.matches((String) rule.get("pattern")));
+        }
+        return !rule.containsKey("const") || rule.get("const").equals(value);
     }
 
     private static void verify(Map<String, Object> schema, String selector, List<String> nullStates,

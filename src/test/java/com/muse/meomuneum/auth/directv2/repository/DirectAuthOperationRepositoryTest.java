@@ -11,38 +11,33 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
 
 import com.muse.meomuneum.auth.directv2.application.DirectAuthTransactionRunner;
 
-@Testcontainers
 class DirectAuthOperationRepositoryTest {
-    @Container
-    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0");
+    private com.muse.meomuneum.auth.directv2.application.DirectAuthRuntimeFixture fixture;
+
+    @org.junit.jupiter.api.AfterEach
+    void closeFixture() {
+        if (fixture != null) {
+            fixture.close();
+        }
+    }
 
     @Test
     void ownerFenceRejectsExpiredChangedOwnerAndRecreatedOperation() throws Exception {
-        var grant = MYSQL.execInContainer("mysql", "-uroot", "-p" + MYSQL.getPassword(), "-e",
-                "GRANT SELECT ON performance_schema.* TO '" + MYSQL.getUsername() + "'@'%'");
-        assertTrue(grant.getExitCode() == 0);
-        var source = new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
+        fixture = new com.muse.meomuneum.auth.directv2.application.DirectAuthRuntimeFixture(
+                com.muse.meomuneum.auth.directv2.application.DirectAuthLoginLogoutTest.users());
+        var source = fixture.jdbc.getDataSource();
         var jdbc = new JdbcTemplate(source);
-        new ResourceDatabasePopulator(
-                new ClassPathResource("db/migration/V20261024142649__create_auth_browser_flow_authority.sql"),
-                new ClassPathResource("db/migration/V20261031002221__add_direct_auth_operations.sql"),
-                new ClassPathResource("db/migration/V20261031150133__add_direct_auth_recovery_constraints.sql"))
-                .execute(source);
+
         jdbc.update("""
                 INSERT INTO auth_browser_flows (flow_id, flow_cookie_hash, cookie_expires_at, created_at,
                     updated_at, active_login_operation_id)
-                VALUES ('flow', 'hash', CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'operation')
+                VALUES ('flow', 'hash', DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 900 SECOND), CURRENT_TIMESTAMP(6),
+                CURRENT_TIMESTAMP(6), 'operation')
                 """);
         byte[] owner = new byte[16];
         Arrays.fill(owner, (byte) 1);
@@ -50,9 +45,14 @@ class DirectAuthOperationRepositoryTest {
         Arrays.fill(replacement, (byte) 2);
         jdbc.update("""
                 INSERT INTO auth_login_operations (flow_id, operation_id, starting_epoch, status, proof_generation,
-                    owner_token, lease_expires_at, created_at, updated_at)
+                    owner_token, lease_expires_at, receipt_expires_at, client_expires_at_ms,
+                    effective_expires_at_ms, created_at, updated_at)
                 VALUES ('flow', 'operation', 1, 'IN_PROGRESS', 1, ?,
-                    DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND), CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+                    DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND), DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL
+                    900 SECOND),
+                    FLOOR(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(6)) * 1000) + 600000,
+                    FLOOR(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(6)) * 1000) + 600000,
+                    CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
                 """, owner);
         var repository = new DirectAuthOperationRepository(jdbc, new DirectAuthFlowRepository(jdbc));
         var transactions = new DirectAuthTransactionRunner(new DataSourceTransactionManager(source));
@@ -70,15 +70,25 @@ class DirectAuthOperationRepositoryTest {
         jdbc.update("UPDATE auth_login_operations SET receipt_expires_at = CURRENT_TIMESTAMP(6)");
         assertFalse(transactions.run(() -> repository.lockOwnedLogin("flow", "operation", 1, 1, owner).isPresent()));
         jdbc.update("UPDATE auth_login_operations SET receipt_expires_at = NULL");
+        assertFalse(transactions.run(() -> repository.lockOwnedLogin("flow", "operation", 1, 1, owner).isPresent()));
+        jdbc.update("""
+                UPDATE auth_login_operations
+                SET receipt_expires_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 900 SECOND)
+                """);
         verifyLeaseExpiresWhileWaiting(jdbc, transactions, repository, owner);
         jdbc.update("UPDATE auth_login_operations SET lease_expires_at = CURRENT_TIMESTAMP(6)");
         assertFalse(transactions.run(() -> repository.lockOwnedLogin("flow", "operation", 1, 1, owner).isPresent()));
         jdbc.update("DELETE FROM auth_login_operations");
         jdbc.update("""
                 INSERT INTO auth_login_operations (flow_id, operation_id, starting_epoch, status, proof_generation,
-                    owner_token, lease_expires_at, created_at, updated_at)
+                    owner_token, lease_expires_at, receipt_expires_at, client_expires_at_ms,
+                    effective_expires_at_ms, created_at, updated_at)
                 VALUES ('flow', 'operation', 1, 'IN_PROGRESS', 1, ?,
-                    DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND), CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+                    DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND), DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL
+                    900 SECOND),
+                    FLOOR(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(6)) * 1000) + 600000,
+                    FLOOR(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(6)) * 1000) + 600000,
+                    CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
                 """, replacement);
         assertFalse(transactions.run(() -> repository.lockOwnedLogin("flow", "operation", 1, 1, owner).isPresent()));
         assertTrue(transactions.run(() -> repository.lockOwnedLogin("flow", "operation", 1, 1, replacement)

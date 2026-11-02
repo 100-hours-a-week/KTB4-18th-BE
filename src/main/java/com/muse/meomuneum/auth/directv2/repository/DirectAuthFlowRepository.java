@@ -26,6 +26,25 @@ public class DirectAuthFlowRepository {
                 .stream().findFirst();
     }
 
+    public java.time.LocalDateTime now() {
+        return jdbc.queryForObject("SELECT CURRENT_TIMESTAMP(6)", java.time.LocalDateTime.class);
+    }
+
+    public Optional<DirectAuthFlowState> find(String flowId) {
+        return jdbc.query("SELECT * FROM auth_browser_flows WHERE flow_id = ?", this::map, flowId)
+                .stream().findFirst();
+    }
+
+    public Optional<DirectAuthFlowState> findCookieHash(String hash) {
+        return jdbc.query("SELECT * FROM auth_browser_flows WHERE flow_cookie_hash = ?", this::map, hash)
+                .stream().findFirst();
+    }
+
+    public Optional<DirectAuthFlowState> findKey(String key) {
+        return jdbc.query("SELECT * FROM auth_browser_flows WHERE flow_key_hash = ?", this::map, key)
+                .stream().findFirst();
+    }
+
     private DirectAuthFlowState map(ResultSet row, int index) throws SQLException {
         return new DirectAuthFlowState(row.getString("flow_id"), row.getString("flow_key_hash"),
                 row.getLong("flow_epoch"), row.getLong("revision"), row.getString("lifecycle"),
@@ -40,6 +59,7 @@ public class DirectAuthFlowRepository {
                 row.getObject("current_refresh_recovery_claim_flow_cookie_generation", Long.class),
                 row.getObject("current_refresh_recovery_claim_refresh_generation", Long.class),
                 row.getObject("current_refresh_recovery_result_flow_cookie_generation", Long.class),
-                row.getObject("current_refresh_recovery_result_refresh_generation", Long.class));
+                row.getObject("current_refresh_recovery_result_refresh_generation", Long.class),
+                row.getString("flow_cookie_hash"), row.getObject("cookie_expires_at", java.time.LocalDateTime.class));
     }
 }

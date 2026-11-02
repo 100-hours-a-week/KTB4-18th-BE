@@ -1,12 +1,15 @@
 package com.muse.meomuneum.auth.contract;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -27,7 +30,7 @@ class DirectAuthOpenApiContractTest {
             new Route("/flow", "get", "200,400,404,409,503",
                     "7ec202552ba5014a905636082af325560a7fade2d149fad81a17b5eb4b8972ba"),
             new Route("/login", "post", "200,202,400,401,403,409,429,503",
-                    "c675750d581364aa4020a34c013c9e9e43b90b57a092df7461f5afcba5aff1e9"),
+                    "870d3a8a32b29e3bfa5091bb2a45c2e0ab1f1ba6b75fb035b06e84e840c61fb1"),
             new Route("/login/operations/{operationId}", "get", "200,202,400,404,503",
                     "c9db2c814e11ecfb815349b4bc5438fd1a378ad1f5591fb2bc0b304110434f5a"),
             new Route("/login/operations/{operationId}/session-recovery", "post", "200,202,400,403,404,409,503",
@@ -56,11 +59,11 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> document = document();
         assertThat(document.get("openapi")).isEqualTo("3.1.0");
         Map<String, Object> info = map(document.get("info"));
-        assertThat(info.get("title")).isEqualTo("Proposed Meomuneum direct-v2 authentication contract");
+        assertThat(info.get("title")).isEqualTo("Meomuneum direct-v2 authentication contract");
         assertThat((String) info.get("description"))
-                .as("contract is clearly marked as a proposal and not implemented")
-                .startsWith("PROPOSAL: Not implemented; not an active runtime API. ");
-        assertThat(info.get("version")).isEqualTo("2.4.0");
+                .as("contract describes the compatible implemented runtime")
+                .startsWith("Direct-v2 authentication wire contract implemented by the compatible backend runtime");
+        assertThat(info.get("version")).isEqualTo("2.4.1");
         assertThat(document.get("servers")).isEqualTo(List.of(Map.of("url", "/api/v1/auth")));
         Map<String, Object> paths = map(document.get("paths"));
         assertThat(paths.keySet()).containsExactlyInAnyOrderElementsOf(
@@ -81,7 +84,7 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> document = document();
         Map<String, Object> components = map(document.get("components"));
         assertThat(hash(components.get("schemas"))).as("schemas, closed error codes and conditions")
-                .isEqualTo("6e9440d9a67929db190e70ffe0d9cab12e7a40542fb932c6b710abaa7de5c261");
+                .isEqualTo("44f66c5c111d0189c2f7a3fe3d6e098c549c1a9aaa24dc92cd3230a974c10bbf");
         assertThat(hash(components.get("securitySchemes"))).as("security schemes")
                 .isEqualTo("788d536415e602398a62e3d9af82426dbc0c2da08e80856c4832ccd6e141ffd6");
         checkReferences(document, document);
@@ -94,7 +97,8 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> schemas = map(map(document.get("components")).get("schemas"));
         String recovery = "/token/refresh/operations/{operationId}/session-recovery";
         String regex = null;
-        for (String[] route : List.of(new String[]{"/token/refresh", "X-Auth-Client-Expires-At"},
+        for (String[] route : List.of(new String[]{"/login", "X-Auth-Client-Expires-At"},
+                new String[]{"/token/refresh", "X-Auth-Client-Expires-At"},
                 new String[]{recovery, "X-Auth-Recovery-Client-Expires-At"})) {
             Map<String, Object> header = parameter(map(map(paths.get(route[0])).get("post")), route[1]);
             assertThat(header.get("required")).isEqualTo(true);
@@ -107,7 +111,7 @@ class DirectAuthOpenApiContractTest {
         for (String valid : List.of("1", "999999999999999", "9007199254740990", "9007199254740991")) {
             assertThat(valid).matches(regex);
         }
-        for (String invalid : List.of("", "0", "01", "-1", "+1", "1,2", "9007199254740992",
+        for (String invalid : List.of("", " ", "0", "01", "-1", "+1", "1.0", "1e3", "1,2", "9007199254740992",
                 "9999999999999999", "10000000000000000")) {
             assertThat(invalid).doesNotMatch(regex);
         }
@@ -177,6 +181,56 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> lease = map(migration.get("loginLeaseRecovery"));
         assertThat((String) lease.get("lateWorkerFence")).contains("owner_token", "compare-and-set");
         assertThat((String) lease.get("recoveryTransition")).contains("owner_token and lease_expires_at NULL");
+    }
+
+    @Test
+    void loginExpiryHeaderAndRouteSpecificClosedErrorEnumAreEnforced() throws Exception {
+        Map<String, Object> document = document();
+        Map<String, Object> login = map(map(map(document.get("paths")).get("/login")).get("post"));
+        Map<String, Object> header = parameter(login, "X-Auth-Client-Expires-At");
+        assertThat(header.get("in")).isEqualTo("header");
+        assertThat(header.get("required")).isEqualTo(true);
+        assertThat(map(header.get("schema")).get("type")).isEqualTo("string");
+        assertThat((String) header.get("description")).contains("Single physical header", "direct-v2 only",
+                "String(sessionStorage.expiresAt)", "operationId", "server never rewrites", "Missing, empty",
+                "whitespace", "duplicate physical headers", "merged values", "400 INVALID_CLIENT_EXPIRY",
+                "without credentials or Set-Cookie", "markerless legacy does not require", "DB strict-future");
+        Map<String, Object> response = map(map(login.get("responses")).get("400"));
+        assertThat(map(response.get("headers"))).doesNotContainKey("Set-Cookie");
+        assertThat((String) response.get("description"))
+                .contains("INVALID_CLIENT_EXPIRY", "no credentials or Set-Cookie", "error precedence is preserved");
+        Map<String, Object> bodySchema = map(map(map(response.get("content")).get("application/json"))
+                .get("schema"));
+        assertThat(bodySchema.get("$ref")).isEqualTo("#/components/schemas/ErrorEnvelopeLogin400");
+        Map<String, Object> schemas = map(map(document.get("components")).get("schemas"));
+        List<?> allOf = (List<?>) map(schemas.get("ErrorEnvelopeLogin400")).get("allOf");
+        Map<String, Object> envelope = map(allOf.get(1));
+        Map<String, Object> properties = map(envelope.get("properties"));
+        List<?> codes = (List<?>) map(properties.get("message")).get("enum");
+        assertLogin400Codes(codes);
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("message", "INVALID_CLIENT_EXPIRY");
+        error.put("data", null);
+        assertThat(error.keySet()).containsExactlyInAnyOrderElementsOf(((List<?>) envelope.get("required")).stream()
+                .map(String.class::cast).toList());
+        assertThat(envelope.get("additionalProperties")).isEqualTo(false);
+        assertThat(codes.contains(error.get("message"))).isTrue();
+        assertThat(map(properties.get("data")).get("type")).isEqualTo("null");
+        assertThat(error.get("data")).isNull();
+        List<Object> mutation = new ArrayList<>(codes);
+        mutation.remove("INVALID_CLIENT_EXPIRY");
+        assertThrows(AssertionError.class, () -> assertLogin400Codes(mutation));
+        for (String added : List.of("UNAPPROVED_ERROR", "CSRF_DENIED")) {
+            List<Object> addedCode = new ArrayList<>(codes);
+            addedCode.add(added);
+            assertThrows(AssertionError.class, () -> assertLogin400Codes(addedCode));
+        }
+    }
+
+    private static void assertLogin400Codes(List<?> codes) {
+        assertThat(codes.stream().map(String.class::cast).toList()).containsExactlyInAnyOrder("INVALID_LOGIN_PROTOCOL",
+                "INVALID_OPERATION_ID",
+                "INVALID_AUTH_FLOW_TUPLE", "INVALID_LOGIN_REQUEST", "INVALID_CLIENT_EXPIRY");
     }
 
     private static Map<String, Object> parameter(Map<String, Object> operation, String name) {

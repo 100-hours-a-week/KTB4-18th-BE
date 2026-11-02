@@ -27,7 +27,7 @@ public class CorsConfig {
                 "X-Refresh-Operation-Id", "Idempotency-Key", "X-Queue-Cancel-Operation-Id", "If-Match",
                 "X-Chat-View-Session", "X-Auth-Login-Protocol", "Cache-Control",
                 "X-Auth-Rebootstrap-Operation-Id", "X-Auth-Refresh-Recovery-Operation-Id",
-                "X-Auth-Flow-Operation-Id"));
+                "X-Auth-Flow-Operation-Id", "X-Auth-Client-Expires-At", "X-Auth-Recovery-Client-Expires-At"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(List.of("X-Auth-Flow-Id", "X-Auth-Flow-Epoch", "X-Auth-Flow-Revision",
                 "ETag", "Retry-After", "X-Auth-Login-Protocol", "X-Login-Operation-Id",
