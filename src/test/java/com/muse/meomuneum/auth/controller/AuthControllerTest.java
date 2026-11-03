@@ -1,5 +1,6 @@
 package com.muse.meomuneum.auth.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -28,7 +29,6 @@ import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
 import com.muse.meomuneum.auth.exception.AuthFlowException;
 import com.muse.meomuneum.auth.exception.AuthFlowExceptionHandler;
-import com.muse.meomuneum.auth.exception.AuthStateConflictException;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 
 class AuthControllerTest {
@@ -94,7 +94,6 @@ class AuthControllerTest {
         when(flowService.commitLogout(any(HttpServletRequest.class), any(HttpHeaders.class), any()))
                 .thenThrow(new AuthFlowException("AUTH_FLOW_EPOCH_STALE"));
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, csrfTokenService, flowService,
-                mock(com.muse.meomuneum.global.security.JwtTokenProvider.class),
                 mock(com.muse.meomuneum.auth.application.RefreshReplayCipher.class)))
                 .setControllerAdvice(new AuthExceptionHandler(), new AuthFlowExceptionHandler(),
                         new GlobalExceptionHandler())
@@ -110,17 +109,11 @@ class AuthControllerTest {
     }
 
     @Test
-    void revokedLoginRecoveryReturnsConflictWithoutIssuingRefreshCookie() throws Exception {
-        when(authService.recoverLogin(any(HttpServletRequest.class), any(HttpHeaders.class)))
-                .thenThrow(new AuthStateConflictException("LOGIN_RECOVERY_UNAVAILABLE"));
-
-        mockMvc.perform(post("/api/v1/auth/login/recovery"))
-                .andExpect(status().isConflict())
-                .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
-                        org.hamcrest.Matchers.containsString("no-store")))
-                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
-                .andExpect(jsonPath("$.message").value("LOGIN_RECOVERY_UNAVAILABLE"));
-
-        verify(authService).recoverLogin(any(HttpServletRequest.class), any(HttpHeaders.class));
+    void legacyLoginRecoveryRouteIsNotRegistered() throws Exception {
+        assertThat(java.util.Arrays.stream(AuthController.class.getDeclaredMethods())
+                .filter(method -> method.isAnnotationPresent(org.springframework.web.bind.annotation.PostMapping.class))
+                .map(method -> method.getAnnotation(org.springframework.web.bind.annotation.PostMapping.class))
+                .flatMap(mapping -> java.util.Arrays.stream(mapping.value()))
+                .noneMatch("/login/recovery"::equals)).isTrue();
     }
 }

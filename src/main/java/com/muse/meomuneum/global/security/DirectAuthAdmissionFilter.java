@@ -67,7 +67,7 @@ public class DirectAuthAdmissionFilter extends OncePerRequestFilter {
             return;
         }
         boolean sensitive = post && (path.equals("/api/v1/auth/login") || path.equals("/api/v1/auth/logout")
-                || path.equals("/api/v1/auth/login/recovery") || path.equals("/api/v1/auth/token/refresh")
+                || path.equals("/api/v1/auth/token/refresh")
                 || path.equals("/api/v1/auth/flows")
                 || path.matches("/api/v1/auth/login/operations/[^/]+/session-recovery")
                 || path.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery"));

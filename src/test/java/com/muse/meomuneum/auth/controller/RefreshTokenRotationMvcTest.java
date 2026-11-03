@@ -22,7 +22,6 @@ import com.muse.meomuneum.auth.application.RefreshReplayCipher;
 import com.muse.meomuneum.auth.application.RefreshTokenCookieFactory;
 import com.muse.meomuneum.auth.config.AuthStateProperties;
 import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
-import com.muse.meomuneum.auth.queue.AuthQueueCookieFactory;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -47,7 +46,7 @@ class RefreshTokenRotationMvcTest {
         AuthService authService = new AuthService(jwt, jwtProperties,
                 new RefreshTokenCookieFactory(jwtProperties, true), mock(UserAuthenticationService.class),
                 mock(org.springframework.context.ApplicationEventPublisher.class), authStateStore,
-                new RefreshReplayCipher(authStateProperties), mock(AuthQueueCookieFactory.class), authStateProperties);
+                new RefreshReplayCipher(authStateProperties), authStateProperties);
         mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, mock(CsrfTokenService.class)))
                 .setControllerAdvice(new AuthExceptionHandler()).build();
     }
