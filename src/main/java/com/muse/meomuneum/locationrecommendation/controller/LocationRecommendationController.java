@@ -1,7 +1,9 @@
 package com.muse.meomuneum.locationrecommendation.controller;
 
+import java.io.IOException;
 import java.util.UUID;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -12,7 +14,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,6 +35,8 @@ import tools.jackson.databind.ObjectMapper;
 @RestController
 @RequestMapping("/api/v1")
 public class LocationRecommendationController {
+    private static final int MAX_REQUEST_BODY_BYTES = 16 * 1024;
+
     private final LocationRecommendationService service;
     private final CurrentUserResolver users;
     private final ObjectMapper mapper;
@@ -59,12 +62,13 @@ public class LocationRecommendationController {
     public ResponseEntity<ApiResponse<RecommendationResponse>> recommend(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestHeader(value = HttpHeaders.CONTENT_TYPE, required = false) String contentType,
-            @RequestBody(required = false) byte[] body,
+            HttpServletRequest request,
             Authentication authentication) {
         requireJson(contentType);
         UUID requestId = LocationRecommendationDtos.parseIdempotencyKey(idempotencyKey);
-        var request = LocationRecommendationDtos.parseRecommendationRequest(parseBody(body));
-        RecommendationResponse response = service.recommend(users.resolve(authentication), requestId, request);
+        var recommendationRequest = LocationRecommendationDtos.parseRecommendationRequest(parseBody(request));
+        RecommendationResponse response = service.recommend(users.resolve(authentication), requestId,
+                recommendationRequest);
         return noStore(ApiResponse.of("location recommendation checked", response));
     }
 
@@ -80,11 +84,11 @@ public class LocationRecommendationController {
     public ResponseEntity<ApiResponse<DisplayClaimResponse>> claim(
             @PathVariable String requestId, @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestHeader(value = HttpHeaders.CONTENT_TYPE, required = false) String contentType,
-            @RequestBody(required = false) byte[] body, Authentication authentication) {
+            HttpServletRequest request, Authentication authentication) {
         requireJson(contentType);
         UUID id = LocationRecommendationDtos.parseRequestId(requestId);
         UUID claimKey = LocationRecommendationDtos.parseIdempotencyKey(idempotencyKey);
-        var context = LocationRecommendationDtos.parseContextTokenRequest(parseBody(body));
+        var context = LocationRecommendationDtos.parseContextTokenRequest(parseBody(request));
         return noStore(ApiResponse.of("location recommendation display claim",
                 service.claim(users.resolve(authentication), id, claimKey, context)));
     }
@@ -93,13 +97,13 @@ public class LocationRecommendationController {
     public ResponseEntity<ApiResponse<CancellationResponse>> cancel(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestHeader(value = HttpHeaders.CONTENT_TYPE, required = false) String contentType,
-            @RequestBody(required = false) byte[] body,
+            HttpServletRequest request,
             Authentication authentication) {
         requireJson(contentType);
         UUID cancellationId = LocationRecommendationDtos.parseIdempotencyKey(idempotencyKey);
-        var request = LocationRecommendationDtos.parseCancellationRequest(parseBody(body));
+        var cancellationRequest = LocationRecommendationDtos.parseCancellationRequest(parseBody(request));
         return noStore(ApiResponse.of("location recommendation cancelled",
-                service.cancel(users.resolve(authentication), cancellationId, request)));
+                service.cancel(users.resolve(authentication), cancellationId, cancellationRequest)));
     }
 
     private <T> ResponseEntity<ApiResponse<T>> noStore(ApiResponse<T> response) {
@@ -119,12 +123,23 @@ public class LocationRecommendationController {
         }
     }
 
-    private JsonNode parseBody(byte[] body) {
+    private JsonNode parseBody(HttpServletRequest request) {
         try {
-            return body == null ? null : mapper.readTree(body);
-        } catch (JacksonException exception) {
+            if (request.getContentLengthLong() > MAX_REQUEST_BODY_BYTES) {
+                throw requestBodyTooLarge();
+            }
+            byte[] body = request.getInputStream().readNBytes(MAX_REQUEST_BODY_BYTES + 1);
+            if (body.length > MAX_REQUEST_BODY_BYTES) {
+                throw requestBodyTooLarge();
+            }
+            return body.length == 0 ? null : mapper.readTree(body);
+        } catch (IOException | JacksonException exception) {
             throw new LocationRecommendationException(400, "INVALID_REQUEST", "invalid request");
         }
+    }
+
+    private LocationRecommendationException requestBodyTooLarge() {
+        return new LocationRecommendationException(413, "PAYLOAD_TOO_LARGE", "request body too large");
     }
 
     private LocationRecommendationException unsupportedMediaType() {

@@ -109,6 +109,19 @@ class LocationRecommendationApiIntegrationTest {
     }
 
     @Test
+    void rejectsRequestBodiesLargerThanSixteenKilobytesBeforeRecommendation() throws Exception {
+        String oversizedBody = " ".repeat(16 * 1024 + 1);
+
+        mvc.perform(post("/api/v1/location-recommendations").header("Idempotency-Key", REQUEST_ID.toString())
+                .contentType(MediaType.APPLICATION_JSON).content(oversizedBody))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.message").value("PAYLOAD_TOO_LARGE"))
+                .andExpect(jsonPath("$.data").isEmpty());
+
+        verify(service, never()).recommend(anyLong(), any(), any());
+    }
+
+    @Test
     void rejectsPollTriggerAndReturnsStableUnsupportedMediaTypeEnvelope() throws Exception {
         String pollBody = """
                 {"latitude":37.5,"longitude":127,"accuracyMeters":0,"sampleAgeMs":0,
