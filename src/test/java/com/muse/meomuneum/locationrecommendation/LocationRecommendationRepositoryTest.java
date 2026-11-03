@@ -241,7 +241,7 @@ class LocationRecommendationRepositoryTest {
         assertThat(newAdmission.invokeAi()).isTrue();
         assertThat(repository.get(userId, newRequestId).status()).isEqualTo("PROCESSING");
         assertThat(repository.context(userId).activeRequestId()).isEqualTo(newRequestId);
-        assertThat(repository.get(userId, oldRequestId).status()).isEqualTo("PROCESSING");
+        assertThat(repository.get(userId, oldRequestId).status()).isEqualTo("SUPERSEDED");
     }
 
     @Test
