@@ -245,7 +245,7 @@ sourceSets {
 			include 'com/muse/meomuneum/global/response/**', 'com/muse/meomuneum/global/web/**'
 			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims', 'JwtAuthenticationFilter',
 				'SecurityErrorResponseWriter', 'SecurityErrorCode', 'RequestOriginValidationFilter',
-				'AuthSessionIds', 'ActiveUserLookup', 'AccessSessionAuthority', 'SessionPair', 'SessionDecision',
+				'AuthSessionIds', 'ActiveUserLookup', 'AccessSessionAuthority', 'AccessSessionGuard', 'SessionPair', 'SessionDecision',
 				'InternalSessionProtocol', 'AuthSessionRevokedEvent', 'AuthRevocationProtocol'].each { name ->
 				include "com/muse/meomuneum/global/security/${name}.java"
 			}

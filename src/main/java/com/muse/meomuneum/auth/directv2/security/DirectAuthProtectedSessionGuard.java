@@ -8,9 +8,11 @@ import org.springframework.stereotype.Component;
 import com.muse.meomuneum.auth.directv2.application.DirectAuthTransactionRunner;
 import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
 import com.muse.meomuneum.auth.directv2.repository.DirectAuthProjectionRepository;
+import com.muse.meomuneum.global.security.AccessSessionAuthority;
+import com.muse.meomuneum.global.security.AccessSessionGuard;
 
 @Component
-public class DirectAuthProtectedSessionGuard {
+public class DirectAuthProtectedSessionGuard implements AccessSessionGuard {
     private final JdbcTemplate jdbc;
     private final DirectAuthTransactionRunner transactions;
     private final DirectAuthProjectionRepository projections;
@@ -40,5 +42,15 @@ public class DirectAuthProtectedSessionGuard {
             }
             return canonical.get();
         });
+    }
+
+    @Override
+    public AccessSessionAuthority.Decision verifySession(String sid,
+            Supplier<AccessSessionAuthority.Decision> canonical) {
+        try {
+            return check(sid, canonical);
+        } catch (DirectAuthFailure unavailable) {
+            throw new AccessSessionGuard.Unavailable();
+        }
     }
 }

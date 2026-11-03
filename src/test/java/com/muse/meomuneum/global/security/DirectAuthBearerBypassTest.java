@@ -15,6 +15,28 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 class DirectAuthBearerBypassTest {
     @Test
+    void sharedGuardFailureRejectsBeforeCanonicalAuthority() throws Exception {
+        var provider = mock(JwtTokenProvider.class);
+        when(provider.parseAccessToken("valid")).thenReturn(new TokenClaims(1L, java.util.List.of("USER"),
+                java.time.Instant.now().plusSeconds(60), "session", "token"));
+        var authority = mock(AccessSessionAuthority.class);
+        AccessSessionGuard guard = (sid, canonical) -> {
+            throw new AccessSessionGuard.Unavailable();
+        };
+        var request = new MockHttpServletRequest("GET", "/api/v1/users/me");
+        request.addHeader("Authorization", "Bearer valid");
+        var response = new MockHttpServletResponse();
+        var chain = new MockFilterChain();
+        new JwtAuthenticationFilter(provider, new SecurityErrorResponseWriter(new ObjectMapper()),
+                mock(ActiveUserLookup.class), authority, guard).doFilter(request, response, chain);
+        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getHeader("Retry-After")).isEqualTo("1");
+        assertThat(chain.getRequest()).isNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verifyNoInteractions(authority);
+    }
+
+    @Test
     void onlyExactProofBasedRoutesBypassBearer() throws Exception {
         String[][] allowed = {{"GET", "/api/v1/auth/flow"}, {"GET", "/api/v1/auth/flow/current-operation"},
                 {"GET", "/api/v1/auth/login/operations/id"},
