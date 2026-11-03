@@ -206,18 +206,12 @@ public class AuthFlowService {
             if (snapshot == null) {
                 throw new AuthStateUnavailableException();
             }
-            // Hazelcast and other network work happens after the short authority read commits.
-            // Every write below must compare the captured flow epoch and revision again.
             return mutation.apply(snapshot);
         } catch (DataAccessException exception) {
             throw new AuthStateUnavailableException(exception);
         }
     }
 
-    /**
-     * Admission and logout serialize on the same flow row. If logout commits first, the ticket pointer is gone and
-     * Hazelcast cannot promote the stale ticket to READY.
-     */
     public boolean isQueueTicketCurrent(String ticketId) {
         try {
             Boolean current = queryExists("""
@@ -558,7 +552,6 @@ public class AuthFlowService {
                           AND f.active_session_sid = s.sid
                         """, targetId, flowId));
             }
-            // Session activation is already materialized before the DB pointer commits.
             return true;
         } catch (DataAccessException exception) {
             throw new AuthStateUnavailableException(exception);
@@ -763,45 +756,6 @@ public class AuthFlowService {
         }
     }
 
-    public FlowSnapshot assertLoginRecoverySession(HttpServletRequest request, Long userId, String sid,
-            HttpHeaders headers) {
-        String cookie = cookieValue(request, FLOW_COOKIE_NAME);
-        String flowId = request.getHeader("X-Auth-Flow-Id");
-        String epoch = request.getHeader("X-Auth-Flow-Epoch");
-        if (cookie == null || flowId == null || epoch == null || sid == null) {
-            throw new AuthFlowException("AUTH_FLOW_REQUIRED");
-        }
-        try {
-            FlowSnapshot current = transactions.execute(status -> {
-                FlowRow row = findFlow(hashCookie(cookie), false);
-                if (row == null || !row.flowId().equals(flowId)) {
-                    throw new AuthFlowException("AUTH_FLOW_COOKIE_INVALID");
-                }
-                validateFlowTuple(row, flowId, epoch);
-                if (!sid.equals(row.sessionSid()) || !"AUTHENTICATED".equals(row.lifecycle())) {
-                    throw new AuthFlowException("AUTH_SESSION_INVALID");
-                }
-                Boolean active = queryExists("""
-                        SELECT 1 FROM auth_browser_sessions
-                        WHERE sid = ? AND flow_id = ? AND flow_epoch = ? AND user_id = ?
-                          AND status = 'ACTIVE' AND idle_expires_at > CURRENT_TIMESTAMP(6)
-                          AND absolute_expires_at > CURRENT_TIMESTAMP(6)
-                        """, sid, flowId, row.epoch(), userId);
-                if (!Boolean.TRUE.equals(active)) {
-                    throw new AuthFlowException("AUTH_SESSION_INVALID");
-                }
-                return row.snapshot("EXISTING");
-            });
-            if (current == null) {
-                throw new AuthStateUnavailableException();
-            }
-            setTupleHeaders(headers, current);
-            return current;
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
     public boolean isConsumedRefreshToken(String sid, String tokenHash) {
         try {
             Boolean consumed = queryExists("""
@@ -850,8 +804,6 @@ public class AuthFlowService {
                     if (!savedHash.equals(requestHash)) {
                         throw new AuthFlowException("AUTH_OPERATION_ID_REUSED");
                     }
-                    // A committed operation is replayable only through replayCommittedRefresh,
-                    // which also verifies that its result is still the DB-current generation.
                     return false;
                 }
                 SessionRow session = findSession(flow.sessionSid(), false);

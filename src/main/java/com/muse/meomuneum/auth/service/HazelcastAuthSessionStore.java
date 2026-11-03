@@ -1,40 +1,37 @@
 package com.muse.meomuneum.auth.service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.beans.factory.ObjectProvider;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
-import com.hazelcast.map.listener.EntryExpiredListener;
 import com.muse.meomuneum.auth.config.AuthStateProperties;
 import com.muse.meomuneum.auth.exception.AuthStateConflictException;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 
-/** Owns session-map persistence, capacity, and per-user session-index calls. */
 final class HazelcastAuthSessionStore {
     private static final String SESSIONS = "auth-sessions-v2";
     private static final String LOGIN_SESSION_INDEX = "auth-login-session-index-v2";
-    private static final int RECOVERY_BATCH_SIZE = 100;
     private static final long LOGIN_RECOVERY_WINDOW_SECONDS = 900;
 
     interface Hooks {
-        void assertLoginClaim(String ticketId, String operationId, String claimId, Long userId);
-
         void indexLoginSession(HazelcastInstance hz, String loginOperationId, String sid,
                 Instant refreshExpiresAt);
 
         void promoteUserSlot(Long userId, String sid);
 
-        String hash(String value);
     }
 
     private final AuthStateProperties properties;
@@ -42,11 +39,7 @@ final class HazelcastAuthSessionStore {
     private final HazelcastAuthStateAccess stateAccess;
     private final Hooks hooks;
     private final Function<String, String> hash;
-    private final AtomicInteger activeSessionCount = new AtomicInteger();
-    private final Set<String> countedSessionIds = ConcurrentHashMap.newKeySet();
-    private final Object sessionCapacityLock = new Object();
-    private volatile boolean sessionCountRestored;
-    private boolean sessionExpiryListenerRegistered;
+    private final AuthSessionCapacity sessionCapacity;
 
     HazelcastAuthSessionStore(ObjectProvider<HazelcastInstance> hazelcastProvider,
             AuthStateProperties properties, AuthUserSessionIndexStore userSessionIndexStore,
@@ -55,36 +48,26 @@ final class HazelcastAuthSessionStore {
         this.userSessionIndexStore = userSessionIndexStore;
         this.stateAccess = stateAccess;
         this.hooks = hooks;
-        this.hash = hooks::hash;
+        this.hash = this::hmac;
+        this.sessionCapacity = new AuthSessionCapacity(properties);
     }
 
     HazelcastAuthStateStore.AuthSession createSession(Long userId, String sid, String currentJti,
             String refreshHash, String loginOperationId, String encryptedRefreshToken, Instant accessExpiresAt,
-            Instant refreshExpiresAt, String userAgentSummary, String ticketId, String ownerClaimId,
-            Instant provisioningLeaseUntil) {
-        if (!sessionCountRestored) {
+            Instant refreshExpiresAt, String userAgentSummary, String ownerClaimId) {
+        if (!sessionCapacity.restored()) {
             throw new AuthStateUnavailableException();
         }
         HazelcastInstance hz = stateAccess.requireHazelcast();
         IMap<String, HazelcastAuthStateStore.AuthSession> sessions = hz.getMap(SESSIONS);
         HazelcastAuthStateStore.AuthSession existing = sessions.get(sid);
         if (existing != null) {
-            if (isCanonicalLoginSession(existing, userId, loginOperationId, ticketId)) {
+            if (isCanonicalLoginSession(existing, userId, loginOperationId, ownerClaimId)) {
                 return existing;
             }
-            if (isExpiredProvisioningForTicket(existing, userId, loginOperationId, ticketId, Instant.now())
-                    && sessions.remove(sid, existing)) {
-                releaseSessionCapacity(sid);
-                releaseUserSlot(userId, sid);
-            } else {
-                throw new AuthStateConflictException("LOGIN_SESSION_CONFLICT");
-            }
+            throw new AuthStateConflictException("LOGIN_SESSION_CONFLICT");
         }
-        synchronized (sessionCapacityLock) {
-            if (activeSessionCount.get() >= properties.globalSessionCapacity()) {
-                throw new AuthStateUnavailableException();
-            }
-        }
+        sessionCapacity.assertAvailable();
         Instant now = Instant.now();
         Instant idleExpiry = min(now.plusSeconds(properties.sessionIdleSeconds()), refreshExpiresAt);
         String currentJtiHash = jtiHash(currentJti);
@@ -92,8 +75,7 @@ final class HazelcastAuthSessionStore {
                 userAgentSummary, HazelcastAuthStateStore.SessionStatus.PROVISIONING, currentJtiHash, refreshHash,
                 null, null, null, null, null, loginOperationId,
                 now.plusSeconds(LOGIN_RECOVERY_WINDOW_SECONDS), 1, refreshHash, encryptedRefreshToken, 1, now, now,
-                accessExpiresAt, idleExpiry, refreshExpiresAt, null, ticketId, ownerClaimId,
-                provisioningLeaseUntil);
+                accessExpiresAt, idleExpiry, refreshExpiresAt, null, null, ownerClaimId, null);
         userSessionIndexStore.reserve(userId, sid);
         boolean capacityReserved = false;
         try {
@@ -101,29 +83,18 @@ final class HazelcastAuthSessionStore {
                     ttlSeconds(idleExpiry), TimeUnit.SECONDS);
             if (raced != null) {
                 HazelcastAuthStateStore.AuthSession latest = sessions.get(sid);
-                if (latest != null && isCanonicalLoginSession(latest, userId, loginOperationId, ticketId)) {
+                if (latest != null && isCanonicalLoginSession(latest, userId, loginOperationId, ownerClaimId)) {
                     return latest;
                 }
                 throw new AuthStateConflictException("LOGIN_SESSION_CONFLICT");
             }
-            synchronized (sessionCapacityLock) {
-                if (activeSessionCount.incrementAndGet() > properties.globalSessionCapacity()) {
-                    activeSessionCount.decrementAndGet();
-                    sessions.remove(sid, provisioning);
-                    throw new AuthStateUnavailableException();
-                }
-                countedSessionIds.add(sid);
-                capacityReserved = true;
-            }
+            sessionCapacity.reserve(sid);
+            capacityReserved = true;
             HazelcastAuthStateStore.AuthSession active = new HazelcastAuthStateStore.AuthSession(userId, sid,
                     userAgentSummary, HazelcastAuthStateStore.SessionStatus.ACTIVE, currentJtiHash, refreshHash,
                     null, null, null, null, null, loginOperationId,
                     now.plusSeconds(LOGIN_RECOVERY_WINDOW_SECONDS), 1, refreshHash, encryptedRefreshToken, 1, now,
-                    now, accessExpiresAt, idleExpiry, refreshExpiresAt, null, ticketId, ownerClaimId,
-                    provisioningLeaseUntil);
-            if (ticketId != null) {
-                hooks.assertLoginClaim(ticketId, loginOperationId, ownerClaimId, userId);
-            }
+                    now, accessExpiresAt, idleExpiry, refreshExpiresAt, null, null, ownerClaimId, null);
             if (!sessions.replace(sid, provisioning, active)) {
                 throw new AuthStateUnavailableException();
             }
@@ -148,23 +119,14 @@ final class HazelcastAuthSessionStore {
     }
 
     private boolean isCanonicalLoginSession(HazelcastAuthStateStore.AuthSession session, Long userId,
-            String operationId, String ticketId) {
+            String operationId, String ownerClaimId) {
         return session.status() == HazelcastAuthStateStore.SessionStatus.ACTIVE
                 && java.util.Objects.equals(session.userId(), userId)
                 && java.util.Objects.equals(session.loginOperationId(), operationId)
-                && java.util.Objects.equals(session.ticketId(), ticketId)
+                && java.util.Objects.equals(session.ownerClaimId(), ownerClaimId)
                 && session.loginRecoveryUntil() != null && session.loginRecoveryUntil().isAfter(Instant.now())
                 && session.currentRefreshHash().equals(session.loginRecoveryRefreshHash())
                 && session.encryptedLoginRecoveryRefreshToken() != null;
-    }
-
-    private boolean isExpiredProvisioningForTicket(HazelcastAuthStateStore.AuthSession session, Long userId,
-            String operationId, String ticketId, Instant now) {
-        return session.status() == HazelcastAuthStateStore.SessionStatus.PROVISIONING
-                && java.util.Objects.equals(session.userId(), userId)
-                && java.util.Objects.equals(session.loginOperationId(), operationId)
-                && java.util.Objects.equals(session.ticketId(), ticketId)
-                && session.provisioningLeaseUntil() != null && !session.provisioningLeaseUntil().isAfter(now);
     }
 
     boolean isLoginRecoveryValid(HazelcastAuthStateStore.AuthSession session, Instant now) {
@@ -235,33 +197,7 @@ final class HazelcastAuthSessionStore {
     }
 
     void restoreSessionCount(IMap<String, HazelcastAuthStateStore.AuthSession> sessions) {
-        synchronized (sessionCapacityLock) {
-            if (sessionCountRestored) {
-                return;
-            }
-            if (!sessionExpiryListenerRegistered) {
-                sessions.addEntryListener((EntryExpiredListener<String, HazelcastAuthStateStore.AuthSession>) event -> {
-                    synchronized (sessionCapacityLock) {
-                        if (countedSessionIds.remove(event.getKey())) {
-                            activeSessionCount.decrementAndGet();
-                        }
-                    }
-                }, true);
-                sessionExpiryListenerRegistered = true;
-            }
-            int count = 0;
-            var iterator = sessions.iterator(RECOVERY_BATCH_SIZE);
-            while (iterator.hasNext()) {
-                Map.Entry<String, HazelcastAuthStateStore.AuthSession> entry = iterator.next();
-                count++;
-                countedSessionIds.add(entry.getKey());
-                if (count > properties.globalSessionCapacity()) {
-                    throw new AuthStateUnavailableException();
-                }
-            }
-            activeSessionCount.set(count);
-            sessionCountRestored = true;
-        }
+        sessionCapacity.restore(sessions);
     }
 
     long revokedSessionRetentionSeconds() {
@@ -269,16 +205,7 @@ final class HazelcastAuthSessionStore {
     }
 
     void releaseSessionCapacity(String sid) {
-        synchronized (sessionCapacityLock) {
-            if (sessionCountRestored && countedSessionIds.remove(sid)) {
-                int remaining = activeSessionCount.decrementAndGet();
-                if (remaining < 0) {
-                    activeSessionCount.incrementAndGet();
-                    countedSessionIds.add(sid);
-                    throw new AuthStateUnavailableException();
-                }
-            }
-        }
+        sessionCapacity.release(sid);
     }
 
     List<HazelcastAuthStateStore.AuthSession> activeSessions(Long userId) {
@@ -316,5 +243,19 @@ final class HazelcastAuthSessionStore {
 
     private long ttlSeconds(Instant expiry) {
         return Math.max(1, Duration.between(Instant.now(), expiry).toSeconds());
+    }
+
+    private String hmac(String value) {
+        String key = properties.hmacKey();
+        if (key == null || key.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new AuthStateUnavailableException();
+        }
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return java.util.HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException exception) {
+            throw new AuthStateUnavailableException(exception);
+        }
     }
 }

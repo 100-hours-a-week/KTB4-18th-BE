@@ -36,10 +36,8 @@ import com.muse.meomuneum.auth.application.AuthFlowService.FlowSnapshot;
 import com.muse.meomuneum.auth.application.AuthFlowService.LogoutReceipt;
 import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.auth.application.CsrfTokenService;
-import com.muse.meomuneum.auth.application.QueuedLoginService.LoginResult;
 import com.muse.meomuneum.auth.application.RefreshReplayCipher;
-import com.muse.meomuneum.auth.dto.LoginRequest;
-import com.muse.meomuneum.auth.dto.TokenResponse;
+import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.global.config.SecurityConfig;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
@@ -68,6 +66,9 @@ class RequestOriginValidationIntegrationTest {
     @MockitoBean
     private RefreshReplayCipher replayCipher;
 
+    @MockitoBean
+    private DirectAuthProtectedSessionGuard directAuthProtectedSessionGuard;
+
     @BeforeEach
     void configureFlowBoundary() {
         doAnswer(invocation -> {
@@ -92,8 +93,7 @@ class RequestOriginValidationIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
 
-        verify(authService, never()).login(any(LoginRequest.class), any(HttpServletRequest.class),
-                any(HttpHeaders.class));
+        verify(authService, never()).refresh(any(HttpServletRequest.class), any(HttpHeaders.class));
     }
 
     @Test
@@ -104,34 +104,7 @@ class RequestOriginValidationIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
 
-        verify(authService, never()).login(any(LoginRequest.class), any(HttpServletRequest.class),
-                any(HttpHeaders.class));
-    }
-
-    @Test
-    void acceptsConfiguredOriginForLoginAndKeepsCookieResponseContract() throws Exception {
-        when(authService.loginWithTicket(any(LoginRequest.class), any(HttpServletRequest.class),
-                any(HttpHeaders.class)))
-                .thenAnswer(invocation -> {
-                    HttpHeaders headers = invocation.getArgument(2);
-                    headers.add(HttpHeaders.SET_COOKIE, "refresh_token=test-only; Path=/api/v1/auth; HttpOnly");
-                    return new LoginResult(new TokenResponse("test-access", 3600), "queue-ticket-id");
-                });
-
-        mockMvc.perform(post("/api/v1/auth/login")
-                .header(HttpHeaders.ORIGIN, "http://localhost:5173")
-                .header("X-Auth-Flow-Id", "123e4567-e89b-42d3-a456-426614174000")
-                .header("X-Auth-Flow-Epoch", "1")
-                .header("Idempotency-Key", "123e4567-e89b-42d3-a456-426614174001")
-                .cookie(new Cookie("MEO_AUTH_FLOW", "flow-cookie"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"test@example.com\",\"password\":\"Testpass1!\"}"))
-                .andExpect(status().is2xxSuccessful())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE,
-                        org.hamcrest.Matchers.containsString("Path=/api/v1/auth")));
-
-        verify(authService).loginWithTicket(any(LoginRequest.class), any(HttpServletRequest.class),
-                any(HttpHeaders.class));
+        verify(authService, never()).refresh(any(HttpServletRequest.class), any(HttpHeaders.class));
     }
 
     @Test
@@ -169,9 +142,6 @@ class RequestOriginValidationIntegrationTest {
 
     @Test
     void acceptsConfiguredOriginForRefreshAndLogout() throws Exception {
-        when(authService.refresh(any(HttpServletRequest.class), any(HttpHeaders.class)))
-                .thenReturn(new TokenResponse("test-access", 3600));
-
         mockMvc.perform(post("/api/v1/auth/token/refresh")
                 .with(csrf())
                 .header(HttpHeaders.ORIGIN, "http://localhost:5173")

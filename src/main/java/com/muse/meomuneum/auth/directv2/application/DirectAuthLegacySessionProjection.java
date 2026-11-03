@@ -69,7 +69,7 @@ public class DirectAuthLegacySessionProjection {
             }
             store.createSession(session.userId(), session.sid(), session.accessJti(), session.refreshHash(), null,
                     session.encryptedRefresh(), session.accessExpiry().toInstant(ZoneOffset.UTC),
-                    session.idleExpiry().toInstant(ZoneOffset.UTC), "direct-v2", null, "direct-v2", null);
+                    session.idleExpiry().toInstant(ZoneOffset.UTC), "direct-v2", "direct-v2");
             if (session.refreshGeneration() != 1) {
                 throw DirectAuthFailure.unavailable();
             }

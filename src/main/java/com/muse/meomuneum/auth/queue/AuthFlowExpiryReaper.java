@@ -28,13 +28,4 @@ public class AuthFlowExpiryReaper {
             log.warn("Auth flow expiry cleanup deferred type={}", failure.getClass().getSimpleName());
         }
     }
-
-    @Scheduled(fixedDelayString = "${auth.flow.queue-create-reaper-interval:5s}")
-    public void reapStaleQueueCreateReservations() {
-        try {
-            flowService.reapStaleQueueCreateReservations(BATCH_SIZE);
-        } catch (RuntimeException failure) {
-            log.warn("Auth queue create cleanup deferred type={}", failure.getClass().getSimpleName());
-        }
-    }
 }

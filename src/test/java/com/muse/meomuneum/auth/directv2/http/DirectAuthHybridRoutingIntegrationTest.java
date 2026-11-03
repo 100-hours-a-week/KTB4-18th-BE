@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import jakarta.servlet.http.Cookie;
@@ -84,12 +85,9 @@ class DirectAuthHybridRoutingIntegrationTest {
     }
 
     @Test
-    void directLegacyRecoveryIsRejectedBeforeCsrfAndNeverDelegates() throws Exception {
-        var response = mvc(false).perform(post("/api/v1/auth/login/recovery")
-                .header("X-Auth-Login-Protocol", "direct-v2")).andReturn().getResponse();
-        assertThat(response.getStatus()).isEqualTo(400);
-        assertThat(response.getContentAsString()).contains("INVALID_LOGIN_PROTOCOL");
-        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+    void legacyLoginRecoveryRouteIsNotRegistered() throws Exception {
+        var response = mvc(false).perform(get("/api/v1/auth/login/recovery")).andReturn().getResponse();
+        assertThat(response.getStatus()).isEqualTo(404);
         verifyNoInteractions(legacy, direct);
     }
 

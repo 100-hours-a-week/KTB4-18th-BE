@@ -24,8 +24,6 @@ import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.response.ApiResponse;
-import com.muse.meomuneum.global.security.JwtTokenProvider;
-import com.muse.meomuneum.global.security.TokenClaims;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -37,7 +35,6 @@ public class AuthController {
     private final AuthService authService;
     private final CsrfTokenService csrfTokenService;
     private final AuthFlowService authFlowService;
-    private final JwtTokenProvider jwtTokenProvider;
     private final RefreshReplayCipher replayCipher;
 
     @Autowired(required = false)
@@ -45,18 +42,16 @@ public class AuthController {
 
     @Autowired
     public AuthController(AuthService authService, CsrfTokenService csrfTokenService,
-            AuthFlowService authFlowService, JwtTokenProvider jwtTokenProvider, RefreshReplayCipher replayCipher) {
+            AuthFlowService authFlowService, RefreshReplayCipher replayCipher) {
         this.authService = authService;
         this.csrfTokenService = csrfTokenService;
         this.authFlowService = authFlowService;
-        this.jwtTokenProvider = jwtTokenProvider;
         this.replayCipher = replayCipher;
 
     }
 
-    /** Keeps the standalone controller unit tests independent of the persistence boundary. */
     public AuthController(AuthService authService, CsrfTokenService csrfTokenService) {
-        this(authService, csrfTokenService, null, null, null);
+        this(authService, csrfTokenService, null, null);
     }
 
     @GetMapping("/token/csrf")
@@ -117,24 +112,6 @@ public class AuthController {
         }
     }
 
-    @PostMapping("/login/recovery")
-    public ResponseEntity<ApiResponse<TokenResponse>> recoverLogin(HttpServletRequest request) {
-        if (request.getHeader("X-Auth-Login-Protocol") != null) {
-            HttpHeaders rejected = new HttpHeaders();
-            rejected.setCacheControl("no-store");
-            return new ResponseEntity<>(ApiResponse.<TokenResponse>of("INVALID_LOGIN_PROTOCOL", null), rejected,
-                    HttpStatus.BAD_REQUEST);
-        }
-        HttpHeaders headers = new HttpHeaders();
-        headers.setCacheControl("no-store");
-        TokenResponse response = authService.recoverLogin(request, headers);
-        if (authFlowService != null) {
-            TokenClaims claims = jwtTokenProvider.parseAccessToken(response.accessToken());
-            authFlowService.assertLoginRecoverySession(request, claims.userId(), claims.sessionId(), headers);
-        }
-        return new ResponseEntity<>(ApiResponse.of("login recovered", response), headers, HttpStatus.OK);
-    }
-
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request) {
         if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))) {
@@ -152,7 +129,6 @@ public class AuthController {
             try {
                 authService.logout(request, headers);
             } catch (RuntimeException cleanupDeferred) {
-                // The committed DB revocation is authoritative; the outbox retries AP cleanup.
             }
             authFlowService.expireAnonymousCookies(headers);
             return new ResponseEntity<>(ApiResponse.of("logout committed", new LogoutResponse(receipt)), headers,
