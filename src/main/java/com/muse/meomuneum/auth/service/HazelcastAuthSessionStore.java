@@ -76,7 +76,7 @@ final class HazelcastAuthSessionStore {
                 userAgentSummary, HazelcastAuthStateStore.SessionStatus.PROVISIONING, currentJtiHash, refreshHash,
                 null, null, null, null, null, loginOperationId,
                 now.plusSeconds(LOGIN_RECOVERY_WINDOW_SECONDS), 1, refreshHash, encryptedRefreshToken, 1, now, now,
-                accessExpiresAt, idleExpiry, refreshExpiresAt, null, null, ownerClaimId, null);
+                accessExpiresAt, idleExpiry, refreshExpiresAt, null, ownerClaimId);
         userSessionIndexStore.reserve(userId, sid);
         boolean capacityReserved = false;
         try {
@@ -95,7 +95,7 @@ final class HazelcastAuthSessionStore {
                     userAgentSummary, HazelcastAuthStateStore.SessionStatus.ACTIVE, currentJtiHash, refreshHash,
                     null, null, null, null, null, loginOperationId,
                     now.plusSeconds(LOGIN_RECOVERY_WINDOW_SECONDS), 1, refreshHash, encryptedRefreshToken, 1, now,
-                    now, accessExpiresAt, idleExpiry, refreshExpiresAt, null, null, ownerClaimId, null);
+                    now, accessExpiresAt, idleExpiry, refreshExpiresAt, null, ownerClaimId);
             if (!sessions.replace(sid, provisioning, active)) {
                 throw new AuthStateUnavailableException();
             }

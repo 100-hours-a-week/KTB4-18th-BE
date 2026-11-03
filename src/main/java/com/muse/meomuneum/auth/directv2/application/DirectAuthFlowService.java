@@ -86,7 +86,7 @@ public class DirectAuthFlowService {
             throw new DirectAuthFailure(404, "AUTH_FLOW_NOT_FOUND");
         }
         if (valid.size() == 1) {
-            return rejectQueued(valid.values().iterator().next());
+            return requireUsableFlow(valid.values().iterator().next());
         }
         if (bindingAllowed) {
             var keys = new HashSet<String>();
@@ -98,15 +98,15 @@ public class DirectAuthFlowService {
                 }
             }
             if (valid.size() == 1) {
-                return rejectQueued(valid.values().iterator().next());
+                return requireUsableFlow(valid.values().iterator().next());
             }
         }
         throw new DirectAuthFailure(404, "AUTH_FLOW_NOT_FOUND");
     }
 
-    private DirectAuthFlowState rejectQueued(DirectAuthFlowState flow) {
-        if ("QUEUED".equals(flow.lifecycle())) {
-            throw DirectAuthFailure.conflict("AUTH_FLOW_LEGACY_QUEUED");
+    private DirectAuthFlowState requireUsableFlow(DirectAuthFlowState flow) {
+        if (!"ANONYMOUS".equals(flow.lifecycle()) && !"AUTHENTICATED".equals(flow.lifecycle())) {
+            throw new DirectAuthFailure(404, "AUTH_FLOW_NOT_FOUND");
         }
         return flow;
     }

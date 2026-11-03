@@ -42,8 +42,7 @@ public class AuthFlowService {
     }
 
     public record FlowSnapshot(String flowId, long flowEpoch, long revision, String lifecycle,
-            boolean authenticated, String currentTicketId, String activeSessionSid,
-            String rebootstrapReason) {
+            boolean authenticated, String activeSessionSid, String rebootstrapReason) {
     }
 
     public record BootstrapResult(FlowSnapshot flow, String cookieValue, long maxAgeSeconds,
@@ -62,30 +61,17 @@ public class AuthFlowService {
             Instant idleExpiry, Instant absoluteExpiry) {
     }
 
-    public record QueueCancelReceipt(String operationId, boolean committed, long flowEpoch, long revision) {
-    }
-
-    public record QueueIntentReservation(String intentId, String state, String ticketId, long reservedRevision) {
-    }
-
     @FunctionalInterface
     public interface FlowMutation<T> {
         T apply(FlowSnapshot flow);
     }
 
     private record FlowRow(String flowId, String cookieHash, long epoch, long revision, String lifecycle,
-            String sessionSid, String ticketId, Instant cookieExpiresAt) {
+            String sessionSid, Instant cookieExpiresAt) {
         FlowSnapshot snapshot(String reason) {
             return new FlowSnapshot(flowId, epoch, revision, lifecycle, "AUTHENTICATED".equals(lifecycle),
-                    ticketId, sessionSid, reason);
+                    sessionSid, reason);
         }
-    }
-
-    private record QueueOperation(String requestHash, String intentId) {
-    }
-
-    private record QueueIntent(String intentId, String flowId, long flowEpoch, String requestHash, String state,
-            String ticketId) {
     }
 
     private final JdbcTemplate jdbc;
@@ -212,19 +198,6 @@ public class AuthFlowService {
         }
     }
 
-    public boolean isQueueTicketCurrent(String ticketId) {
-        try {
-            Boolean current = queryExists("""
-                    SELECT 1 FROM auth_browser_flows
-                    WHERE current_ticket_id = ? AND lifecycle = 'QUEUED'
-                      AND cookie_expires_at > CURRENT_TIMESTAMP(6)
-                    """, ticketId);
-            return Boolean.TRUE.equals(current);
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
     public void assertFlowSnapshotCurrent(FlowSnapshot expected) {
         try {
             FlowSnapshot current = transactions.execute(status -> {
@@ -232,272 +205,9 @@ public class AuthFlowService {
                 return row == null ? null : row.snapshot("EXISTING");
             });
             if (current == null || current.flowEpoch() != expected.flowEpoch()
-                    || current.revision() != expected.revision()
-                    || !java.util.Objects.equals(current.currentTicketId(), expected.currentTicketId())) {
+                    || current.revision() != expected.revision()) {
                 throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
             }
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
-    public FlowSnapshot setQueueTicket(FlowSnapshot flow, String ticketId) {
-        try {
-            FlowSnapshot updated = transactions.execute(status -> {
-                Instant now = Instant.now();
-                int changed = jdbc.update("""
-                        UPDATE auth_browser_flows
-                        SET current_ticket_id = ?, lifecycle = 'QUEUED', revision = revision + 1, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ? AND revision = ?
-                          AND current_ticket_id IS NULL
-                        """, ticketId, timestamp(now), flow.flowId(), flow.flowEpoch(), flow.revision());
-                if (changed != 1) {
-                    throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
-                }
-                return readFlowById(flow.flowId());
-            });
-            if (updated == null) {
-                throw new AuthStateUnavailableException();
-            }
-            return updated;
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
-    public QueueIntentReservation reserveQueueCreate(HttpServletRequest request, String operationId) {
-        assertMutationGateOpen();
-        requireUuid(operationId, "INVALID_OPERATION_ID");
-        String cookie = cookieValue(request, FLOW_COOKIE_NAME);
-        String flowId = request.getHeader("X-Auth-Flow-Id");
-        String epochHeader = request.getHeader("X-Auth-Flow-Epoch");
-        if (cookie == null || flowId == null || epochHeader == null) {
-            throw new AuthFlowException("AUTH_FLOW_REQUIRED");
-        }
-        try {
-            QueueIntentReservation reservation = transactions.execute(status -> {
-                FlowRow flow = findFlow(hashCookie(cookie), true);
-                if (flow == null || !flow.flowId().equals(flowId)) {
-                    throw new AuthFlowException("AUTH_FLOW_COOKIE_INVALID");
-                }
-                validateFlowTuple(flow, flowId, epochHeader);
-                if (!flow.cookieExpiresAt().isAfter(Instant.now())) {
-                    throw new AuthFlowException("AUTH_FLOW_COOKIE_INVALID");
-                }
-                if (!"ANONYMOUS".equals(flow.lifecycle()) || flow.sessionSid() != null) {
-                    throw new AuthFlowException("AUTH_SESSION_INVALID");
-                }
-                if (flow.ticketId() != null) {
-                    throw new AuthFlowException("AUTH_FLOW_TICKET_EXISTS");
-                }
-                Instant now = Instant.now();
-                String requestHash = hmac("queue-create:" + flowId + ":" + flow.epoch()
-                        + ":POST:/api/v1/auth/login-queue/tickets");
-                QueueOperation operation = findQueueOperation(flowId, operationId, true);
-                if (operation != null) {
-                    if (!requestHash.equals(operation.requestHash())) {
-                        throw new AuthFlowException("AUTH_OPERATION_ID_REUSED");
-                    }
-                    QueueIntent intent = findQueueIntent(operation.intentId(), false);
-                    if (intent == null || !requestHash.equals(intent.requestHash())) {
-                        throw new AuthStateUnavailableException();
-                    }
-                    return reservation(intent, flow.revision());
-                }
-                jdbc.update("""
-                        INSERT IGNORE INTO auth_queue_epoch_slots
-                            (flow_id, flow_epoch, active_intent_id, reserved_revision, created_at, updated_at)
-                        VALUES (?, ?, NULL, 0, ?, ?)
-                        """, flowId, flow.epoch(), timestamp(now), timestamp(now));
-                String activeIntentId = jdbc.queryForObject("""
-                        SELECT active_intent_id FROM auth_queue_epoch_slots
-                        WHERE flow_id = ? AND flow_epoch = ? FOR UPDATE
-                        """, String.class, flowId, flow.epoch());
-                if (activeIntentId != null) {
-                    QueueIntent intent = findQueueIntent(activeIntentId, true);
-                    if (intent == null || !requestHash.equals(intent.requestHash())) {
-                        throw new AuthFlowException("AUTH_QUEUE_CREATE_CONFLICT");
-                    }
-                    jdbc.update("""
-                            INSERT INTO auth_queue_create_operations
-                                (flow_id, operation_id, request_hash, intent_id, created_at)
-                            VALUES (?, ?, ?, ?, ?)
-                            """, flowId, operationId, requestHash, activeIntentId, timestamp(now));
-                    return reservation(intent, flow.revision());
-                }
-                String intentId = UUID.randomUUID().toString();
-                String ticketId = hmac("ticket:" + intentId);
-                jdbc.update("""
-                        INSERT INTO auth_queue_create_intents
-                            (intent_id, flow_id, flow_epoch, request_hash, state, ticket_id, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, 'RESERVED', ?, ?, ?)
-                        """, intentId, flowId, flow.epoch(), requestHash, ticketId, timestamp(now), timestamp(now));
-                jdbc.update("""
-                        INSERT INTO auth_queue_create_operations
-                            (flow_id, operation_id, request_hash, intent_id, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        """, flowId, operationId, requestHash, intentId, timestamp(now));
-                int reserved = jdbc.update("""
-                        UPDATE auth_queue_epoch_slots
-                        SET active_intent_id = ?, reserved_revision = ?, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ? AND active_intent_id IS NULL
-                        """, intentId, flow.revision() + 1, timestamp(now), flowId, flow.epoch());
-                if (reserved != 1) {
-                    throw new AuthFlowException("AUTH_QUEUE_CREATE_CONFLICT");
-                }
-                int revised = jdbc.update("""
-                        UPDATE auth_browser_flows SET revision = revision + 1, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ? AND revision = ? AND current_ticket_id IS NULL
-                        """, timestamp(now), flowId, flow.epoch(), flow.revision());
-                if (revised != 1) {
-                    throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
-                }
-                return new QueueIntentReservation(intentId, "RESERVED", ticketId, flow.revision() + 1);
-            });
-            if (reservation == null) {
-                throw new AuthStateUnavailableException();
-            }
-            return reservation;
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
-    public FlowSnapshot commitQueueCreate(HttpServletRequest request, QueueIntentReservation reservation,
-            String ticketId) {
-        String cookie = cookieValue(request, FLOW_COOKIE_NAME);
-        String flowId = request.getHeader("X-Auth-Flow-Id");
-        String epoch = request.getHeader("X-Auth-Flow-Epoch");
-        if (cookie == null || flowId == null || epoch == null) {
-            throw new AuthFlowException("AUTH_FLOW_REQUIRED");
-        }
-        try {
-            FlowSnapshot committed = transactions.execute(status -> {
-                FlowRow flow = findFlow(hashCookie(cookie), true);
-                if (flow == null || !flow.flowId().equals(flowId)) {
-                    throw new AuthFlowException("AUTH_FLOW_COOKIE_INVALID");
-                }
-                validateFlowTuple(flow, flowId, epoch);
-                if (!"ANONYMOUS".equals(flow.lifecycle()) || flow.sessionSid() != null) {
-                    throw new AuthFlowException("AUTH_SESSION_INVALID");
-                }
-                String activeIntent = jdbc.queryForObject("""
-                        SELECT active_intent_id FROM auth_queue_epoch_slots
-                        WHERE flow_id = ? AND flow_epoch = ? FOR UPDATE
-                        """, String.class, flowId, flow.epoch());
-                if (!reservation.intentId().equals(activeIntent)) {
-                    throw new AuthFlowException("AUTH_QUEUE_CREATE_SUPERSEDED");
-                }
-                QueueIntent intent = findQueueIntent(reservation.intentId(), true);
-                if (intent == null || !intent.flowId().equals(flowId) || intent.flowEpoch() != flow.epoch()) {
-                    throw new AuthFlowException("AUTH_QUEUE_CREATE_SUPERSEDED");
-                }
-                if ("ACTIVE".equals(intent.state())) {
-                    if (!ticketId.equals(intent.ticketId()) || !ticketId.equals(flow.ticketId())) {
-                        throw new AuthFlowException("AUTH_QUEUE_CREATE_SUPERSEDED");
-                    }
-                    return flow.snapshot("EXISTING");
-                }
-                if (!"RESERVED".equals(intent.state()) || flow.ticketId() != null
-                        || !ticketId.equals(intent.ticketId())) {
-                    throw new AuthFlowException("AUTH_QUEUE_CREATE_SUPERSEDED");
-                }
-                Instant now = Instant.now();
-                int changed = jdbc.update("""
-                        UPDATE auth_browser_flows
-                        SET current_ticket_id = ?, lifecycle = 'QUEUED', revision = revision + 1, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ? AND current_ticket_id IS NULL
-                        """, ticketId, timestamp(now), flowId, flow.epoch());
-                if (changed != 1) {
-                    throw new AuthFlowException("AUTH_QUEUE_CREATE_SUPERSEDED");
-                }
-                jdbc.update("""
-                        UPDATE auth_queue_create_intents
-                        SET state = 'ACTIVE', ticket_id = ?, updated_at = ? WHERE intent_id = ?
-                        """, ticketId, timestamp(now), reservation.intentId());
-                jdbc.update("""
-                        UPDATE auth_queue_epoch_slots SET reserved_revision = ?, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ? AND active_intent_id = ?
-                        """, flow.revision() + 1, timestamp(now), flowId, flow.epoch(), reservation.intentId());
-                return readFlowById(flowId);
-            });
-            if (committed == null) {
-                throw new AuthStateUnavailableException();
-            }
-            return committed;
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
-    public FlowSnapshot clearQueueTicket(FlowSnapshot flow) {
-        return clearQueueTicket(flow, null);
-    }
-
-    public FlowSnapshot clearQueueTicket(FlowSnapshot flow, String operationId) {
-        if (operationId != null) {
-            requireUuid(operationId, "INVALID_OPERATION_ID");
-        }
-        String requestHash = operationId == null
-                ? null
-                : hmac("queue-cancel:" + flow.flowId() + ":" + flow.flowEpoch() + ":" + operationId);
-        try {
-            FlowSnapshot updated = transactions.execute(status -> {
-                Instant now = Instant.now();
-                FlowRow current = findFlowById(flow.flowId(), true);
-                if (current == null || current.epoch() != flow.flowEpoch()) {
-                    throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
-                }
-                if (operationId != null) {
-                    String savedHash = jdbc.query("""
-                            SELECT request_hash FROM auth_flow_operations
-                            WHERE flow_id = ? AND operation_kind = 'QUEUE_CANCEL' AND operation_id = ?
-                            """, resultSet -> resultSet.next() ? resultSet.getString(1) : null,
-                            flow.flowId(), operationId);
-                    if (savedHash != null) {
-                        if (!savedHash.equals(requestHash)) {
-                            throw new AuthFlowException("AUTH_OPERATION_ID_REUSED");
-                        }
-                        if (current.ticketId() != null || current.revision() < flow.revision()) {
-                            throw new AuthFlowException("AUTH_QUEUE_CANCEL_SUPERSEDED");
-                        }
-                        return current.snapshot("EXISTING");
-                    }
-                }
-                if (current.revision() != flow.revision()) {
-                    throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
-                }
-                String reservedTicket = retireQueueIntent(flow.flowId(), flow.flowEpoch(), now);
-                int changed = jdbc.update("""
-                        UPDATE auth_browser_flows
-                        SET current_ticket_id = NULL, lifecycle = CASE WHEN active_session_sid IS NULL
-                            THEN 'ANONYMOUS' ELSE 'AUTHENTICATED' END,
-                            revision = revision + 1, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ? AND revision = ?
-                        """, timestamp(now), flow.flowId(), flow.flowEpoch(), flow.revision());
-                if (changed != 1) {
-                    throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
-                }
-                String cleanupTicket = flow.currentTicketId() == null ? reservedTicket : flow.currentTicketId();
-                if (cleanupTicket != null) {
-                    insertOutbox(flow.flowId(), flow.flowEpoch(), flow.revision() + 1,
-                            "QUEUE_CLEANUP", cleanupTicket, now);
-                }
-                if (operationId != null) {
-                    jdbc.update("""
-                            INSERT INTO auth_flow_operations
-                                (flow_id, operation_kind, operation_id, request_hash, started_epoch,
-                                 result_epoch, result_revision, committed_at)
-                            VALUES (?, 'QUEUE_CANCEL', ?, ?, ?, ?, ?, ?)
-                            """, flow.flowId(), operationId, requestHash, flow.flowEpoch(),
-                            flow.flowEpoch(), flow.revision() + 1, timestamp(now));
-                }
-                return readFlowById(flow.flowId());
-            });
-            if (updated == null) {
-                throw new AuthStateUnavailableException();
-            }
-            return updated;
         } catch (DataAccessException exception) {
             throw new AuthStateUnavailableException(exception);
         }
@@ -516,22 +226,9 @@ public class AuthFlowService {
         }
     }
 
-    public void enqueueRejectedQueueCleanup(String flowId, long flowEpoch, String ticketId) {
-        try {
-            transactions.executeWithoutResult(status -> {
-                FlowRow current = findFlowById(flowId, false);
-                long epoch = current == null ? flowEpoch : current.epoch();
-                long revision = current == null ? 0 : current.revision();
-                insertOutbox(flowId, epoch, revision, "QUEUE_CLEANUP", ticketId, Instant.now());
-            });
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
     public boolean shouldApplyOutboxAction(String flowId, long eventEpoch, long eventRevision,
             String eventKind, String targetId) {
-        if (targetId == null || targetId.isBlank()) {
+        if (targetId == null || targetId.isBlank() || !eventKind.startsWith("SESSION_REVOKED_")) {
             return false;
         }
         try {
@@ -539,9 +236,6 @@ public class AuthFlowService {
             if (flow != null && (flow.epoch() < eventEpoch
                     || (flow.epoch() == eventEpoch && flow.revision() < eventRevision))) {
                 return false;
-            }
-            if ("QUEUE_CLEANUP".equals(eventKind) || "FLOW_RETIRED".equals(eventKind)) {
-                return flow == null || !targetId.equals(flow.ticketId());
             }
             if (eventKind.startsWith("SESSION_REVOKED_")) {
                 return !Boolean.TRUE.equals(queryExists("""
@@ -571,80 +265,6 @@ public class AuthFlowService {
         setTupleHeaders(headers, flow);
     }
 
-    public FlowSnapshot activateSession(HttpServletRequest request, Long userId, String sid, String ticketId,
-            String refreshToken, RefreshReplayCipher replayCipher, HttpHeaders headers) {
-        assertMutationGateOpen();
-        String cookie = cookieValue(request, FLOW_COOKIE_NAME);
-        String flowId = request.getHeader("X-Auth-Flow-Id");
-        String epoch = request.getHeader("X-Auth-Flow-Epoch");
-        if (cookie == null || flowId == null || epoch == null) {
-            throw new AuthFlowException("AUTH_FLOW_REQUIRED");
-        }
-        try {
-            FlowSnapshot result = transactions.execute(status -> {
-                FlowRow row = findFlow(hashCookie(cookie), true);
-                if (row == null) {
-                    throw new AuthFlowException("AUTH_FLOW_COOKIE_INVALID");
-                }
-                validateFlowTuple(row, flowId, epoch);
-                if (!"QUEUED".equals(row.lifecycle()) || ticketId == null
-                        || !ticketId.equals(row.ticketId())) {
-                    throw new AuthFlowException("AUTH_QUEUE_TICKET_STALE");
-                }
-                Instant now = Instant.now();
-                String reservedTicket = retireQueueIntent(row.flowId(), row.epoch(), now);
-                String cleanupTicket = row.ticketId() == null ? reservedTicket : row.ticketId();
-                if (cleanupTicket != null) {
-                    insertOutbox(row.flowId(), row.epoch() + 1, row.revision() + 1,
-                            "QUEUE_CLEANUP", cleanupTicket, now);
-                }
-                if (row.sessionSid() != null) {
-                    jdbc.update("""
-                            UPDATE auth_browser_sessions SET status = 'REVOKED', current_refresh_token_hash = NULL,
-                                encrypted_current_refresh_token = NULL, revoked_at = ?, updated_at = ?
-                            WHERE sid = ? AND status = 'ACTIVE'
-                            """, timestamp(now), timestamp(now), row.sessionSid());
-                    insertOutbox(row.flowId(), row.epoch() + 1, row.revision() + 1,
-                            "SESSION_REVOKED_REPLACED", row.sessionSid(), now);
-                }
-                long nextEpoch = row.epoch() + 1;
-                long nextRevision = row.revision() + 1;
-                Instant absoluteExpiry = now.plusSeconds(properties.sessionAbsoluteSeconds());
-                Instant idleExpiry = min(now.plusSeconds(properties.sessionIdleSeconds()), absoluteExpiry);
-                String refreshHash = refreshToken == null ? null : hmac("refresh:" + refreshToken);
-                String encryptedRefresh = refreshToken == null ? null : replayCipher.encrypt(refreshToken);
-                jdbc.update("""
-                        INSERT INTO auth_browser_sessions
-                            (sid, flow_id, flow_epoch, user_id, status, idle_expires_at,
-                             absolute_expires_at, current_refresh_token_hash, encrypted_current_refresh_token,
-                             refresh_generation, revoked_at, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, 1, NULL, ?, ?)
-                        """, sid, row.flowId(), nextEpoch, userId, timestamp(idleExpiry), timestamp(absoluteExpiry),
-                        refreshHash, encryptedRefresh, timestamp(now), timestamp(now));
-                jdbc.update("""
-                        UPDATE auth_browser_flows
-                        SET flow_epoch = ?, revision = ?, lifecycle = 'AUTHENTICATED',
-                            active_session_sid = ?, current_ticket_id = NULL,
-                            cookie_expires_at = ?, updated_at = ?
-                        WHERE flow_id = ? AND flow_epoch = ?
-                        """, nextEpoch, nextRevision, sid, timestamp(idleExpiry), timestamp(now), row.flowId(),
-                        row.epoch());
-                insertOutbox(row.flowId(), nextEpoch, nextRevision, "SESSION_ACTIVATED", sid, now);
-                FlowSnapshot snapshot = readFlowById(row.flowId());
-                addFlowCookie(headers, cookie, maxAge(idleExpiry));
-                addRefreshCookie(headers, refreshToken, idleExpiry);
-                setTupleHeaders(headers, snapshot);
-                return snapshot;
-            });
-            if (result == null) {
-                throw new AuthStateUnavailableException();
-            }
-            return result;
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
     public LogoutReceipt commitLogout(HttpServletRequest request, HttpHeaders headers, String operationId) {
         assertMutationGateOpen();
         requireUuid(operationId, "INVALID_OPERATION_ID");
@@ -668,8 +288,7 @@ public class AuthFlowService {
                 LogoutReceipt saved = findLogoutReceipt(flowId, operationId, requestHash);
                 if (saved != null) {
                     if (row.epoch() != saved.flowEpoch() || !"ANONYMOUS".equals(row.lifecycle())
-                            || row.revision() != saved.revision() || row.sessionSid() != null
-                            || row.ticketId() != null) {
+                            || row.revision() != saved.revision() || row.sessionSid() != null) {
                         throw new AuthFlowException("AUTH_FLOW_EPOCH_STALE");
                     }
                     setTupleHeaders(headers, row.snapshot("EXISTING"));
@@ -682,8 +301,6 @@ public class AuthFlowService {
                 long nextEpoch = row.epoch() + 1;
                 long nextRevision = row.revision() + 1;
                 String previousSid = row.sessionSid();
-                String previousTicket = row.ticketId();
-                String reservedTicket = retireQueueIntent(flowId, row.epoch(), now);
                 if (previousSid != null) {
                     jdbc.update("""
                             UPDATE auth_browser_sessions SET status = 'REVOKED', current_refresh_token_hash = NULL,
@@ -692,14 +309,10 @@ public class AuthFlowService {
                             """, timestamp(now), timestamp(now), previousSid);
                     insertOutbox(flowId, nextEpoch, nextRevision, "SESSION_REVOKED_LOGOUT", previousSid, now);
                 }
-                String cleanupTicket = previousTicket == null ? reservedTicket : previousTicket;
-                if (cleanupTicket != null) {
-                    insertOutbox(flowId, nextEpoch, nextRevision, "QUEUE_CLEANUP", cleanupTicket, now);
-                }
                 jdbc.update("""
                         UPDATE auth_browser_flows
                         SET flow_epoch = ?, revision = ?, lifecycle = 'ANONYMOUS',
-                            active_session_sid = NULL, current_ticket_id = NULL, updated_at = ?
+                            active_session_sid = NULL, updated_at = ?
                         WHERE flow_id = ? AND flow_epoch = ?
                         """, nextEpoch, nextRevision, timestamp(now), flowId, row.epoch());
                 jdbc.update("""
@@ -709,7 +322,7 @@ public class AuthFlowService {
                         VALUES (?, 'LOGOUT', ?, ?, ?, ?, ?, ?)
                         """, flowId, operationId, requestHash, row.epoch(), nextEpoch, nextRevision, timestamp(now));
                 FlowSnapshot updated = new FlowSnapshot(flowId, nextEpoch, nextRevision, "ANONYMOUS", false,
-                        null, null, "EXISTING");
+                        null, "EXISTING");
                 setTupleHeaders(headers, updated);
                 return new LogoutReceipt(operationId, true, nextEpoch, nextRevision, now);
             });
@@ -1040,37 +653,6 @@ public class AuthFlowService {
         }
     }
 
-    public QueueCancelReceipt queueCancelReceipt(String flowId, String operationId) {
-        try {
-            return jdbc.query("""
-                    SELECT operation_id, result_epoch, result_revision
-                    FROM auth_flow_operations
-                    WHERE flow_id = ? AND operation_kind = 'QUEUE_CANCEL' AND operation_id = ?
-                    """, resultSet -> resultSet.next()
-                    ? new QueueCancelReceipt(resultSet.getString("operation_id"), true,
-                            resultSet.getLong("result_epoch"), resultSet.getLong("result_revision"))
-                    : null, flowId, operationId);
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
-    public QueueCancelReceipt lastQueueCancelReceipt(String flowId) {
-        try {
-            return jdbc.query("""
-                    SELECT operation_id, result_epoch, result_revision
-                    FROM auth_flow_operations
-                    WHERE flow_id = ? AND operation_kind = 'QUEUE_CANCEL'
-                    ORDER BY committed_at DESC LIMIT 1
-                    """, resultSet -> resultSet.next()
-                    ? new QueueCancelReceipt(resultSet.getString("operation_id"), true,
-                            resultSet.getLong("result_epoch"), resultSet.getLong("result_revision"))
-                    : null, flowId);
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-    }
-
     public void repairCurrentRefreshCookie(HttpServletRequest request, BootstrapResult bootstrap,
             RefreshReplayCipher replayCipher, HttpHeaders headers) {
         if (!bootstrap.flow().authenticated() || bootstrap.flow().activeSessionSid() == null) {
@@ -1154,16 +736,12 @@ public class AuthFlowService {
                 long nextEpoch = current ? flow.epoch() + 1 : flow.epoch();
                 long nextRevision = current ? flow.revision() + 1 : flow.revision();
                 if (current) {
-                    retireQueueIntent(flow.flowId(), flow.epoch(), now);
                     jdbc.update("""
                             UPDATE auth_browser_flows
                             SET flow_epoch = ?, revision = ?, lifecycle = 'ANONYMOUS',
-                                active_session_sid = NULL, current_ticket_id = NULL, updated_at = ?
+                                active_session_sid = NULL, updated_at = ?
                             WHERE flow_id = ? AND flow_epoch = ?
                             """, nextEpoch, nextRevision, timestamp(now), flow.flowId(), flow.epoch());
-                    if (flow.ticketId() != null) {
-                        insertOutbox(flow.flowId(), nextEpoch, nextRevision, "QUEUE_CLEANUP", flow.ticketId(), now);
-                    }
                 }
                 insertOutbox(flow.flowId(), nextEpoch, nextRevision,
                         "SESSION_REVOKED_" + sanitizeReason(reason), sid, now);
@@ -1195,86 +773,12 @@ public class AuthFlowService {
         return revoked;
     }
 
-    public int reapStaleQueueCreateReservations(int limit) {
-        Instant cutoff = Instant.now().minusSeconds(60);
-        List<String> intentIds;
-        try {
-            intentIds = jdbc.query("""
-                    SELECT intent_id FROM auth_queue_create_intents
-                    WHERE state = 'RESERVED' AND updated_at <= ?
-                    ORDER BY updated_at, intent_id LIMIT ?
-                    """, (resultSet, rowNum) -> resultSet.getString("intent_id"),
-                    timestamp(cutoff), Math.max(1, limit));
-        } catch (DataAccessException exception) {
-            throw new AuthStateUnavailableException(exception);
-        }
-        int retired = 0;
-        for (String intentId : intentIds) {
-            try {
-                Boolean changed = transactions.execute(status -> {
-                    QueueIntent candidate = findQueueIntent(intentId, false);
-                    if (candidate == null || !"RESERVED".equals(candidate.state())) {
-                        return false;
-                    }
-                    FlowRow flow = findFlowById(candidate.flowId(), true);
-                    String activeIntentId = jdbc.query("""
-                            SELECT active_intent_id FROM auth_queue_epoch_slots
-                            WHERE flow_id = ? AND flow_epoch = ? FOR UPDATE
-                            """, resultSet -> resultSet.next() ? resultSet.getString(1) : null,
-                            candidate.flowId(), candidate.flowEpoch());
-                    QueueIntent intent = findQueueIntent(intentId, true);
-                    if (intent == null || !"RESERVED".equals(intent.state())) {
-                        return false;
-                    }
-                    if (flow != null && intent.ticketId() != null
-                            && intent.ticketId().equals(flow.ticketId())) {
-                        return false;
-                    }
-                    Instant now = Instant.now();
-                    int cancelled = jdbc.update("""
-                            UPDATE auth_queue_create_intents SET state = 'CANCELLED', updated_at = ?
-                            WHERE intent_id = ? AND state = 'RESERVED' AND updated_at <= ?
-                            """, timestamp(now), intentId, timestamp(cutoff));
-                    if (cancelled != 1) {
-                        return false;
-                    }
-                    int releasedSlot = jdbc.update("""
-                            UPDATE auth_queue_epoch_slots SET active_intent_id = NULL,
-                                reserved_revision = reserved_revision + 1, updated_at = ?
-                            WHERE flow_id = ? AND flow_epoch = ? AND active_intent_id = ?
-                            """, timestamp(now), candidate.flowId(), candidate.flowEpoch(), intentId);
-                    long eventRevision = 0;
-                    if (flow != null && flow.epoch() == candidate.flowEpoch() && releasedSlot > 0) {
-                        int advancedFlow = jdbc.update("""
-                                UPDATE auth_browser_flows SET revision = revision + 1, updated_at = ?
-                                WHERE flow_id = ? AND flow_epoch = ? AND current_ticket_id IS NULL
-                                """, timestamp(now), candidate.flowId(), candidate.flowEpoch());
-                        eventRevision = advancedFlow == 1 ? flow.revision() + 1 : flow.revision();
-                    } else if (flow != null) {
-                        eventRevision = flow.revision();
-                    }
-                    if (intent.ticketId() != null) {
-                        insertOutbox(candidate.flowId(), candidate.flowEpoch(), eventRevision,
-                                "QUEUE_CLEANUP", intent.ticketId(), now);
-                    }
-                    return true;
-                });
-                if (Boolean.TRUE.equals(changed)) {
-                    retired++;
-                }
-            } catch (DataAccessException exception) {
-                throw new AuthStateUnavailableException(exception);
-            }
-        }
-        return retired;
-    }
-
     public int reapExpiredAnonymousFlows(int limit) {
         List<String> flowIds;
         try {
             flowIds = jdbc.query("""
                     SELECT flow_id FROM auth_browser_flows
-                    WHERE lifecycle IN ('ANONYMOUS', 'QUEUED') AND cookie_expires_at <= CURRENT_TIMESTAMP(6)
+                    WHERE lifecycle = 'ANONYMOUS' AND cookie_expires_at <= CURRENT_TIMESTAMP(6)
                     ORDER BY flow_id LIMIT ?
                     """, (resultSet, rowNum) -> resultSet.getString("flow_id"), Math.max(1, limit));
         } catch (DataAccessException exception) {
@@ -1285,7 +789,7 @@ public class AuthFlowService {
             try {
                 Boolean changed = transactions.execute(status -> {
                     FlowRow flow = findFlowById(flowId, true);
-                    if (flow == null || !List.of("ANONYMOUS", "QUEUED").contains(flow.lifecycle())
+                    if (flow == null || !"ANONYMOUS".equals(flow.lifecycle())
                             || flow.cookieExpiresAt().isAfter(Instant.now())) {
                         return false;
                     }
@@ -1305,8 +809,7 @@ public class AuthFlowService {
     public int reapRetainedFlowData(int limit) {
         Instant now = Instant.now();
         long retentionSeconds = Math.max(properties.sessionAbsoluteSeconds(),
-                properties.idempotencyIdleHorizonSeconds() + properties.queueTicketSeconds()
-                        + properties.queueTombstoneSeconds());
+                properties.idempotencyIdleHorizonSeconds());
         Instant cutoff = now.minusSeconds(retentionSeconds);
         List<String> flowIds;
         try {
@@ -1395,15 +898,11 @@ public class AuthFlowService {
                 long nextEpoch = current ? flow.epoch() + 1 : flow.epoch();
                 long nextRevision = current ? flow.revision() + 1 : flow.revision();
                 if (current) {
-                    retireQueueIntent(flowId, flow.epoch(), now);
                     jdbc.update("""
                             UPDATE auth_browser_flows SET flow_epoch = ?, revision = ?, lifecycle = 'ANONYMOUS',
-                                active_session_sid = NULL, current_ticket_id = NULL, updated_at = ?
+                                active_session_sid = NULL, updated_at = ?
                             WHERE flow_id = ? AND flow_epoch = ? AND active_session_sid = ?
                             """, nextEpoch, nextRevision, timestamp(now), flowId, flow.epoch(), sid);
-                    if (flow.ticketId() != null) {
-                        insertOutbox(flowId, nextEpoch, nextRevision, "QUEUE_CLEANUP", flow.ticketId(), now);
-                    }
                 }
                 insertOutbox(flowId, nextEpoch, nextRevision, "SESSION_REVOKED_EXPIRED", sid, now);
                 return true;
@@ -1432,7 +931,6 @@ public class AuthFlowService {
                         continue;
                     }
                     Instant now = Instant.now();
-                    retireQueueIntent(flowId, flow.epoch(), now);
                     jdbc.update("""
                             UPDATE auth_browser_sessions SET status = 'REVOKED', current_refresh_token_hash = NULL,
                                 encrypted_current_refresh_token = NULL, revoked_at = ?, updated_at = ?
@@ -1443,13 +941,10 @@ public class AuthFlowService {
                     jdbc.update("""
                             UPDATE auth_browser_flows
                             SET flow_epoch = ?, revision = ?, lifecycle = 'ANONYMOUS',
-                                active_session_sid = NULL, current_ticket_id = NULL, updated_at = ?
+                                active_session_sid = NULL, updated_at = ?
                             WHERE flow_id = ? AND flow_epoch = ? AND active_session_sid IN
                                 (SELECT sid FROM auth_browser_sessions WHERE flow_id = ? AND user_id = ?)
                             """, nextEpoch, nextRevision, timestamp(now), flowId, flow.epoch(), flowId, userId);
-                    if (flow.ticketId() != null) {
-                        insertOutbox(flowId, nextEpoch, nextRevision, "QUEUE_CLEANUP", flow.ticketId(), now);
-                    }
                     for (String sid : activeSids) {
                         revoked.add(sid);
                         insertOutbox(flowId, nextEpoch, nextRevision,
@@ -1483,16 +978,10 @@ public class AuthFlowService {
 
     public void expireAnonymousCookies(HttpHeaders headers) {
         expireRefreshCookie(headers);
-        expireQueueCookie(headers);
     }
 
     public void expireRefreshCookie(HttpHeaders headers) {
         headers.add(HttpHeaders.SET_COOKIE, ResponseCookie.from("refresh_token", "").httpOnly(true)
-                .secure(secureCookie).sameSite(sameSite).path(FLOW_COOKIE_PATH).maxAge(0).build().toString());
-    }
-
-    public void expireQueueCookie(HttpHeaders headers) {
-        headers.add(HttpHeaders.SET_COOKIE, ResponseCookie.from(properties.queueCookieName(), "").httpOnly(true)
                 .secure(secureCookie).sameSite(sameSite).path(FLOW_COOKIE_PATH).maxAge(0).build().toString());
     }
 
@@ -1544,23 +1033,23 @@ public class AuthFlowService {
         jdbc.update("""
                 INSERT INTO auth_browser_flows
                     (flow_id, flow_cookie_hash, flow_epoch, revision, lifecycle, active_session_sid,
-                     current_ticket_id, cookie_expires_at, created_at, updated_at)
-                VALUES (?, ?, 1, 1, 'ANONYMOUS', NULL, NULL, ?, ?, ?)
+                     cookie_expires_at, created_at, updated_at)
+                VALUES (?, ?, 1, 1, 'ANONYMOUS', NULL, ?, ?, ?)
                 """, flowId, hash, timestamp(expiresAt), timestamp(now), timestamp(now));
-        return new FlowRow(flowId, hash, 1, 1, "ANONYMOUS", null, null, expiresAt);
+        return new FlowRow(flowId, hash, 1, 1, "ANONYMOUS", null, expiresAt);
     }
 
     private FlowRow findFlow(String cookieHash, boolean lock) {
         String sql = """
                 SELECT flow_id, flow_cookie_hash, flow_epoch, revision, lifecycle,
-                       active_session_sid, current_ticket_id, cookie_expires_at
+                       active_session_sid, cookie_expires_at
                 FROM auth_browser_flows WHERE flow_cookie_hash = ?
                 """ + (lock ? " FOR UPDATE" : " FOR SHARE");
         try {
             return jdbc.queryForObject(sql, (rs, rowNum) -> new FlowRow(rs.getString("flow_id"),
                     rs.getString("flow_cookie_hash"), rs.getLong("flow_epoch"), rs.getLong("revision"),
                     rs.getString("lifecycle"), rs.getString("active_session_sid"),
-                    rs.getString("current_ticket_id"), rs.getTimestamp("cookie_expires_at").toInstant()), cookieHash);
+                    rs.getTimestamp("cookie_expires_at").toInstant()), cookieHash);
         } catch (EmptyResultDataAccessException exception) {
             return null;
         }
@@ -1569,29 +1058,14 @@ public class AuthFlowService {
     private FlowRow findFlowById(String flowId, boolean lock) {
         String sql = """
                 SELECT flow_id, flow_cookie_hash, flow_epoch, revision, lifecycle,
-                       active_session_sid, current_ticket_id, cookie_expires_at
+                       active_session_sid, cookie_expires_at
                 FROM auth_browser_flows WHERE flow_id = ?
                 """ + (lock ? " FOR UPDATE" : " FOR SHARE");
         try {
             return jdbc.queryForObject(sql, (rs, rowNum) -> new FlowRow(rs.getString("flow_id"),
                     rs.getString("flow_cookie_hash"), rs.getLong("flow_epoch"), rs.getLong("revision"),
                     rs.getString("lifecycle"), rs.getString("active_session_sid"),
-                    rs.getString("current_ticket_id"), rs.getTimestamp("cookie_expires_at").toInstant()), flowId);
-        } catch (EmptyResultDataAccessException exception) {
-            return null;
-        }
-    }
-
-    private FlowRow findFlowByTicketId(String ticketId) {
-        try {
-            return jdbc.queryForObject("""
-                    SELECT flow_id, flow_cookie_hash, flow_epoch, revision, lifecycle,
-                           active_session_sid, current_ticket_id, cookie_expires_at
-                    FROM auth_browser_flows WHERE current_ticket_id = ? FOR SHARE
-                    """, (rs, rowNum) -> new FlowRow(rs.getString("flow_id"),
-                    rs.getString("flow_cookie_hash"), rs.getLong("flow_epoch"), rs.getLong("revision"),
-                    rs.getString("lifecycle"), rs.getString("active_session_sid"),
-                    rs.getString("current_ticket_id"), rs.getTimestamp("cookie_expires_at").toInstant()), ticketId);
+                    rs.getTimestamp("cookie_expires_at").toInstant()), flowId);
         } catch (EmptyResultDataAccessException exception) {
             return null;
         }
@@ -1622,59 +1096,16 @@ public class AuthFlowService {
 
     private FlowSnapshot readFlowById(String flowId) {
         return jdbc.queryForObject("""
-                SELECT flow_id, flow_epoch, revision, lifecycle, active_session_sid, current_ticket_id
+                SELECT flow_id, flow_epoch, revision, lifecycle, active_session_sid
                 FROM auth_browser_flows WHERE flow_id = ?
                 """, (rs, rowNum) -> new FlowSnapshot(rs.getString("flow_id"), rs.getLong("flow_epoch"),
                 rs.getLong("revision"), rs.getString("lifecycle"),
-                "AUTHENTICATED".equals(rs.getString("lifecycle")), rs.getString("current_ticket_id"),
+                "AUTHENTICATED".equals(rs.getString("lifecycle")),
                 rs.getString("active_session_sid"), "EXISTING"), flowId);
-    }
-
-    private QueueOperation findQueueOperation(String flowId, String operationId, boolean lock) {
-        String sql = "SELECT request_hash, intent_id FROM auth_queue_create_operations "
-                + "WHERE flow_id = ? AND operation_id = ?" + (lock ? " FOR UPDATE" : "");
-        return jdbc.query(sql, resultSet -> resultSet.next()
-                ? new QueueOperation(resultSet.getString("request_hash"), resultSet.getString("intent_id"))
-                : null, flowId, operationId);
-    }
-
-    private QueueIntent findQueueIntent(String intentId, boolean lock) {
-        String sql = "SELECT intent_id, flow_id, flow_epoch, request_hash, state, ticket_id "
-                + "FROM auth_queue_create_intents WHERE intent_id = ?" + (lock ? " FOR UPDATE" : "");
-        return jdbc.query(sql, resultSet -> resultSet.next()
-                ? new QueueIntent(resultSet.getString("intent_id"), resultSet.getString("flow_id"),
-                        resultSet.getLong("flow_epoch"), resultSet.getString("request_hash"),
-                        resultSet.getString("state"), resultSet.getString("ticket_id"))
-                : null, intentId);
-    }
-
-    private QueueIntentReservation reservation(QueueIntent intent, long revision) {
-        return new QueueIntentReservation(intent.intentId(), intent.state(), intent.ticketId(), revision);
-    }
-
-    private String retireQueueIntent(String flowId, long flowEpoch, Instant now) {
-        String intentId = jdbc.query("""
-                SELECT active_intent_id FROM auth_queue_epoch_slots
-                WHERE flow_id = ? AND flow_epoch = ? FOR UPDATE
-                """, resultSet -> resultSet.next() ? resultSet.getString(1) : null, flowId, flowEpoch);
-        if (intentId == null) {
-            return null;
-        }
-        QueueIntent intent = findQueueIntent(intentId, true);
-        jdbc.update("""
-                UPDATE auth_queue_create_intents SET state = 'CANCELLED', updated_at = ?
-                WHERE intent_id = ? AND state <> 'CANCELLED'
-                """, timestamp(now), intentId);
-        jdbc.update("""
-                UPDATE auth_queue_epoch_slots SET active_intent_id = NULL, updated_at = ?
-                WHERE flow_id = ? AND flow_epoch = ? AND active_intent_id = ?
-                """, timestamp(now), flowId, flowEpoch, intentId);
-        return intent == null ? null : intent.ticketId();
     }
 
     private void retireExpiredFlow(FlowRow row) {
         Instant now = Instant.now();
-        String reservedTicket = retireQueueIntent(row.flowId(), row.epoch(), now);
         if (row.sessionSid() != null) {
             jdbc.update("""
                     UPDATE auth_browser_sessions SET status = 'REVOKED', current_refresh_token_hash = NULL,
@@ -1687,14 +1118,9 @@ public class AuthFlowService {
         jdbc.update("""
                 UPDATE auth_browser_flows
                 SET flow_epoch = flow_epoch + 1, revision = revision + 1, lifecycle = 'RETIRED',
-                    active_session_sid = NULL, current_ticket_id = NULL, updated_at = ?
+                    active_session_sid = NULL, updated_at = ?
                 WHERE flow_id = ?
                 """, timestamp(now), row.flowId());
-        String cleanupTicket = row.ticketId() == null ? reservedTicket : row.ticketId();
-        if (cleanupTicket != null) {
-            insertOutbox(row.flowId(), row.epoch() + 1, row.revision() + 1,
-                    "FLOW_RETIRED", cleanupTicket, now);
-        }
     }
 
     private void insertOutbox(String flowId, long epoch, long revision, String kind, String target, Instant now) {

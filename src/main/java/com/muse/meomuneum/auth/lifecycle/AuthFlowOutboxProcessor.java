@@ -1,4 +1,4 @@
-package com.muse.meomuneum.auth.queue;
+package com.muse.meomuneum.auth.lifecycle;
 
 import java.sql.ResultSet;
 import java.time.Instant;
@@ -59,7 +59,7 @@ public class AuthFlowOutboxProcessor {
                     return;
                 }
                 try {
-                    if (isQueueCleanupEvent(event.eventKind())) {
+                    if (!event.eventKind().startsWith("SESSION_REVOKED_")) {
                         acknowledge(event);
                         continue;
                     }
@@ -122,10 +122,6 @@ public class AuthFlowOutboxProcessor {
             return revoked == null ? null : revoked.userId();
         }
         return null;
-    }
-
-    private boolean isQueueCleanupEvent(String eventKind) {
-        return "QUEUE_CLEANUP".equals(eventKind) || "FLOW_RETIRED".equals(eventKind);
     }
 
     private void acknowledge(Event event) {

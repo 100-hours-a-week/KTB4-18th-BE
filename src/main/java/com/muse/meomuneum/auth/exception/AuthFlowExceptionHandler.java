@@ -34,9 +34,6 @@ public class AuthFlowExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleConflict(AuthStateConflictException exception) {
         ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.CONFLICT)
                 .cacheControl(CacheControl.noStore());
-        if (exception instanceof AuthStateOperationInProgressException) {
-            response.header(HttpHeaders.RETRY_AFTER, "1");
-        }
         return response.body(ApiResponse.failure(exception.code()));
     }
 }

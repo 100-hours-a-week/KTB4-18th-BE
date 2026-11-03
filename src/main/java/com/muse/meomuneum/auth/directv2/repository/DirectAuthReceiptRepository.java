@@ -69,7 +69,7 @@ public class DirectAuthReceiptRepository {
     public void logout(DirectAuthFlowState flow, String operationId, String hash, LocalDateTime expiry) {
         DirectAuthProjectionRepository.requireOne(jdbc.update("""
                 UPDATE auth_browser_flows SET flow_epoch = flow_epoch + 1, revision = revision + 1,
-                lifecycle = 'ANONYMOUS', active_session_sid = NULL, current_ticket_id = NULL,
+                lifecycle = 'ANONYMOUS', active_session_sid = NULL,
                 active_login_operation_id = NULL, flow_cookie_hash = ?,
                 flow_cookie_generation = flow_cookie_generation + 1, cookie_expires_at = ?,
                 current_direct_operation_kind = 'LOGOUT', current_direct_operation_id = ?,

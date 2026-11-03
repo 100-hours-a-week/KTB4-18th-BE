@@ -152,7 +152,7 @@ public class HazelcastAuthStateStore {
             String loginRecoveryRefreshHash, String encryptedLoginRecoveryRefreshToken,
             long generation, Instant createdAt, Instant lastRefreshedAt, Instant accessExpiresAt,
             Instant refreshIdleExpiresAt, Instant refreshAbsoluteExpiresAt, Instant revokedAt,
-            String ticketId, String ownerClaimId, Instant provisioningLeaseUntil)
+            String ownerClaimId)
             implements
                 Serializable {
         private static final long serialVersionUID = 1L;
@@ -168,7 +168,7 @@ public class HazelcastAuthStateStore {
                     previousRefreshHash, lastRefreshOperationId, replayUntil, encryptedReplayRefreshToken,
                     loginOperationId, loginRecoveryUntil, loginRecoveryGeneration, loginRecoveryRefreshHash,
                     encryptedLoginRecoveryRefreshToken, generation, createdAt, lastRefreshedAt, accessExpiresAt,
-                    refreshIdleExpiresAt, refreshAbsoluteExpiresAt, revokedAt, null, null, null);
+                    refreshIdleExpiresAt, refreshAbsoluteExpiresAt, revokedAt, null);
         }
 
         public AuthSession withRotation(String jti, String refreshHash, String oldJtiHash, String oldHash,
@@ -179,16 +179,14 @@ public class HazelcastAuthStateStore {
                     retryUntil, encryptedToken, loginOperationId, loginRecoveryUntil, generation + 1,
                     refreshHash, encryptedToken, generation + 1,
                     createdAt, Instant.now(), accessExpiry,
-                    idleExpiry, refreshAbsoluteExpiresAt, revokedAt, ticketId, ownerClaimId,
-                    provisioningLeaseUntil);
+                    idleExpiry, refreshAbsoluteExpiresAt, revokedAt, ownerClaimId);
         }
 
         public AuthSession withCanonicalRefresh(String jti, String refreshHash, Instant refreshedAt,
                 Instant idleExpiry, Instant absoluteExpiry) {
             return new AuthSession(userId, sid, userAgentSummary, SessionStatus.ACTIVE, jti, refreshHash,
                     null, null, null, null, null, null, null, 0, null, null, generation + 1,
-                    createdAt, refreshedAt, accessExpiresAt, idleExpiry, absoluteExpiry, null,
-                    ticketId, ownerClaimId, provisioningLeaseUntil);
+                    createdAt, refreshedAt, accessExpiresAt, idleExpiry, absoluteExpiry, null, ownerClaimId);
         }
 
         public AuthSession revoked() {
@@ -198,8 +196,7 @@ public class HazelcastAuthStateStore {
                     null, loginOperationId, loginRecoveryUntil, loginRecoveryGeneration,
                     loginRecoveryRefreshHash, null, generation + 1,
                     createdAt, lastRefreshedAt, accessExpiresAt,
-                    refreshIdleExpiresAt, refreshAbsoluteExpiresAt, Instant.now(), ticketId, ownerClaimId,
-                    provisioningLeaseUntil);
+                    refreshIdleExpiresAt, refreshAbsoluteExpiresAt, Instant.now(), ownerClaimId);
         }
 
         public AuthSession withoutExpiredReplayMaterial(Instant now) {
@@ -217,8 +214,7 @@ public class HazelcastAuthStateStore {
                     previousJtiHash, previousRefreshHash, lastRefreshOperationId, replayUntil,
                     replayCiphertext, loginOperationId, loginRecoveryUntil, loginRecoveryGeneration,
                     loginRecoveryRefreshHash, loginCiphertext, generation, createdAt, lastRefreshedAt,
-                    accessExpiresAt, refreshIdleExpiresAt, refreshAbsoluteExpiresAt, revokedAt,
-                    ticketId, ownerClaimId, provisioningLeaseUntil);
+                    accessExpiresAt, refreshIdleExpiresAt, refreshAbsoluteExpiresAt, revokedAt, ownerClaimId);
         }
     }
 }

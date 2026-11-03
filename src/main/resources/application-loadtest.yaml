@@ -20,10 +20,3 @@ server:
     mbeanregistry:
       enabled: true
 auth:
-  state:
-    max-active-tickets: ${AUTH_MAX_ACTIVE_TICKETS:150}
-  queue:
-    diagnostics:
-      enabled: ${AUTH_QUEUE_DIAGNOSTICS_ENABLED:false}
-      run-id: ${AUTH_QUEUE_DIAGNOSTICS_RUN_ID:}
-    reserve-permit-on-ready: ${AUTH_QUEUE_RESERVE_PERMIT_ON_READY:false}
