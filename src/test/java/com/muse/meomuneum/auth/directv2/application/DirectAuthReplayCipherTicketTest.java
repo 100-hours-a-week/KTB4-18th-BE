@@ -3,9 +3,9 @@ package com.muse.meomuneum.auth.directv2.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
-import java.util.Base64;
 
 import org.junit.jupiter.api.Test;
 

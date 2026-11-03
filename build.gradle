@@ -245,7 +245,7 @@ sourceSets {
 			include 'com/muse/meomuneum/global/response/**', 'com/muse/meomuneum/global/web/**'
 			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims', 'JwtAuthenticationFilter',
 				'SecurityErrorResponseWriter', 'SecurityErrorCode', 'RequestOriginValidationFilter',
-				'AuthSessionIds', 'ActiveUserLookup', 'AccessSessionAuthority', 'SessionPair', 'SessionDecision',
+				'AuthSessionIds', 'ActiveUserLookup', 'AccessSessionAuthority', 'AccessSessionGuard', 'SessionPair', 'SessionDecision',
 				'InternalSessionProtocol', 'AuthSessionRevokedEvent', 'AuthRevocationProtocol'].each { name ->
 				include "com/muse/meomuneum/global/security/${name}.java"
 			}
@@ -403,6 +403,27 @@ tasks.register('chatControlEventsTest', Test) {
 }
 
 // Runtime failure gates, offline recovery, SIGTERM drain and protected metrics.
+tasks.register('chatProductionIntegrationTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.production', 'true'
+    systemProperty 'jdk.net.hosts.file', layout.buildDirectory.file('chat-production-hosts').get().asFile.absolutePath
+    doFirst {
+        layout.buildDirectory.file('chat-production-hosts').get().asFile.text =
+                '127.0.0.1 localhost core.chat.example.test\n::1 localhost\n'
+    }
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.control-events', 'true'
+    systemProperty 'auth.integration.runtime', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}
+
 tasks.register('chatRuntimeLifecycleTest', Test) {
     dependsOn 'coreBootJar', 'chatBootJar'
     testClassesDirs = sourceSets.test.output.classesDirs
