@@ -3,3 +3,8 @@ auth:
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5175}
   local-mock-login:
     user-id: ${AUTH_LOCAL_MOCK_USER_ID:}
+
+location-recommendation:
+  ai:
+    base-url: ${LOCATION_RECOMMENDATION_AI_BASE_URL:http://ai-server:8000}
+    allowed-origins: ${LOCATION_RECOMMENDATION_AI_ALLOWED_ORIGINS:http://ai-server:8000}
