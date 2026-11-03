@@ -23,7 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 class DirectAuthOverlayProjectionTest {
     private static final Path FIXTURES = Path.of("src/test/resources/auth-contract");
     private static final String RECOVERY = "/token/refresh/operations/{operationId}/session-recovery";
-    private static final String OVERLAY_SHA256 = "f716de5abffd6b1b651aa324c17be3d050b47b976920a0844937bc10a3b6b928";
+    private static final String APPROVED_OVERLAY_SHA256 = "f716de5abffd6b1b651aa324c17be3d05"
+            + "0b47b976920a0844937bc10a3b6b928";
 
     @Test
     void allRoutesStatusesAndErrorCodesMatchBaseWithApprovedExpiryAndRefresh500Additions() throws Exception {
@@ -69,7 +70,7 @@ class DirectAuthOverlayProjectionTest {
     void pinnedOverlayProjectsRoutingReplayRetentionAndAuthoritySemantics() throws Exception {
         byte[] fixtureBytes = Files.readAllBytes(FIXTURES.resolve("proposal-overlay.json"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(fixtureBytes)))
-                .isEqualTo(OVERLAY_SHA256);
+                .isEqualTo(APPROVED_OVERLAY_SHA256);
         Map<String, Object> overlay = json("proposal-overlay.json");
         assertThat(overlay.get("kind")).isEqualTo("explicit-contract-overrides");
         assertThat(overlay.get("status")).isEqualTo("proposed_not_implemented");
@@ -84,12 +85,12 @@ class DirectAuthOverlayProjectionTest {
 
         Map<String, Object> refreshOverlay = overlayOperation(overlay, "paths./token/refresh.post");
         Map<String, Object> revisit = map(refresh.get("x-refresh-revisit-contract"));
+        Map<String, Object> firstDispatch = map(refreshOverlay.get("first_dispatch"));
         assertThat(revisit.get("maximumAutomaticFirstDispatches"))
-                .isEqualTo(map(refreshOverlay.get("first_dispatch")).get("max_automatic_dispatches"));
+                .isEqualTo(firstDispatch.get("max_automatic_dispatches"));
         assertThat(revisit.get("currentOperationNullProvesNoPriorRequest"))
-                .isEqualTo(map(refreshOverlay.get("first_dispatch"))
-                        .get("current_operation_null_proves_no_prior_request"));
-        assertThat(revisit.get("never")).isEqualTo(map(refreshOverlay.get("first_dispatch")).get("never"));
+                .isEqualTo(firstDispatch.get("current_operation_null_proves_no_prior_request"));
+        assertThat(revisit.get("never")).isEqualTo(firstDispatch.get("never"));
         assertThat(map(revisit.get("receipt_first_proof_order")))
                 .isEqualTo(map(refreshOverlay.get("receipt_first_proof_order")));
 

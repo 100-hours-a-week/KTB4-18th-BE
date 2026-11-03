@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -25,6 +27,10 @@ import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.chat.auth.ChatCoreAuthFilter;
 import com.muse.meomuneum.chat.auth.ChatCoreSessionVerifier;
 import com.muse.meomuneum.chat.auth.ChatSessionVerifier;
+import com.muse.meomuneum.chat.message.relay.ChatMessageRelay;
+import com.muse.meomuneum.chat.participation.ChatParticipationService;
+import com.muse.meomuneum.chat.redis.ChatRedisConnection;
+import com.muse.meomuneum.chat.runtime.ChatRuntimeAvailability;
 import com.muse.meomuneum.chat.runtime.ChatRuntimeLifecycle;
 import com.muse.meomuneum.global.config.CorsConfig;
 import com.muse.meomuneum.global.config.JwtProperties;
@@ -60,32 +66,47 @@ public class ChatBoundaryConfiguration {
 
     @Bean
     public FilterRegistrationBean<ApplicationBoundaryFilter> chatBoundaryFilter(ObjectMapper mapper,
-            @Value("${chat.runtime.enabled:false}") boolean enabled, ObjectProvider<ChatRuntimeLifecycle> lifecycles) {
+            ChatRuntimeAvailability availability) {
         var registration = new FilterRegistrationBean<>(new ApplicationBoundaryFilter(true,
-                () -> enabled && (lifecycles.getIfAvailable() == null || lifecycles.getObject().permitted()), mapper));
+                availability::accepting, mapper));
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
         return registration;
     }
 
     @Bean("chatRuntime")
-    public HealthIndicator chatRuntimeHealth(@Value("${chat.runtime.enabled:false}") boolean enabled) {
-        return () -> enabled ? Health.up().build() : Health.down().build();
+    public ChatRuntimeAvailability chatRuntimeHealth(Environment environment,
+            ObjectProvider<ChatRuntimeLifecycle> lifecycles, ObjectProvider<ChatCoreSessionVerifier> verifiers,
+            ObjectProvider<ChatParticipationService> participation, ObjectProvider<ChatRedisConnection> redis,
+            ObjectProvider<ChatMessageRelay> relays) {
+        return new ChatRuntimeAvailability(environment, lifecycles, verifiers, participation, redis, relays);
     }
 
     @Bean("participation")
     public HealthIndicator participationHealth(
-            ObjectProvider<com.muse.meomuneum.chat.participation.ChatParticipationService> services) {
-        return () -> services.getIfAvailable() == null || services.getObject().available()
-                ? Health.up().build()
-                : Health.down().build();
+            ObjectProvider<ChatParticipationService> services, Environment environment) {
+        return () -> {
+            var service = services.getIfAvailable();
+            boolean ready = service == null
+                    ? !required(environment, "chat.distributed-presence.enabled")
+                    : service.available();
+            return ready ? Health.up().build() : Health.down().build();
+        };
     }
 
     @Bean("coreSessionAuth")
-    public HealthIndicator coreSessionAuthHealth(ObjectProvider<ChatCoreSessionVerifier> verifiers) {
+    public HealthIndicator coreSessionAuthHealth(ObjectProvider<ChatCoreSessionVerifier> verifiers,
+            Environment environment) {
         return () -> {
             var verifier = verifiers.getIfAvailable();
-            return verifier == null || verifier.isAvailable() ? Health.up().build() : Health.down().build();
+            boolean ready = verifier == null
+                    ? !required(environment, "chat.core-auth.enabled")
+                    : verifier.isAvailable();
+            return ready ? Health.up().build() : Health.down().build();
         };
+    }
+
+    private boolean required(Environment environment, String flag) {
+        return environment.acceptsProfiles(Profiles.of("prod")) || environment.getProperty(flag, Boolean.class, false);
     }
 
     @Bean

@@ -399,12 +399,15 @@ class CoreAuthProcessTest {
                     null, Map.of()).statusCode());
             assertEquals(1013, survivor.closed.get(5, TimeUnit.SECONDS));
             await(() -> status(polling, "/actuator/health/readiness") == 503);
+            assertEquals(200, status(polling, "/actuator/health/liveness"));
+            assertTrue(polling.process().isAlive());
             relayMode.set(401);
             assertEquals(503, request(polling, "GET", "/api/v1/regions/" + region + "/chat-room", token(survivingSid),
                     null, Map.of()).statusCode());
             relayMode.set(0);
             assertEquals(200, request(polling, "GET", "/api/v1/regions/" + region + "/chat-room", token(survivingSid),
                     null, Map.of()).statusCode());
+            await(() -> status(polling, "/actuator/health/readiness") == 200);
             await(() -> jdbc.queryForObject(
                     "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL",
                     Integer.class, survivor.view) == 0);
@@ -563,6 +566,10 @@ class CoreAuthProcessTest {
             admin.commands().sync().hset(channels.runtimeMarkerKey(), "generation", marker);
             Thread.sleep(1200);
             assertEquals(503, status(subscribed, "/actuator/health/readiness"));
+            assertEquals(200, status(subscribed, "/actuator/health/liveness"));
+            assertEquals(503, request(subscribed, "GET", "/api/v1/regions/" + region + "/chat-room",
+                    token(drainSid), null, Map.of()).statusCode());
+            assertTrue(subscribed.process().isAlive());
         }
         stop(polling);
         stop(subscribed);
