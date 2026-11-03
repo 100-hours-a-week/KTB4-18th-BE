@@ -20,10 +20,6 @@ import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
 import com.muse.meomuneum.global.security.AuthSessionRevokedEvent;
 
-/**
- * Materializes committed database revocations in Hazelcast. Database checks remain authoritative, so this worker is
- * cleanup and cannot reopen a revoked flow.
- */
 @Component
 @ConditionalOnProperty(prefix = "auth.state.hazelcast", name = "enabled", havingValue = "true")
 public class AuthFlowOutboxProcessor {
@@ -63,11 +59,14 @@ public class AuthFlowOutboxProcessor {
                     return;
                 }
                 try {
+                    if (isQueueCleanupEvent(event.eventKind())) {
+                        acknowledge(event);
+                        continue;
+                    }
                     if (flowService.shouldApplyOutboxAction(event.flowId(), event.flowEpoch(), event.revision(),
                             event.eventKind(), event.targetId())) {
                         Long userId = materialize(event);
                         if (event.eventKind().startsWith("SESSION_REVOKED_") && userId == null) {
-                            // A materialized Hazelcast revocation already emitted the common event.
                             userId = flowService.sessionOwnerUserId(event.targetId());
                             if (userId != null) {
                                 events.publishEvent(AuthSessionRevokedEvent.invalidation(userId, event.targetId()));
@@ -116,15 +115,15 @@ public class AuthFlowOutboxProcessor {
     }
 
     private Long materialize(Event event) {
-        if ("QUEUE_CLEANUP".equals(event.eventKind()) || "FLOW_RETIRED".equals(event.eventKind())) {
-            store.cancelTicketById(event.targetId());
-            return null;
-        }
         if (event.eventKind().startsWith("SESSION_REVOKED_")) {
             var revoked = store.revokeSession(event.targetId(), null);
             return revoked == null ? null : revoked.userId();
         }
         return null;
+    }
+
+    private boolean isQueueCleanupEvent(String eventKind) {
+        return "QUEUE_CLEANUP".equals(eventKind) || "FLOW_RETIRED".equals(eventKind);
     }
 
     private void acknowledge(Event event) {

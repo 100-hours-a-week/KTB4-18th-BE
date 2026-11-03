@@ -24,7 +24,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String REFRESH_PATH = "/api/v1/auth/token/refresh";
     private static final String LOGOUT_PATH = "/api/v1/auth/logout";
     private static final String CSRF_PATH = "/api/v1/auth/token/csrf";
-    private static final String LOGIN_RECOVERY_PATH = "/api/v1/auth/login/recovery";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
@@ -56,9 +55,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String requestUri = AuthRequestPath.path(request);
         String method = request.getMethod();
-        if (LOGIN_RECOVERY_PATH.equals(requestUri)) {
-            return true;
-        }
         boolean directRead = "GET".equals(method) && (requestUri.equals("/api/v1/auth/flow")
                 || requestUri.equals("/api/v1/auth/flow/current-operation")
                 || requestUri.matches("/api/v1/auth/login/operations/[^/]+")
