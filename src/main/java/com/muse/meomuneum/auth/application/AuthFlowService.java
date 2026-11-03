@@ -31,9 +31,10 @@ import com.muse.meomuneum.auth.config.AuthStateProperties;
 import com.muse.meomuneum.auth.exception.AuthFlowException;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 import com.muse.meomuneum.global.config.JwtProperties;
+import com.muse.meomuneum.global.security.AccessSessionAuthority;
 
 @Service
-public class AuthFlowService {
+public class AuthFlowService implements AccessSessionAuthority {
     public static final String FLOW_COOKIE_NAME = "MEO_AUTH_FLOW";
     public static final String FLOW_COOKIE_PATH = "/api/v1/auth";
 
@@ -357,6 +358,17 @@ public class AuthFlowService {
         } catch (DataAccessException exception) {
             return SessionDecision.UNAVAILABLE;
         }
+    }
+
+    @Override
+    public AccessSessionAuthority.Decision verifySession(Long userId, String sid) {
+        SessionDecision decision = checkSession(userId, sid);
+        if (decision == SessionDecision.ACTIVE) {
+            return AccessSessionAuthority.Decision.ACTIVE;
+        }
+        return decision == SessionDecision.REJECTED
+                ? AccessSessionAuthority.Decision.REJECTED
+                : AccessSessionAuthority.Decision.UNAVAILABLE;
     }
 
     public void assertActiveSession(Long userId, String sid) {
