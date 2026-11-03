@@ -254,6 +254,14 @@ public class MusicRecordRepository {
                 "SELECT COUNT(*) FROM music_records WHERE id=? AND deleted_at IS NULL", Integer.class, recordId);
         return count != null && count > 0;
     }
+
+    public boolean existsActiveRecordInRegion(long userId, long sigunguId) {
+        Boolean exists = jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM music_records mr "
+                + "JOIN regions r ON r.id=mr.region_id WHERE mr.user_id=? AND mr.region_id=? "
+                + "AND r.level='SIGUNGU' AND r.is_active=TRUE AND mr.deleted_at IS NULL LIMIT 1)",
+                Boolean.class, userId, sigunguId);
+        return Boolean.TRUE.equals(exists);
+    }
     public int updateRecord(long userId, long recordId, String placeName, String memo, Instant updatedAt) {
         return jdbc.update("UPDATE music_records SET custom_place_name=?, emotion_memo=?, updated_at=? "
                 + "WHERE id=? AND user_id=? AND deleted_at IS NULL",

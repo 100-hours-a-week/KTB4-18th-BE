@@ -131,6 +131,14 @@ location:
     connect-timeout: ${LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT:2s}
     read-timeout: ${LOCATION_REVERSE_GEOCODING_READ_TIMEOUT:3s}
 
+location-recommendation:
+  enabled: ${LOCATION_RECOMMENDATION_ENABLED:true}
+  ai:
+    base-url: ${LOCATION_RECOMMENDATION_AI_BASE_URL:http://ai-server:8000}
+    allowed-origins: ${LOCATION_RECOMMENDATION_AI_ALLOWED_ORIGINS:http://ai-server:8000}
+    connect-timeout: ${LOCATION_RECOMMENDATION_AI_CONNECT_TIMEOUT:3s}
+    timeout: ${LOCATION_RECOMMENDATION_AI_TIMEOUT:120s}
+
 chat:
   message-cleanup:
     enabled: ${CHAT_MESSAGE_CLEANUP_ENABLED:true}
