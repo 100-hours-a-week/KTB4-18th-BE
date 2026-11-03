@@ -49,7 +49,7 @@ public class HazelcastAuthStateConfiguration {
     private void validateSingletonBackend(String configuredReplicaCount) {
         if (!"1".equals(configuredReplicaCount == null ? "" : configuredReplicaCount.trim())) {
             throw new IllegalStateException(
-                    "AUTH_BACKEND_REPLICA_COUNT must be explicitly set to 1; AP-1 queue and BCrypt limits are local");
+                    "AUTH_BACKEND_REPLICA_COUNT must be explicitly set to 1; authentication limits are local");
         }
     }
 

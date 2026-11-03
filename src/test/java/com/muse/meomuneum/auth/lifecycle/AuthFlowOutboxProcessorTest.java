@@ -1,4 +1,4 @@
-package com.muse.meomuneum.auth.queue;
+package com.muse.meomuneum.auth.lifecycle;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -46,8 +46,8 @@ class AuthFlowOutboxProcessorTest {
             if (index > 1) {
                 throw new EmptyResultDataAccessException(1);
             }
-            String kind = index == 0 ? "QUEUE_CLEANUP" : "SESSION_REVOKED_LOGOUT";
-            String target = index == 0 ? "ticket-1" : sessionId;
+            String kind = index == 0 ? "LEGACY_EVENT" : "SESSION_REVOKED_LOGOUT";
+            String target = index == 0 ? "event-1" : sessionId;
             ResultSet row = mock(ResultSet.class);
             when(row.getLong("event_id")).thenReturn((long) index + 1);
             when(row.getLong("flow_epoch")).thenReturn(1L);
@@ -61,8 +61,8 @@ class AuthFlowOutboxProcessorTest {
 
         new AuthFlowOutboxProcessor(jdbc, transactions, store, flowService, events).processPending();
 
-        verify(flowService, never()).shouldApplyOutboxAction("flow-1", 1L, 2L, "QUEUE_CLEANUP", "ticket-1");
-        verify(store, never()).getSession("ticket-1");
+        verify(flowService, never()).shouldApplyOutboxAction("flow-1", 1L, 2L, "LEGACY_EVENT", "event-1");
+        verify(store, never()).getSession("event-1");
         verify(store).revokeSession(sessionId, null);
         verify(flowService).shouldApplyOutboxAction("flow-1", 1L, 2L, "SESSION_REVOKED_LOGOUT", sessionId);
         verify(events).publishEvent(AuthSessionRevokedEvent.invalidation(42L, sessionId));

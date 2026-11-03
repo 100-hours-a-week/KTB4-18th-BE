@@ -27,8 +27,8 @@ class AuthServiceTest {
         HazelcastAuthStateStore authStateStore = mock(HazelcastAuthStateStore.class);
         AuthFlowService flowService = mock(AuthFlowService.class);
         AuthStateProperties properties = new AuthStateProperties("01234567890123456789012345678901",
-                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "MEO_QUEUE_V2", 1209600, 7776000,
-                900, 60, 900, 20, 10, 64, 16, 4, 120, 1800, 5, 20, 4000, 86400, 1, 100000, 300, 45);
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", 1209600, 7776000, 10, 64, 16, 86400, 1, 100000, 300,
+                45);
         AuthService service = new AuthService(jwt,
                 new JwtProperties("project-api", "project-api", "test-secret", 3600, 1209600),
                 refreshCookieFactory, users, mock(ApplicationEventPublisher.class), authStateStore, replayCipher,
