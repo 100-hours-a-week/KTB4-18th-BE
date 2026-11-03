@@ -141,7 +141,7 @@ public class DirectAuthLoginLifecycleRepository {
             LocalDateTime expiry) {
         DirectAuthProjectionRepository.requireOne(jdbc.update("""
                 UPDATE auth_browser_flows SET flow_epoch = flow_epoch + 1, revision = revision + 1,
-                lifecycle = 'AUTHENTICATED', active_session_sid = ?, current_ticket_id = NULL,
+                lifecycle = 'AUTHENTICATED', active_session_sid = ?,
                 flow_cookie_hash = ?, flow_cookie_generation = flow_cookie_generation + 1, cookie_expires_at = ?,
                 active_login_operation_id = NULL, current_direct_operation_kind = 'LOGIN',
                 current_direct_operation_id = ?, current_refresh_recovery_operation_id = NULL,

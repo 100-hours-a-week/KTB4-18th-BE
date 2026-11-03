@@ -1,4 +1,4 @@
-package com.muse.meomuneum.auth.queue;
+package com.muse.meomuneum.auth.lifecycle;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -158,8 +158,8 @@ class DirectAuthNonceAllocatorTest {
         fixture.jdbc.update("UPDATE auth_direct_projection_control SET projection_generation = 2, replay_key_id = ?",
                 keyId);
         var properties = new com.muse.meomuneum.auth.config.AuthStateProperties(
-                fixture.properties.hmacKey(), java.util.Base64.getEncoder().encodeToString(key), null,
-                1800, 3600, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                fixture.properties.hmacKey(), java.util.Base64.getEncoder().encodeToString(key), 1800, 3600,
+                10, 64, 16, 86400, 1, 100000, 300, 45);
         var cipher = new com.muse.meomuneum.auth.application.RefreshReplayCipher(properties, fixture.allocator);
         var fresh = cipher.reserveV2(1, () -> {
         });

@@ -40,8 +40,8 @@ class HazelcastAuthStateStoreTest {
         ObjectProvider<HazelcastInstance> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(member);
         properties = new AuthStateProperties("01234567890123456789012345678901",
-                Base64.getEncoder().encodeToString(new byte[32]), "MEO_QUEUE_V2", 1209600, 7776000,
-                900, 60, 900, 20, 10, 8, 4, 4, 120, 1800, 5, 2000, 4000, 86400, 1, 1000, 300, 60);
+                Base64.getEncoder().encodeToString(new byte[32]), 1209600, 7776000, 10, 64, 16, 86400, 1, 100000, 300,
+                45);
         store = new HazelcastAuthStateStore(provider, properties);
     }
 
@@ -92,15 +92,7 @@ class HazelcastAuthStateStoreTest {
     @Test
     void configuredSessionCapacityStillFailsClosed() {
         AuthStateProperties bounded = new AuthStateProperties(properties.hmacKey(), properties.replayEncryptionKey(),
-                properties.queueCookieName(), properties.sessionIdleSeconds(), properties.sessionAbsoluteSeconds(),
-                properties.queueTicketSeconds(), properties.readyTicketSeconds(), properties.queueTombstoneSeconds(),
-                properties.queueCapacity(), properties.maxDeviceSessions(), properties.localAuthConcurrency(),
-                properties.localBcryptConcurrency(), properties.globalBcryptPermits(),
-                properties.bcryptPermitLeaseSeconds(), properties.queueCookieSeconds(),
-                properties.statusMinimumIntervalSeconds(), properties.queueCreateRequestsPerMinute(),
-                properties.operationRecordCapacity(), properties.idempotencyIdleHorizonSeconds(),
-                properties.expectedHazelcastMembers(), 1, properties.revokedSessionRetentionSeconds(),
-                properties.refreshReplayWindowSeconds());
+                1209600, 7776000, 10, 64, 16, 86400, 1, 1, 300, 45);
         @SuppressWarnings("unchecked")
         ObjectProvider<HazelcastInstance> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(member);

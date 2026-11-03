@@ -42,8 +42,8 @@ class HazelcastSessionBatchReadTest {
         when(cluster.getMembers()).thenReturn(Set.of(mock(Member.class)));
         when(hz.<String, HazelcastAuthStateStore.AuthSession>getMap("auth-sessions-v2")).thenReturn(sessions);
         var properties = new AuthStateProperties("01234567890123456789012345678901",
-                Base64.getEncoder().encodeToString(new byte[32]), "MEO_QUEUE_V2", 1209600, 7776000,
-                900, 60, 900, 20, 1, 64, 4, 4, 120, 1800, 1, 20, 4000, 86400, 1, 100000, 300, 45);
+                Base64.getEncoder().encodeToString(new byte[32]), 1209600, 7776000, 10, 64, 16, 86400, 1, 100000, 300,
+                45);
         var store = new HazelcastAuthStateStore(provider, properties);
         String sid = UUID.randomUUID().toString();
         var active = mock(HazelcastAuthStateStore.AuthSession.class);

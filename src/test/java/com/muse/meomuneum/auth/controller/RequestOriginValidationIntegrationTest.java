@@ -77,7 +77,7 @@ class RequestOriginValidationIntegrationTest {
             boolean authenticated = request.getRequestURI().endsWith("/token/refresh");
             return mutation.apply(new FlowSnapshot("123e4567-e89b-42d3-a456-426614174000",
                     1, 1, authenticated ? "AUTHENTICATED" : "ANONYMOUS", authenticated,
-                    null, authenticated ? "test-session" : null, "EXISTING"));
+                    authenticated ? "test-session" : null, "EXISTING"));
         }).when(authFlowService).withLockedFlow(any(), any());
         when(authFlowService.commitLogout(any(), any(), anyString())).thenReturn(
                 new LogoutReceipt("123e4567-e89b-42d3-a456-426614174001", true, 2, 2, Instant.now()));
