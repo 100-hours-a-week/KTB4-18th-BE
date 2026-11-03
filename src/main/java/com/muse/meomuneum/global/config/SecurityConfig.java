@@ -66,7 +66,6 @@ public class SecurityConfig {
             Environment environment)
             throws Exception {
         String[] csrfIgnoredPaths = {
-                "/api/v1/auth/login-queue/tickets",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
@@ -124,7 +123,9 @@ public class SecurityConfig {
                                         SecurityErrorCode.ACCESS_UNAUTHORIZED))
                         .accessDeniedHandler((
                                 request, response, accessDeniedException) -> {
-                            String path = request.getRequestURI();
+                            String path = request.getServletPath().isEmpty()
+                                    ? request.getRequestURI()
+                                    : request.getServletPath();
                             SecurityErrorCode code = path.startsWith("/api/v1/auth/")
                                     ? SecurityErrorCode.CSRF_DENIED
                                     : path.startsWith("/api/v1/music-records/")

@@ -17,7 +17,7 @@ public class DirectAuthCorsProcessor extends DefaultCorsProcessor {
     public boolean processRequest(CorsConfiguration config, HttpServletRequest request, HttpServletResponse response)
             throws IOException {
         List<String> origins = Collections.list(request.getHeaders("Origin"));
-        boolean auth = request.getRequestURI().startsWith("/api/v1/auth/");
+        boolean auth = AuthRequestPath.path(request).startsWith("/api/v1/auth/");
         boolean preflight = "OPTIONS".equals(request.getMethod()) && !origins.isEmpty()
                 && request.getHeader("Access-Control-Request-Method") != null;
         boolean invalid = !origins.isEmpty() && (origins.size() != 1 || config == null

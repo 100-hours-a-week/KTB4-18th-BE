@@ -23,7 +23,6 @@ import com.muse.meomuneum.auth.dto.CsrfTokenResponse;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.auth.response.AuthSuccessCode;
 import com.muse.meomuneum.global.response.ApiResponse;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.TokenClaims;
@@ -31,6 +30,9 @@ import com.muse.meomuneum.global.security.TokenClaims;
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
+
+    public record LogoutResponse(LogoutReceipt logoutReceipt) {
+    }
 
     private final AuthService authService;
     private final CsrfTokenService csrfTokenService;
@@ -66,42 +68,14 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<?>> login(@Valid @RequestBody LoginRequest request,
-            HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
+            HttpServletRequest servletRequest) {
         if ("direct-v2".equals(servletRequest.getHeader("X-Auth-Login-Protocol"))) {
             return directController.login(request, servletRequest);
         }
         HttpHeaders headers = new HttpHeaders();
         headers.setCacheControl("no-store");
-        TokenResponse tokenResponse;
-        try {
-            tokenResponse = authFlowService == null
-                    ? authService.login(request, servletRequest, headers)
-                    : authFlowService.withLockedFlow(servletRequest, flow -> {
-                        var loginResult = authService.loginWithTicket(request, servletRequest, headers);
-                        TokenResponse response = loginResult.response();
-                        TokenClaims claims = jwtTokenProvider.parseAccessToken(response.accessToken());
-                        try {
-                            authFlowService.activateSession(servletRequest, claims.userId(), claims.sessionId(),
-                                    loginResult.ticketId(), refreshCookie(headers), replayCipher, headers);
-                        } catch (RuntimeException rejected) {
-                            authFlowService.enqueueRejectedSessionCleanup(
-                                    flow.flowId(), flow.flowEpoch(), claims.sessionId());
-                            throw rejected;
-                        }
-                        return response;
-                    });
-        } catch (AuthenticationFailedException exception) {
-            headers.getOrEmpty(HttpHeaders.SET_COOKIE)
-                    .forEach(cookie -> servletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie));
-            headers.remove(HttpHeaders.SET_COOKIE);
-            return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
-                    exception.getErrorCode().status());
-        }
-        headers.getOrEmpty(HttpHeaders.SET_COOKIE)
-                .forEach(cookie -> servletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie));
-        headers.remove(HttpHeaders.SET_COOKIE);
-        return new ResponseEntity<>(ApiResponse.success(AuthSuccessCode.LOGIN_SUCCESS, tokenResponse), headers,
-                AuthSuccessCode.LOGIN_SUCCESS.status());
+        return new ResponseEntity<>(ApiResponse.<Object>of("INVALID_LOGIN_PROTOCOL", null), headers,
+                HttpStatus.BAD_REQUEST);
     }
 
     @PostMapping("/token/refresh")
@@ -187,9 +161,6 @@ public class AuthController {
             return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
                     exception.getErrorCode().status());
         }
-    }
-
-    public record LogoutResponse(LogoutReceipt logoutReceipt) {
     }
 
     private String refreshCookie(HttpHeaders headers) {

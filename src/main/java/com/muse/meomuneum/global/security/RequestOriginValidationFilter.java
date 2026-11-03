@@ -38,10 +38,10 @@ public class RequestOriginValidationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         boolean direct = "direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"));
         boolean recoveryRead = direct && "GET".equals(request.getMethod())
-                && request.getRequestURI()
+                && AuthRequestPath.path(request)
                         .matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery/[^/]+");
         boolean directOptions = direct && "OPTIONS".equals(request.getMethod())
-                && request.getRequestURI().startsWith("/api/v1/auth/");
+                && AuthRequestPath.path(request).startsWith("/api/v1/auth/");
         if ((STATE_CHANGING_METHODS.contains(request.getMethod().toUpperCase(Locale.ROOT)) || recoveryRead
                 || directOptions)
                 && !(recoveryRead && !request.getHeaders("Origin").hasMoreElements()
