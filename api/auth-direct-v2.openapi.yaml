@@ -3,14 +3,14 @@ openapi: 3.1.0
 info:
   title: Meomuneum direct-v2 authentication contract
   version: 2.4.1
-  description: 'Direct-v2 authentication wire contract implemented by the compatible backend runtime when auth.direct-v2.enabled is enabled. Headerless legacy routes retain their existing separate behavior where explicitly specified. Browser-managed cookies are never read or constructed by FE. Refresh/logout operation replay is defined by original startingEpoch plus either exact original-cookie proof or exact result-cookie proof, with MySQL canonical state. GET /flow/current-operation is read-only and separate from bootstrap. It validates every current flow-proof candidate: exactly one valid flow proof wins even if an unrelated valid binding proof is present; multiple distinct valid flows return generic AUTH_FLOW_NOT_FOUND without cookie-order choice or binding fallback; binding fallback is considered only when no flow proof validates and is constrained to the same flow key. Refresh response-loss recovery requires DB-bound browser-binding proof and explicit user action. GET /flow/current-operation may omit flow tuple headers when sessionStorage is unreadable; FE must not guess them.'
+  description: 'Direct-v2 authentication wire contract implemented by the compatible backend runtime when auth.direct-v2.enabled is enabled. Markerless POST /login is rejected with 400 INVALID_LOGIN_PROTOCOL; direct-v2 requests never downgrade. Browser-managed cookies are never read or constructed by FE. Refresh/logout operation replay is defined by original startingEpoch plus either exact original-cookie proof or exact result-cookie proof, with MySQL canonical state. GET /flow/current-operation is read-only and separate from bootstrap. It validates every current flow-proof candidate: exactly one valid flow proof wins even if an unrelated valid binding proof is present; multiple distinct valid flows return generic AUTH_FLOW_NOT_FOUND without cookie-order choice or binding fallback; binding fallback is considered only when no flow proof validates and is constrained to the same flow key. Refresh response-loss recovery requires DB-bound browser-binding proof and explicit user action. GET /flow/current-operation may omit flow tuple headers when sessionStorage is unreadable; FE must not guess them.'
 servers:
 - url: "/api/v1/auth"
 paths:
   "/flow":
     get:
       operationId: getDirectAuthFlow
-      description: Direct-v2 flow snapshot read. It never creates/upgrades a flow, changes expiry, emits/expires cookies, or changes a receipt/pointer. A fresh/no-proof caller receives typed 404; a valid direct or legacy flow proof may read the canonical snapshot. A valid binding proof without a usable flow proof receives typed 409 AUTH_FLOW_REBOOTSTRAP_REQUIRED. Flow creation/upgrading is the separate user-triggered credential-free POST /flows. Headerless legacy requests retain their existing contract. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 success never reports QUEUED and currentTicket is null.
+      description: Direct-v2 flow snapshot read. It never creates/upgrades a flow, changes expiry, emits/expires cookies, or changes a receipt/pointer. A fresh/no-proof caller receives typed 404; a valid direct or legacy flow proof may read the canonical snapshot. A valid binding proof without a usable flow proof receives typed 409 AUTH_FLOW_REBOOTSTRAP_REQUIRED. Flow creation/upgrading is the separate user-triggered credential-free POST /flows. Headerless legacy requests retain their existing contract. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 flow snapshots do not include ticket fields.
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
@@ -92,11 +92,10 @@ paths:
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
-        required: true
-        description: Direct-v2 marker.
+        required: false
+        description: Optional protocol marker. Only the exact single value direct-v2 is accepted for login; absent, blank, repeated, malformed, or unknown values return 400 INVALID_LOGIN_PROTOCOL and never dispatch to legacy login.
         schema:
           type: string
-          const: direct-v2
       - in: header
         name: X-Auth-Flow-Id
         required: true
@@ -201,7 +200,13 @@ paths:
                 "$ref": "#/components/schemas/InProgressEnvelope"
         '400':
           description: Invalid protocol/tuple/request or missing/invalid client expiry (INVALID_CLIENT_EXPIRY); no credentials or Set-Cookie. Existing protocol, CSRF, Origin and tuple error precedence is preserved.
-          headers: {}
+          headers:
+            Cache-Control:
+              required: true
+              description: Prevents storage of authentication protocol errors.
+              schema:
+                type: string
+                const: no-store
           content:
             application/json:
               schema:
@@ -908,7 +913,7 @@ paths:
     get:
       operationId: getCurrentAuthOperation
       summary: Read current flow and direct authentication operation from MySQL
-      description: Read-only reconciliation for a browser that cannot read sessionStorage metadata or has lost a current flow-proof cookie. Cookie header order is ignored. First validate all presented direct-v2 flow-proof cookies against the current MySQL flow key, generation, HMAC, and expiry. If exactly one distinct current flow validates, it is authoritative and data.flow.proofState is ACTIVE. If valid current flow-proof cookies resolve to multiple distinct flows, fail with generic 404 AUTH_FLOW_NOT_FOUND regardless of cookie order and do not attempt binding fallback; a binding cookie never overrides it, including a valid binding cookie for another flow; that unrelated binding cookie is ignored for selection. If no current flow proof validates, a browser-binding proof may be used only when its database-bound HMAC, active generation, and fixed expiry validate. When one or more direct flow-proof cookie names were presented, fallback must match their single distinct flow key; multiple distinct rejected flow keys or a different binding flow is ambiguous and returns generic 404 AUTH_FLOW_NOT_FOUND only during fallback, because no current flow proof validated. A unique valid current flow proof remains authoritative even if a different-flow binding cookie is also presented. When no flow-proof cookie was presented, exactly one valid binding flow may resolve the lookup. Successful binding fallback returns data.flow.proofState=REBOOTSTRAP_REQUIRED. Binding proof grants no session, token, login, or protected-API authority. This operation reads the flow and current-operation pointer from a consistent MySQL snapshot; it never bootstraps, changes state, updates expiry, repairs or expires cookies, or returns credentials/tokens. MySQL is authoritative; Hazelcast is not a fallback. The X-Auth-Flow-Id and X-Auth-Flow-Epoch request headers are optional. If sessionStorage is unreadable, omit both and use only browser-managed proof cookies; return the canonical flow and current-operation pointer or null without mutation or cookies. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 success never reports QUEUED and currentTicket is null.
+      description: Read-only reconciliation for a browser that cannot read sessionStorage metadata or has lost a current flow-proof cookie. Cookie header order is ignored. First validate all presented direct-v2 flow-proof cookies against the current MySQL flow key, generation, HMAC, and expiry. If exactly one distinct current flow validates, it is authoritative and data.flow.proofState is ACTIVE. If valid current flow-proof cookies resolve to multiple distinct flows, fail with generic 404 AUTH_FLOW_NOT_FOUND regardless of cookie order and do not attempt binding fallback; a binding cookie never overrides it, including a valid binding cookie for another flow; that unrelated binding cookie is ignored for selection. If no current flow proof validates, a browser-binding proof may be used only when its database-bound HMAC, active generation, and fixed expiry validate. When one or more direct flow-proof cookie names were presented, fallback must match their single distinct flow key; multiple distinct rejected flow keys or a different binding flow is ambiguous and returns generic 404 AUTH_FLOW_NOT_FOUND only during fallback, because no current flow proof validated. A unique valid current flow proof remains authoritative even if a different-flow binding cookie is also presented. When no flow-proof cookie was presented, exactly one valid binding flow may resolve the lookup. Successful binding fallback returns data.flow.proofState=REBOOTSTRAP_REQUIRED. Binding proof grants no session, token, login, or protected-API authority. This operation reads the flow and current-operation pointer from a consistent MySQL snapshot; it never bootstraps, changes state, updates expiry, repairs or expires cookies, or returns credentials/tokens. MySQL is authoritative; Hazelcast is not a fallback. The X-Auth-Flow-Id and X-Auth-Flow-Epoch request headers are optional. If sessionStorage is unreadable, omit both and use only browser-managed proof cookies; return the canonical flow and current-operation pointer or null without mutation or cookies. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 flow snapshots do not include ticket fields.
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
@@ -1684,7 +1689,7 @@ paths:
     post:
       operationId: prepareDirectAuthFlow
       summary: Prepare or reuse a direct-v2 flow after an explicit login-button action
-      description: Synchronous, credential-free flow bootstrap. FE sends this only after the user submits the login form and after persisting/readback of a bootstrap operation tuple. The body is absent and no email/password/token is sent. With no usable proof it creates an anonymous flow; a valid legacy MEO_AUTH_FLOW cookie resolves and upgrades the same anonymous flow; a valid direct-v2 proof returns the current canonical flow. Legacy QUEUED state is rejected; an authenticated flow is returned as authenticated and FE must not send login. The globally unique bootstrap operation ID is stored in auth_flow_bootstrap_operations in the same short MySQL transaction as flow creation/upgrade and the encrypted exact response. Same-ID retries match the stable request fingerprint and either the original proof fingerprint or exact current result proofs; they replay the exact body and separate physical Set-Cookie lines for 900 seconds only while the saved flow/status/epoch/revision and cookie generations remain canonical. Afterward a minimal tombstone returns 409 for another 86,400 seconds. Changed binding returns AUTH_OPERATION_ID_REUSED; later canonical mutation returns AUTH_OPERATION_SUPERSEDED; expiration returns AUTH_OPERATION_RECEIPT_EXPIRED. Rate limiting applies only to a new ID. No bootstrap mutation occurs during page mount. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 success never reports QUEUED and currentTicket is null.
+      description: Synchronous, credential-free flow bootstrap. FE sends this only after the user submits the login form and after persisting/readback of a bootstrap operation tuple. The body is absent and no email/password/token is sent. With no usable proof it creates an anonymous flow; a valid legacy MEO_AUTH_FLOW cookie resolves and upgrades the same anonymous flow; a valid direct-v2 proof returns the current canonical flow. Legacy QUEUED state is rejected; an authenticated flow is returned as authenticated and FE must not send login. The globally unique bootstrap operation ID is stored in auth_flow_bootstrap_operations in the same short MySQL transaction as flow creation/upgrade and the encrypted exact response. Same-ID retries match the stable request fingerprint and either the original proof fingerprint or exact current result proofs; they replay the exact body and separate physical Set-Cookie lines for 900 seconds only while the saved flow/status/epoch/revision and cookie generations remain canonical. Afterward a minimal tombstone returns 409 for another 86,400 seconds. Changed binding returns AUTH_OPERATION_ID_REUSED; later canonical mutation returns AUTH_OPERATION_SUPERSEDED; expiration returns AUTH_OPERATION_RECEIPT_EXPIRED. Rate limiting applies only to a new ID. No bootstrap mutation occurs during page mount. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 flow snapshots do not include ticket fields.
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
@@ -1858,6 +1863,7 @@ components:
       - AUTH_BCRYPT_CAPACITY
       - AUTH_STATE_UNAVAILABLE
       - LOGIN_PROTOCOL_DISABLED
+      - AUTH_ORIGIN_DENIED
       - CSRF_DENIED
       - ORIGIN_NOT_ALLOWED
       - AUTH_FLOW_REQUIRED
@@ -1882,7 +1888,6 @@ components:
       - AUTH_RECOVERY_IN_PROGRESS
       - AUTH_RECOVERY_LEASE_EXPIRED
       - INVALID_LOGIN_REQUEST
-      - LEGACY_QUEUE_ACTIVE
     Lifecycle:
       type: string
       enum:
@@ -1890,24 +1895,6 @@ components:
       - AUTHENTICATING
       - AUTHENTICATED
       - RETIRED
-    TicketStatus:
-      type: string
-      enum:
-      - CLAIMED
-      - PENDING
-      - OFFERING
-      - CREATING
-      - WAITING
-      - ADMITTING
-      - READY
-      - VERIFYING
-      - RETRYABLE
-      - REQUEUING
-      - REQUEUE_OFFERING
-      - REQUEUING_UNKNOWN
-      - CONSUMED
-      - CANCELLED
-      - EXPIRED
     EnvelopeBase:
       type: object
       required:
@@ -2098,24 +2085,7 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
-    CurrentTicket:
-      type: object
-      required:
-      - ticketId
-      - status
-      - flowRevision
-      properties:
-        ticketId:
-          type: string
-          minLength: 1
-        status:
-          "$ref": "#/components/schemas/TicketStatus"
-        flowRevision:
-          type: string
-          pattern: "^(?:0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$"
-          description: Canonical unsigned decimal string, within signed MySQL BIGINT range; no leading zeros.
-          example: '0'
-      additionalProperties: false
+            - AUTH_ORIGIN_DENIED
     PendingOperation:
       type: object
       required:
@@ -2130,7 +2100,6 @@ components:
           enum:
           - LOGOUT
           - REFRESH
-          - QUEUE_CANCEL
           - DIRECT_LOGIN
       additionalProperties: false
     LogoutReceipt:
@@ -2191,30 +2160,6 @@ components:
           description: Canonical unsigned decimal string, within signed MySQL BIGINT range; no leading zeros.
           example: '1'
       additionalProperties: false
-    QueueCancelReceipt:
-      type: object
-      required:
-      - operationId
-      - committed
-      - flowEpoch
-      - revision
-      properties:
-        operationId:
-          type: string
-          format: uuid
-        committed:
-          type: boolean
-        flowEpoch:
-          type: string
-          pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$"
-          description: Canonical unsigned decimal string, within signed MySQL BIGINT range; no leading zeros.
-          example: '1'
-        revision:
-          type: string
-          pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$"
-          description: Canonical unsigned decimal string, within signed MySQL BIGINT range; no leading zeros.
-          example: '1'
-      additionalProperties: false
     FlowData:
       type: object
       required:
@@ -2224,11 +2169,9 @@ components:
       - lifecycle
       - authenticated
       - refreshGeneration
-      - currentTicket
       - pendingOperations
       - lastLogoutReceipt
       - lastRefreshReceipt
-      - lastQueueCancelReceipt
       - rebootstrapReason
       - loginProtocol
       - flowCookieGeneration
@@ -2256,9 +2199,6 @@ components:
           pattern: "^(?:0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$"
           description: Canonical unsigned decimal string, within signed MySQL BIGINT range; no leading zeros.
           example: '0'
-        currentTicket:
-          type: 'null'
-          description: Direct-v2 has no queue ticket.
         pendingOperations:
           type: array
           items:
@@ -2271,10 +2211,6 @@ components:
           oneOf:
           - type: 'null'
           - "$ref": "#/components/schemas/RefreshReceipt"
-        lastQueueCancelReceipt:
-          oneOf:
-          - type: 'null'
-          - "$ref": "#/components/schemas/QueueCancelReceipt"
         rebootstrapReason:
           type:
           - string
@@ -2433,7 +2369,6 @@ components:
             - REAUTH_REQUIRED
             - AUTH_OPERATION_ID_REUSED
             - AUTH_OPERATION_RECEIPT_EXPIRED
-            - LEGACY_QUEUE_ACTIVE
           data:
             type: 'null'
         additionalProperties: false
@@ -2760,6 +2695,7 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
+            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -2792,6 +2728,7 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
+            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -2808,6 +2745,7 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
+            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -4190,7 +4128,7 @@ x-operation-retention-contract:
     table: auth_flow_rebootstrap_operations
 x-security-protocol-contract:
   protocolHeader: X-Auth-Login-Protocol
-  legacy: Header absent preserves the current legacy route, login CSRF exemption, and Referer fallback exactly.
+  legacy: Header absence preserves legacy routing only on explicitly compatible endpoints. POST /login rejects an absent marker with 400 INVALID_LOGIN_PROTOCOL and never dispatches to legacy login. Other documented legacy-compatible authentication endpoints retain their existing CSRF and Origin behavior.
   directV2: Exact single value direct-v2 selects the direct-v2 policy. Unsafe requests require valid CSRF cookie and X-CSRF-TOKEN header plus an actual exact allowlisted Origin; Referer cannot substitute.
   invalidMarker: Blank, repeated, malformed, or unknown marker returns HTTP 400 INVALID_LOGIN_PROTOCOL before CSRF or Origin evaluation and never falls back to legacy. Direct-only routes also reject a missing marker as INVALID_LOGIN_PROTOCOL; only routes explicitly preserving legacy behavior may omit it. Exact direct-v2 with invalid CSRF remains 403 CSRF_DENIED before Origin; exact direct-v2 with valid CSRF then requires actual allowlisted Origin.
   oldBackendRouting: Infrastructure-owned rollout routing that prevents requests reaching unsupported old binaries is excluded from this contract and implementation.
@@ -4200,8 +4138,8 @@ x-security-protocol-contract:
     default: false
     runtimeControl: DirectAuthAdmissionFilter runs after CSRF and Origin validation. Spring property auth.direct-v2.enabled (environment alias AUTH_DIRECT_V2_ENABLED) is read at process startup; changing it requires restarting the compatible backend process. There is no unauthenticated or public toggle endpoint.
     whenDisabled: After CSRF and Origin validation, POST /api/v1/auth/flows and direct-v2 POST /api/v1/auth/login return 503 LOGIN_PROTOCOL_DISABLED before new flow/login admission is committed.
-    stillAvailable: Read-only flow/current-operation/status, explicit existing-operation recovery and rebootstrap, refresh/logout for canonical direct sessions, and all legacy queue routes remain available. Direct requests never downgrade to legacy.
-  markerFilter: DirectAuthProtocolMarkerFilter runs before Spring CsrfFilter. It rejects invalid/repeated markers and a missing marker on direct-only paths. Missing marker on legacy-compatible /login and legacy refresh/logout behavior passes unchanged.
+    stillAvailable: Read-only flow/current-operation/status, explicit existing-operation recovery and rebootstrap, refresh/logout for canonical direct sessions, and queue routes are not part of this contract. Direct requests never downgrade to legacy.
+  markerFilter: DirectAuthProtocolMarkerFilter runs before Spring CsrfFilter. It rejects invalid/repeated markers and a missing marker on direct-only paths. POST /login rejects an absent marker with 400 INVALID_LOGIN_PROTOCOL; explicitly legacy-compatible refresh/logout behavior remains unchanged.
 x-schema-migration-contract:
   additiveOnly: true
   historicalMigration: V20261024142649__create_auth_browser_flow_authority.sql is the immutable auth baseline; overall fixed-commit latest is V20261027205623__add_chat_runtime_recovery_control.sql. Upgrade tests start at the latter.

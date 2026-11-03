@@ -66,7 +66,6 @@ public class SecurityConfig {
             Environment environment)
             throws Exception {
         String[] csrfIgnoredPaths = {
-                "/api/v1/auth/login-queue/tickets",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
                 "/api/v1/speech-transcriptions",
@@ -87,7 +86,7 @@ public class SecurityConfig {
         };
 
         RequestMatcher legacyLogin = request -> HttpMethod.POST.matches(request.getMethod())
-                && "/api/v1/auth/login".equals(request.getRequestURI())
+                && "/api/v1/auth/login".equals(requestPath(request))
                 && request.getHeader("X-Auth-Login-Protocol") == null;
 
         CorsFilter corsFilter = new CorsFilter(corsConfigurationSource);
@@ -124,7 +123,9 @@ public class SecurityConfig {
                                         SecurityErrorCode.ACCESS_UNAUTHORIZED))
                         .accessDeniedHandler((
                                 request, response, accessDeniedException) -> {
-                            String path = request.getRequestURI();
+                            String path = request.getServletPath().isEmpty()
+                                    ? request.getRequestURI()
+                                    : request.getServletPath();
                             SecurityErrorCode code = path.startsWith("/api/v1/auth/")
                                     ? SecurityErrorCode.CSRF_DENIED
                                     : path.startsWith("/api/v1/music-records/")
@@ -173,5 +174,17 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder(@Value("${auth.bcrypt.strength:8}") int strength) {
         return new BCryptPasswordEncoder(strength);
+    }
+
+    private static String requestPath(jakarta.servlet.http.HttpServletRequest request) {
+        String servletPath = request.getServletPath();
+        if (servletPath != null && !servletPath.isEmpty()) {
+            return servletPath;
+        }
+        String uri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        return contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)
+                ? uri.substring(contextPath.length())
+                : uri;
     }
 }

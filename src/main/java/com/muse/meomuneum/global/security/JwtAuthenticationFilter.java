@@ -28,7 +28,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String REFRESH_PATH = "/api/v1/auth/token/refresh";
     private static final String LOGOUT_PATH = "/api/v1/auth/logout";
     private static final String CSRF_PATH = "/api/v1/auth/token/csrf";
-    private static final String LOGIN_QUEUE_PREFIX = "/api/v1/auth/login-queue/";
     private static final String LOGIN_RECOVERY_PATH = "/api/v1/auth/login/recovery";
 
     private final JwtTokenProvider jwtTokenProvider;
@@ -59,9 +58,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String requestUri = request.getRequestURI();
+        String requestUri = AuthRequestPath.path(request);
         String method = request.getMethod();
-        if (requestUri.startsWith(LOGIN_QUEUE_PREFIX) || LOGIN_RECOVERY_PATH.equals(requestUri)) {
+        if (LOGIN_RECOVERY_PATH.equals(requestUri)) {
             return true;
         }
         boolean directRead = "GET".equals(method) && (requestUri.equals("/api/v1/auth/flow")
