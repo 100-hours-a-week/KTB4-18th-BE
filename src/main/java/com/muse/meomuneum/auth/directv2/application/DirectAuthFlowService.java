@@ -259,11 +259,9 @@ public class DirectAuthFlowService {
         body.put("lifecycle", flow.lifecycle());
         body.put("authenticated", authenticated);
         body.put("refreshGeneration", Long.toString(generation));
-        body.put("currentTicket", null);
         body.put("pendingOperations", List.of());
         body.put("lastLogoutReceipt", null);
         body.put("lastRefreshReceipt", null);
-        body.put("lastQueueCancelReceipt", null);
         body.put("rebootstrapReason", null);
         body.put("loginProtocol", "direct-v2");
         body.put("flowCookieGeneration", Long.toString(flow.flowCookieGeneration()));
