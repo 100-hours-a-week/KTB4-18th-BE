@@ -112,7 +112,7 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
         check();
         if (!permitted()) {
             throw new IllegalStateException(
-                    "Chat runtime is not prepared; keep routing closed and run offline recovery");
+                    "Chat runtime dependency or recovery state is not ready at startup; keep routing closed");
         }
     }
 
@@ -173,8 +173,9 @@ public final class ChatRuntimeLifecycle implements SmartLifecycle {
             permitUntil = 0;
             if (reported.compareAndSet(false, true)) {
                 metrics.failed();
-                log.warn("event=chat_runtime_closed exception={} check_stage={} db_ms={} redis_server_ms={} "
-                        + "redis_marker_ms={} check_gap_ms={} elapsed_ms={}", unavailable.getClass().getSimpleName(),
+                log.warn("event=chat_runtime_closed phase=runtime_check exception={} check_stage={} "
+                        + "db_ms={} redis_server_ms={} redis_marker_ms={} check_gap_ms={} elapsed_ms={}",
+                        unavailable.getClass().getSimpleName(),
                         stage, TimeUnit.NANOSECONDS.toMillis(db), TimeUnit.NANOSECONDS.toMillis(server),
                         TimeUnit.NANOSECONDS.toMillis(marker), TimeUnit.NANOSECONDS.toMillis(gap),
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
