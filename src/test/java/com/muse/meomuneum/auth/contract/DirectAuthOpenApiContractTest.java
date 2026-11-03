@@ -30,7 +30,7 @@ class DirectAuthOpenApiContractTest {
             new Route("/flow", "get", "200,400,404,409,503",
                     "8ecbf32f6f3b10d2c249d9d7de6717c38f164dd17a1e6d8a41a51fc193760e03"),
             new Route("/login", "post", "200,202,400,401,403,409,429,503",
-                    "870d3a8a32b29e3bfa5091bb2a45c2e0ab1f1ba6b75fb035b06e84e840c61fb1"),
+                    "27e73681942bf6fdffe889528206770edbf6e2d726c9099ff758e5e2a40a9508"),
             new Route("/login/operations/{operationId}", "get", "200,202,400,404,503",
                     "c9db2c814e11ecfb815349b4bc5438fd1a378ad1f5591fb2bc0b304110434f5a"),
             new Route("/login/operations/{operationId}/session-recovery", "post", "200,202,400,403,404,409,503",
@@ -77,6 +77,12 @@ class DirectAuthOpenApiContractTest {
             assertThat(hash(operation)).as(route.path() + " " + route.method()
                     + " parameters, security, responses and request body").isEqualTo(route.digest());
         }
+        Map<String, Object> login = map(map(paths.get("/login")).get("post"));
+        Map<String, Object> protocolMarker = parameter(login, "X-Auth-Login-Protocol");
+        assertThat(protocolMarker.get("required")).isEqualTo(false);
+        assertThat(map(protocolMarker.get("schema"))).doesNotContainKey("const");
+        Map<String, Object> login400 = map(map(login.get("responses")).get("400"));
+        assertThat(map(login400.get("headers"))).containsKey("Cache-Control");
     }
 
     @Test
@@ -84,7 +90,7 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> document = document();
         Map<String, Object> components = map(document.get("components"));
         assertThat(hash(components.get("schemas"))).as("schemas, closed error codes and conditions")
-                .isEqualTo("939d8df47657a982c3e31581bb6195a4ba1a52415681b3162dd09894ab7a98c7");
+                .isEqualTo("5305f6e600adb62bdb5e9f36cdead506b9402355e9b5b0be763b7d7c97c00450");
         assertThat(hash(components.get("securitySchemes"))).as("security schemes")
                 .isEqualTo("788d536415e602398a62e3d9af82426dbc0c2da08e80856c4832ccd6e141ffd6");
         checkReferences(document, document);

@@ -92,11 +92,10 @@ paths:
       parameters:
       - in: header
         name: X-Auth-Login-Protocol
-        required: true
-        description: Direct-v2 marker.
+        required: false
+        description: Optional protocol marker. Only the exact single value direct-v2 is accepted for login; absent, blank, repeated, malformed, or unknown values return 400 INVALID_LOGIN_PROTOCOL and never dispatch to legacy login.
         schema:
           type: string
-          const: direct-v2
       - in: header
         name: X-Auth-Flow-Id
         required: true
@@ -201,7 +200,13 @@ paths:
                 "$ref": "#/components/schemas/InProgressEnvelope"
         '400':
           description: Invalid protocol/tuple/request or missing/invalid client expiry (INVALID_CLIENT_EXPIRY); no credentials or Set-Cookie. Existing protocol, CSRF, Origin and tuple error precedence is preserved.
-          headers: {}
+          headers:
+            Cache-Control:
+              required: true
+              description: Prevents storage of authentication protocol errors.
+              schema:
+                type: string
+                const: no-store
           content:
             application/json:
               schema:
@@ -1861,7 +1866,6 @@ components:
       - AUTH_ORIGIN_DENIED
       - CSRF_DENIED
       - ORIGIN_NOT_ALLOWED
-      - AUTH_ORIGIN_DENIED
       - AUTH_FLOW_REQUIRED
       - AUTH_SESSION_INVALID
       - INVALID_AUTH_FLOW_TUPLE
@@ -2708,7 +2712,6 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
-            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -3060,7 +3063,6 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
-            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -3476,7 +3478,6 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
-            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -3795,7 +3796,6 @@ components:
             type: string
             enum:
             - ORIGIN_NOT_ALLOWED
-            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -3909,7 +3909,6 @@ components:
             enum:
             - CSRF_DENIED
             - ORIGIN_NOT_ALLOWED
-            - AUTH_ORIGIN_DENIED
           data:
             type: 'null'
         additionalProperties: false
@@ -4129,7 +4128,7 @@ x-operation-retention-contract:
     table: auth_flow_rebootstrap_operations
 x-security-protocol-contract:
   protocolHeader: X-Auth-Login-Protocol
-  legacy: Header absent preserves the current legacy route, login CSRF exemption, and Referer fallback exactly.
+  legacy: Header absence preserves legacy routing only on explicitly compatible endpoints. POST /login rejects an absent marker with 400 INVALID_LOGIN_PROTOCOL and never dispatches to legacy login. Other documented legacy-compatible authentication endpoints retain their existing CSRF and Origin behavior.
   directV2: Exact single value direct-v2 selects the direct-v2 policy. Unsafe requests require valid CSRF cookie and X-CSRF-TOKEN header plus an actual exact allowlisted Origin; Referer cannot substitute.
   invalidMarker: Blank, repeated, malformed, or unknown marker returns HTTP 400 INVALID_LOGIN_PROTOCOL before CSRF or Origin evaluation and never falls back to legacy. Direct-only routes also reject a missing marker as INVALID_LOGIN_PROTOCOL; only routes explicitly preserving legacy behavior may omit it. Exact direct-v2 with invalid CSRF remains 403 CSRF_DENIED before Origin; exact direct-v2 with valid CSRF then requires actual allowlisted Origin.
   oldBackendRouting: Infrastructure-owned rollout routing that prevents requests reaching unsupported old binaries is excluded from this contract and implementation.
@@ -4140,7 +4139,7 @@ x-security-protocol-contract:
     runtimeControl: DirectAuthAdmissionFilter runs after CSRF and Origin validation. Spring property auth.direct-v2.enabled (environment alias AUTH_DIRECT_V2_ENABLED) is read at process startup; changing it requires restarting the compatible backend process. There is no unauthenticated or public toggle endpoint.
     whenDisabled: After CSRF and Origin validation, POST /api/v1/auth/flows and direct-v2 POST /api/v1/auth/login return 503 LOGIN_PROTOCOL_DISABLED before new flow/login admission is committed.
     stillAvailable: Read-only flow/current-operation/status, explicit existing-operation recovery and rebootstrap, refresh/logout for canonical direct sessions, and queue routes are not part of this contract. Direct requests never downgrade to legacy.
-  markerFilter: DirectAuthProtocolMarkerFilter runs before Spring CsrfFilter. It rejects invalid/repeated markers and a missing marker on direct-only paths. Missing marker on legacy-compatible /login and legacy refresh/logout behavior passes unchanged.
+  markerFilter: DirectAuthProtocolMarkerFilter runs before Spring CsrfFilter. It rejects invalid/repeated markers and a missing marker on direct-only paths. POST /login rejects an absent marker with 400 INVALID_LOGIN_PROTOCOL; explicitly legacy-compatible refresh/logout behavior remains unchanged.
 x-schema-migration-contract:
   additiveOnly: true
   historicalMigration: V20261024142649__create_auth_browser_flow_authority.sql is the immutable auth baseline; overall fixed-commit latest is V20261027205623__add_chat_runtime_recovery_control.sql. Upgrade tests start at the latter.

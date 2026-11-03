@@ -52,7 +52,8 @@ class DirectAuthOverlayProjectionTest {
                             (path.equals("/login") || path.equals("/token/refresh") || path.equals(RECOVERY))) {
                         codes.add("INVALID_CLIENT_EXPIRY");
                     }
-                    if (status.equals("403")) {
+                    if (status.equals("403") && Set.of("/login", "/token/refresh", "/logout")
+                            .contains(path)) {
                         codes.add("AUTH_ORIGIN_DENIED");
                     }
                     if (path.equals("/login") && method.equals("post") && status.equals("409")) {
