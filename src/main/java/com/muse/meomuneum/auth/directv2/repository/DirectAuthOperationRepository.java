@@ -35,13 +35,14 @@ public class DirectAuthOperationRepository {
         if (!operationId.equals(flow.activeLoginOperationId())
                 || flow.epoch() != startingEpoch || flow.flowCookieGeneration() != proofGeneration
                 || !"ANONYMOUS".equals(flow.lifecycle())
+                || databaseTime == null || !databaseTime.isBefore(flow.cookieExpiresAt())
                 || !operation.ownedBy(ownerToken, startingEpoch, proofGeneration, databaseTime)) {
             return Optional.empty();
         }
         return Optional.of(operation);
     }
 
-    private Optional<DirectAuthOperationState> lockLogin(String flowId, String operationId) {
+    public Optional<DirectAuthOperationState> lockLogin(String flowId, String operationId) {
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {
             throw new IllegalStateException("A transaction is required");
         }
@@ -56,6 +57,8 @@ public class DirectAuthOperationRepository {
                 row.getLong("starting_epoch"), row.getString("status"), row.getObject("proof_generation", Long.class),
                 row.getBytes("owner_token"), row.getObject("lease_expires_at", LocalDateTime.class),
                 row.getObject("result_epoch", Long.class), row.getObject("result_revision", Long.class),
-                row.getString("result_sid"), row.getObject("receipt_expires_at", LocalDateTime.class));
+                row.getString("result_sid"), row.getObject("receipt_expires_at", LocalDateTime.class),
+                row.getObject("client_expires_at_ms", Long.class), row.getObject("effective_expires_at_ms", Long.class),
+                row.getString("reason_code"), row.getBytes("original_flow_cookie_hmac"));
     }
 }
