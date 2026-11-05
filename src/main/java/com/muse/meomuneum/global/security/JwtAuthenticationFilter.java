@@ -113,7 +113,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     SecurityContextHolder.clearContext();
                     errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                     response.setHeader("Retry-After", "1");
-                    return;s
+                    return;
                 }
                 if (decision != AuthFlowService.SessionDecision.ACTIVE) {
                     writeUnauthorizedResponse(request, response);
