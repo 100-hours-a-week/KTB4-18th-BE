@@ -40,7 +40,7 @@ class DirectAuthProofResolutionTest {
     }
 
     @Test
-    void validLegacyReadAndExplicitUpgradePreserveIdentityWithoutReadMutation() throws Exception {
+    void legacyReadRequiresExplicitUpgradeAndBootstrapPreservesIdentity() throws Exception {
         try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
             String flowId = UUID.randomUUID().toString();
             String proof = f.cookies.secret();
@@ -52,9 +52,8 @@ class DirectAuthProofResolutionTest {
                     """, flowId, f.cookies.hash("auth-flow-cookie:" + proof));
             var legacy = DirectAuthLoginLogoutTest.request(List.of());
             legacy.setCookies(new Cookie("MEO_AUTH_FLOW", proof));
-            var read = f.flowService.current(legacy);
-            assertThat(read.flow().flowId()).isEqualTo(flowId);
-            assertThat(read.cookies()).isEmpty();
+            assertThatThrownBy(() -> f.flowService.current(legacy))
+                    .hasMessage("AUTH_FLOW_REBOOTSTRAP_REQUIRED");
             assertThat(f.flows.find(flowId).orElseThrow().flowKeyHash()).isNull();
             var upgraded = f.flowService.bootstrap(legacy, UUID.randomUUID().toString());
             assertThat(upgraded.flow().flowId()).isEqualTo(flowId);
