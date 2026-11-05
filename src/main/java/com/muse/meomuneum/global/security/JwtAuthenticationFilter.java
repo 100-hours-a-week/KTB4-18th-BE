@@ -32,9 +32,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final UserAuthenticationService userAuthenticationService;
+    private final AuthFlowService authFlowService;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService) {
+            UserAuthenticationService userAuthenticationService, AuthFlowService authFlowService) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
@@ -43,7 +44,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     /** Test compatibility constructor; production always supplies the DB authority. */
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService) {
+                                   UserAuthenticationService userAuthenticationService) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null);
     }
 

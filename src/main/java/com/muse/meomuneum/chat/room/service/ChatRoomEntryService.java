@@ -214,7 +214,7 @@ public class ChatRoomEntryService {
             Set<String> sessions = new HashSet<>();
             membershipIds.forEach(id -> sessions.addAll(presence.remove(event.userId(), id)));
             return Set.copyOf(sessions);
-        }));
+        });
         sockets.close(ended, 4100, "CHAT_LOGGED_OUT");
     }
 
