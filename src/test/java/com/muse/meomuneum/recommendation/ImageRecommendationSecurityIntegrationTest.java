@@ -34,7 +34,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = ImageRecommendationController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=true"})
-@Import({SecurityConfig.class, CurrentUserResolver.class, ImageRecommendationSecurityIntegrationTest.Config.class})
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class, CurrentUserResolver.class,
+        ImageRecommendationSecurityIntegrationTest.Config.class})
 class ImageRecommendationSecurityIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
@@ -140,7 +141,7 @@ class ImageRecommendationSecurityIntegrationTest {
         User user = mock(User.class);
         when(user.getId()).thenReturn(1L);
         when(user.getRole()).thenReturn(UserRole.USER);
-        return tokens.createAccessToken(user);
+        return tokens.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     @TestConfiguration

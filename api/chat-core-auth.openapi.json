@@ -177,7 +177,19 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-Chat-Task-Id",
+            "in": "header",
+            "required": false,
+            "description": "서비스 bearer 검증 후 Task별 호출 제한에만 사용하는 canonical UUID. Chat 참여 원장과 동일한 프로세스 Task ID이며 사용자 인증·소유권 허가가 아니다. 미전달 구버전은 source IP별 제한을 유지한다. 중복·잘못된 형식은 400. 사용자별 제한은 Task에 관계없이 유지한다.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
       }
     }
   },

@@ -37,7 +37,7 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = MusicRecordController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes"})
-@Import({SecurityConfig.class, CurrentUserResolver.class,
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class, CurrentUserResolver.class,
         MusicRecordDeleteSecurityIntegrationTest.SecurityTestConfiguration.class})
 class MusicRecordDeleteSecurityIntegrationTest {
     @Autowired
@@ -105,7 +105,7 @@ class MusicRecordDeleteSecurityIntegrationTest {
         User user = mock(User.class);
         when(user.getId()).thenReturn(userId);
         when(user.getRole()).thenReturn(UserRole.USER);
-        return "Bearer " + jwt.createAccessToken(user);
+        return "Bearer " + jwt.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     @TestConfiguration

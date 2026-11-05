@@ -14,9 +14,6 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import com.muse.meomuneum.auth.application.AuthFlowService;
-import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
-import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -31,17 +28,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final ActiveUserLookup userAuthenticationService;
-    private final AuthFlowService sessionAuthority;
-    private final DirectAuthProtectedSessionGuard directGuard;
+    private final AccessSessionAuthority sessionAuthority;
+    private final AccessSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            ActiveUserLookup userAuthenticationService, AuthFlowService sessionAuthority) {
+            ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            ActiveUserLookup userAuthenticationService, AuthFlowService sessionAuthority,
-            DirectAuthProtectedSessionGuard directGuard) {
+            ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority,
+            AccessSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
@@ -99,22 +96,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
-                AuthFlowService.SessionDecision decision = directGuard == null
-                        ? sessionAuthority.checkSession(claims.userId(), claims.sessionId())
-                        : directGuard.check(claims.sessionId(),
-                                () -> sessionAuthority.checkSession(claims.userId(), claims.sessionId()));
-                if (decision == null || decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
+                AccessSessionAuthority.Decision decision = directGuard == null
+                        ? sessionAuthority.verifySession(claims.userId(), claims.sessionId())
+                        : directGuard.verifySession(claims.sessionId(),
+                                () -> sessionAuthority.verifySession(claims.userId(), claims.sessionId()));
+                if (decision == null || decision == AccessSessionAuthority.Decision.UNAVAILABLE) {
                     SecurityContextHolder.clearContext();
                     errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
                     response.setHeader("Retry-After", "1");
                     return;
                 }
-                if (decision != AuthFlowService.SessionDecision.ACTIVE) {
+                if (decision != AccessSessionAuthority.Decision.ACTIVE) {
                     writeUnauthorizedResponse(request, response);
                     return;
                 }
             }
-        } catch (DataAccessException | DirectAuthFailure exception) {
+        } catch (DataAccessException | AccessSessionGuard.Unavailable exception) {
             SecurityContextHolder.clearContext();
             errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
             response.setHeader("Retry-After", "1");

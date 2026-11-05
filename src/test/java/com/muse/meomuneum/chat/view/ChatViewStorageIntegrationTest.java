@@ -470,8 +470,7 @@ class ChatViewStorageIntegrationTest {
         Long id = message("http");
         String path = "/api/v1/chat-rooms/" + roomId + "/messages?membership_id=" + membershipId;
         assertEquals(401, http(path, null, view).statusCode());
-        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(),
-                sid(userId));
+        String token = accessToken(sid(userId));
         assertEquals(400, http(path, token, null).statusCode());
         assertEquals(400, http(path + "&size=51", token, view).statusCode());
         var response = http(path, token, view);
@@ -493,7 +492,7 @@ class ChatViewStorageIntegrationTest {
                 .directory(directory.toFile()).redirectErrorStream(true);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_URL", "http://127.0.0.1:" + port);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_TOKEN",
-                jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId)));
+                accessToken(sid(userId)));
         process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", membershipId.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_VIEW", storage.create(userId, roomId, membershipId));
@@ -697,9 +696,9 @@ class ChatViewStorageIntegrationTest {
         String view = accountSubscribe("history-current", newSid, currentMember);
         Long current = message("current");
         String path = "/api/v1/chat-rooms/" + roomId + "/messages?membership_id=" + currentMember;
-        String token = jwt.createAccessToken(users.findById(userId).orElseThrow(), newSid);
+        String token = accessToken(newSid);
         assertEquals(200, http(path, token, view).statusCode());
-        assertEquals(403, http(path, jwt.createAccessToken(users.findById(userId).orElseThrow(), sid(userId)), view)
+        assertEquals(403, http(path, accessToken(sid(userId)), view)
                 .statusCode());
         assertEquals(401, http(path, jwt.createAccessToken(users.findById(userId).orElseThrow()), view).statusCode());
         var page = queries.query(userId, roomId, currentMember, view, "history", null, 1);
@@ -761,7 +760,7 @@ class ChatViewStorageIntegrationTest {
                 .redirectErrorStream(true);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_URL", "http://127.0.0.1:" + port);
         process.environment().put("CHAT_RECOVERY_INTEGRATION_TOKEN",
-                jwt.createAccessToken(users.findById(userId).orElseThrow(), newSid));
+                accessToken(newSid));
         process.environment().put("CHAT_RECOVERY_INTEGRATION_ROOM", roomId.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_MEMBER", currentMember.toString());
         process.environment().put("CHAT_RECOVERY_INTEGRATION_VIEW", storage.create(userId, roomId, currentMember));
@@ -878,4 +877,9 @@ class ChatViewStorageIntegrationTest {
             return realTime ? Instant.now() : instant;
         }
     }
+    private String accessToken(String sid) {
+        com.muse.meomuneum.support.AuthSessionTestData.ensureActive(jdbc, userId, sid);
+        return jwt.createAccessToken(users.findById(userId).orElseThrow(), sid);
+    }
+
 }

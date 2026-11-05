@@ -64,8 +64,8 @@ class JwtAuthenticationFilterTest {
         filterChain = mock(FilterChain.class);
         userAuthenticationService = mock(UserAuthenticationService.class);
         authFlowService = mock(AuthFlowService.class);
-        when(authFlowService.checkSession(1L, "550e8400-e29b-41d4-a716-446655440000"))
-                .thenReturn(AuthFlowService.SessionDecision.ACTIVE);
+        when(authFlowService.verifySession(1L, "550e8400-e29b-41d4-a716-446655440000"))
+                .thenReturn(AccessSessionAuthority.Decision.ACTIVE);
         jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtTokenProvider,
                 new SecurityErrorResponseWriter(objectMapper), userAuthenticationService, authFlowService);
     }

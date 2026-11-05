@@ -66,6 +66,8 @@ import com.sun.net.httpserver.HttpsServer;
 /** Packaged Core/Chat authentication with optional shared participation and product message relay checks. */
 @Testcontainers
 class CoreAuthProcessTest {
+    private static final boolean PRODUCTION = Boolean.getBoolean("auth.integration.production");
+    private static final ProductionTlsFixture TLS = PRODUCTION ? new ProductionTlsFixture() : null;
     private static final boolean RUNTIME = Boolean.getBoolean("auth.integration.runtime");
     private static final String METRICS = "synthetic-metrics-service-token-at-least-32";
     private static final boolean CONTROL = Boolean.getBoolean("auth.integration.control-events");
@@ -73,41 +75,68 @@ class CoreAuthProcessTest {
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
     private static final String HMAC_KEY = "auth-process-synthetic-hmac-secret-at-least-32";
+    private static final String LOCATION = PRODUCTION
+            ? "synthetic-distinct-location-signing-key-at-least-32"
+            : SECRET;
     private static final String SERVICE = "auth-process-synthetic-service-secret-current";
     private static final String NEXT = "auth-process-synthetic-service-secret-next-key";
     private static final String REDIS_PASSWORD = "auth-process-redis-synthetic-password";
     private static final int REDIS_PORT = redisPort();
     private static final String PRODUCER = "core:" + UUID.randomUUID();
-    private static final String ORIGIN = "http://localhost:5174";
+    private static final String ORIGIN = PRODUCTION ? "https://web.example.test" : "http://localhost:5174";
     @Container
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.7.0")
             .withDatabaseName("core_auth").withUsername("auth_test").withPassword("auth-test-only-db-password");
     @Container
-    private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:8.10.2").withExposedPorts(6379)
-            .withCreateContainerCmdModifier(command -> command.getHostConfig().withPortBindings(
-                    new com.github.dockerjava.api.model.PortBinding(
-                            com.github.dockerjava.api.model.Ports.Binding.bindIpAndPort("127.0.0.1", REDIS_PORT),
-                            new com.github.dockerjava.api.model.ExposedPort(6379))))
-            .withCopyToContainer(Transferable
-                    .of("""
-                            user default off
-                            user fixture-admin on >%s +@all ~* &*
-                            user core-auth on >%s &auth-test:chat:control:v1 \
-                            +hello +ping +quit +client|setinfo +client|setname +publish
-                            user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
-                            +hello +ping +quit +publish +info +client|setinfo +client|setname \
-                            +subscribe +psubscribe +unsubscribe +punsubscribe \
-                            ~auth-test:chat:state:* +eval +hget +hset +expire
-                            """
-                            .formatted(REDIS_PASSWORD, REDIS_PASSWORD, REDIS_PASSWORD)),
-                    "/fixture/acl")
-            .withCommand("redis-server", "--aclfile", "/fixture/acl", "--appendonly", "no", "--save", "");
-    private final Path evidence = Path.of("build/core-auth-integration", "run-" + Instant.now().toEpochMilli());
+    private static final GenericContainer<?> REDIS = redisContainer();
+
+    private static GenericContainer<?> redisContainer() {
+        var container = new GenericContainer<>("redis:8.10.2").withExposedPorts(6379)
+                .withCreateContainerCmdModifier(command -> command.getHostConfig().withPortBindings(
+                        new com.github.dockerjava.api.model.PortBinding(
+                                com.github.dockerjava.api.model.Ports.Binding.bindIpAndPort("127.0.0.1", REDIS_PORT),
+                                new com.github.dockerjava.api.model.ExposedPort(6379))))
+                .withCopyToContainer(Transferable
+                        .of("""
+                                user default off
+                                user fixture-admin on >%s +@all ~* &*
+                                user core-auth on >%s &auth-test:chat:control:v1 \
+                                +hello +ping +quit +client|setinfo +client|setname +publish
+                                user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
+                                +hello +ping +quit +publish +info +client|setinfo +client|setname \
+                                +subscribe +psubscribe +unsubscribe +punsubscribe \
+                                ~auth-test:chat:state:* +eval +hget +hset +expire
+                                """
+                                .formatted(REDIS_PASSWORD, REDIS_PASSWORD, REDIS_PASSWORD)),
+                        "/fixture/acl")
+                .withCommand("redis-server", "--aclfile", "/fixture/acl", "--appendonly", "no", "--save", "");
+        if (PRODUCTION) {
+            container.withCopyFileToContainer(org.testcontainers.utility.MountableFile.forHostPath(TLS.certificate()),
+                    "/fixture/redis.crt")
+                    .withCopyFileToContainer(org.testcontainers.utility.MountableFile.forHostPath(TLS.privateKey()),
+                            "/fixture/redis.key")
+                    .withCommand("redis-server", "--aclfile", "/fixture/acl", "--appendonly", "no", "--save", "",
+                            "--port", "0", "--tls-port", "6379", "--tls-cert-file", "/fixture/redis.crt",
+                            "--tls-key-file", "/fixture/redis.key", "--tls-ca-cert-file", "/fixture/redis.crt",
+                            "--tls-auth-clients", "no");
+        }
+        return container;
+    }
+    private final Path evidence = Path.of(
+            PRODUCTION ? "build/chat-production-integration" : "build/core-auth-integration",
+            "run-" + Instant.now().toEpochMilli());
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder()
             .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
     private final List<Node> nodes = new ArrayList<>();
     private final List<Probe> probes = new ArrayList<>();
+    private final Map<String, String> issuedTokens = new HashMap<>();
+    private final Map<String, BrowserSession> browsers = new HashMap<>();
+    private String productionCoreBase;
+
+    private record BrowserSession(HttpClient client, String flowId, long epoch, String csrf) {
+    }
+
     private final AtomicInteger relayMode = new AtomicInteger();
     private final java.util.concurrent.atomic.AtomicBoolean blockNext = new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -118,10 +147,14 @@ class CoreAuthProcessTest {
                 .locations("filesystem:src/main/resources/db/migration").load().migrate();
         var jdbc = new JdbcTemplate(
                 new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()));
+        if (PRODUCTION) {
+            prepareDirectAuthAuthority(jdbc);
+        }
         jdbc.update("""
                 INSERT INTO users(id,email,password_hash,nickname,role,created_at)
-                VALUES (411001,'auth-process@example.test','unused-hash','authprobe','USER',UTC_TIMESTAMP(6))
-                """);
+                VALUES (411001,'auth-process@example.test',?,'authprobe','USER',UTC_TIMESTAMP(6))
+                """, new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder()
+                .encode("synthetic-login-password"));
         int hzPort = port();
         Config config = new Config().setClusterName("chat-auth-" + UUID.randomUUID());
         config.getNetworkConfig().setPort(hzPort).setPortAutoIncrement(false);
@@ -136,11 +169,14 @@ class CoreAuthProcessTest {
             var sessions = member.<String, HazelcastAuthStateStore.AuthSession>getMap("auth-sessions-v2");
             String revokedSid = UUID.randomUUID().toString();
             String survivingSid = UUID.randomUUID().toString();
-            sessions.put(revokedSid, session(revokedSid));
-            sessions.put(survivingSid, session(survivingSid));
             String flowCookie = UUID.randomUUID().toString();
-            String flowId = seedBrowserSession(jdbc, revokedSid, flowCookie);
-            seedBrowserSession(jdbc, survivingSid, UUID.randomUUID().toString());
+            String flowId = null;
+            if (!PRODUCTION) {
+                sessions.put(revokedSid, session(revokedSid));
+                sessions.put(survivingSid, session(survivingSid));
+                flowId = seedBrowserSession(jdbc, revokedSid, flowCookie);
+                seedBrowserSession(jdbc, survivingSid, UUID.randomUUID().toString());
+            }
             Node core = start("core", Map.ofEntries(
                     Map.entry("CORE_CHAT_AUTH_ENABLED", "true"), Map.entry("CHAT_AUTH_SERVICE_TOKEN_CURRENT", SERVICE),
                     Map.entry("CHAT_AUTH_SERVICE_TOKEN_NEXT", NEXT), Map.entry("AUTH_STATE_HAZELCAST_ENABLED", "true"),
@@ -156,8 +192,9 @@ class CoreAuthProcessTest {
                     Map.entry("CORE_AUTH_REDIS_PORT", REDIS.getMappedPort(6379).toString()),
                     Map.entry("CORE_AUTH_REDIS_USERNAME", "core-auth"),
                     Map.entry("CORE_AUTH_REDIS_PASSWORD", REDIS_PASSWORD),
-                    Map.entry("CORE_AUTH_REDIS_SSL", "false")), null);
-            Path trust = certificate();
+                    Map.entry("CORE_AUTH_REDIS_SSL", Boolean.toString(PRODUCTION)),
+                    Map.entry("CORE_AUTH_REDIS_CA_CERTIFICATE", PRODUCTION ? TLS.certificate().toString() : "")), null);
+            Path trust = PRODUCTION ? TLS.coreStore() : certificate();
             relay = HttpsServer.create(new InetSocketAddress("localhost", 0), 0);
             KeyStore store = KeyStore.getInstance("PKCS12");
             try (var input = Files.newInputStream(trust)) {
@@ -171,6 +208,10 @@ class CoreAuthProcessTest {
             relay.setExecutor(relayWorkers);
             relay.createContext("/", exchange -> {
                 try {
+                    if (PRODUCTION) {
+                        proxyProduction(exchange, core);
+                        return;
+                    }
                     if (relayMode.get() != 0 || (blockNext.get()
                             && ("Bearer " + NEXT).equals(exchange.getRequestHeaders().getFirst("Authorization")))) {
                         exchange.sendResponseHeaders(relayMode.get() == 0 ? 503 : relayMode.get(), -1);
@@ -194,7 +235,8 @@ class CoreAuthProcessTest {
                 }
             });
             relay.start();
-            String https = "https://localhost:" + relay.getAddress().getPort();
+            String https = "https://" + (PRODUCTION ? ProductionTlsFixture.CORE_HOST : "localhost") + ":"
+                    + relay.getAddress().getPort();
             try (var untrusted = new CoreSessionHttpClient(https, SERVICE, false)) {
                 assertThrows(ChatAuthUnavailableException.class,
                         () -> untrusted.validate(List.of(new SessionPair(411001, revokedSid))));
@@ -202,17 +244,21 @@ class CoreAuthProcessTest {
             Map<String, String> chatEnv = new HashMap<>(
                     Map.of("CHAT_RUNTIME_ENABLED", "true", "CHAT_CORE_AUTH_ENABLED", "true",
                             "CORE_INTERNAL_BASE_URL", https, "CORE_AUTH_SERVICE_TOKEN", SERVICE));
-            var wrongHost = new HashMap<>(chatEnv);
-            wrongHost.put("CORE_INTERNAL_BASE_URL", "https://127.0.0.1:" + relay.getAddress().getPort());
-            Node badPeer = start("chat", wrongHost, trust);
-            assertEquals(503, request(badPeer, "GET", "/api/v1/regions/1/chat-room", token(revokedSid), null, Map.of())
-                    .statusCode());
-            stop(badPeer);
+            productionCoreBase = https;
+            if (!PRODUCTION) {
+                var wrongHost = new HashMap<>(chatEnv);
+                wrongHost.put("CORE_INTERNAL_BASE_URL", "https://127.0.0.1:" + relay.getAddress().getPort());
+                Node badPeer = start("chat", wrongHost, trust);
+                assertEquals(503,
+                        request(badPeer, "GET", "/api/v1/regions/1/chat-room", token(revokedSid), null, Map.of())
+                                .statusCode());
+                stop(badPeer);
+            }
             if (PARTICIPATION) {
                 chatEnv.putAll(Map.of("CHAT_DISTRIBUTED_PRESENCE_ENABLED", "true", "CHAT_REDIS_ENABLED", "true",
                         "CHAT_REDIS_ENVIRONMENT", "auth-test", "CHAT_REDIS_HOST", REDIS.getHost(),
                         "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(), "CHAT_REDIS_USERNAME", "chat-auth",
-                        "CHAT_REDIS_PASSWORD", REDIS_PASSWORD, "CHAT_REDIS_SSL", "false"));
+                        "CHAT_REDIS_PASSWORD", REDIS_PASSWORD, "CHAT_REDIS_SSL", Boolean.toString(PRODUCTION)));
             }
             if (RELAY) {
                 chatEnv.put("CHAT_MESSAGE_RELAY_ENABLED", "true");
@@ -221,6 +267,10 @@ class CoreAuthProcessTest {
             }
             if (CONTROL) {
                 chatEnv.put("CHAT_CONTROL_EVENTS_ENABLED", "true");
+            }
+            if (PRODUCTION) {
+                chatEnv.putAll(Map.of("CHAT_AUTH_REDIS_ENABLED", "true", "CORE_AUTH_PRODUCER_IDS", PRODUCER,
+                        "CHAT_REDIS_SSL_CA_CERTIFICATE", TLS.certificate().toString()));
             }
             if (RUNTIME) {
                 recoveryCommand();
@@ -233,11 +283,15 @@ class CoreAuthProcessTest {
             fastEnv.putAll(Map.of("CHAT_REDIS_ENABLED", "true", "CHAT_REDIS_ENVIRONMENT", "auth-test",
                     "CHAT_REDIS_HOST", REDIS.getHost(), "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(),
                     "CHAT_REDIS_USERNAME", "chat-auth", "CHAT_REDIS_PASSWORD", REDIS_PASSWORD, "CHAT_REDIS_SSL",
-                    "false",
+                    Boolean.toString(PRODUCTION),
                     "CHAT_AUTH_REDIS_ENABLED", "true", "CORE_AUTH_PRODUCER_IDS", PRODUCER));
             Node subscribed = start("chat", fastEnv, trust);
             await(() -> status(polling, "/actuator/health/readiness") == 200
                     && status(subscribed, "/actuator/health/readiness") == 200);
+            if (PRODUCTION) {
+                productionChecks(jdbc, sessions, chatEnv, trust, polling, subscribed, regionId(jdbc));
+                return;
+            }
             var pair = new SessionPair(411001, revokedSid);
             for (String key : List.of(SERVICE, NEXT)) {
                 var checked = internal(core, key, InternalSessionProtocol.encodeRequest(List.of(pair)));
@@ -399,12 +453,15 @@ class CoreAuthProcessTest {
                     null, Map.of()).statusCode());
             assertEquals(1013, survivor.closed.get(5, TimeUnit.SECONDS));
             await(() -> status(polling, "/actuator/health/readiness") == 503);
+            assertEquals(200, status(polling, "/actuator/health/liveness"));
+            assertTrue(polling.process().isAlive());
             relayMode.set(401);
             assertEquals(503, request(polling, "GET", "/api/v1/regions/" + region + "/chat-room", token(survivingSid),
                     null, Map.of()).statusCode());
             relayMode.set(0);
             assertEquals(200, request(polling, "GET", "/api/v1/regions/" + region + "/chat-room", token(survivingSid),
                     null, Map.of()).statusCode());
+            await(() -> status(polling, "/actuator/health/readiness") == 200);
             await(() -> jdbc.queryForObject(
                     "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL",
                     Integer.class, survivor.view) == 0);
@@ -495,6 +552,172 @@ class CoreAuthProcessTest {
         }
     }
 
+    private long regionId(JdbcTemplate jdbc) {
+        return jdbc.queryForObject("SELECT id FROM regions WHERE code='41135'", Long.class);
+    }
+
+    private void proxyProduction(com.sun.net.httpserver.HttpExchange exchange, Node core) throws Exception {
+        String path = exchange.getRequestURI().toString();
+        if (path.startsWith("/internal/") && relayMode.get() != 0) {
+            exchange.sendResponseHeaders(relayMode.get(), -1);
+            return;
+        }
+        var request = HttpRequest.newBuilder(URI.create(core.base() + path))
+                .timeout(java.time.Duration.ofSeconds(5)).header("X-Forwarded-Proto", "https");
+        for (String header : List.of("Authorization", "Content-Type", "Origin", "Cookie", "X-CSRF-TOKEN",
+                "X-Auth-Flow-Id", "X-Auth-Flow-Epoch", "X-Login-Operation-Id", "Idempotency-Key",
+                "X-Auth-Login-Protocol", "X-Auth-Flow-Operation-Id", "X-Auth-Client-Expires-At")) {
+            for (String value : exchange.getRequestHeaders().getOrDefault(header, List.of())) {
+                request.header(header, value);
+            }
+        }
+        byte[] body = exchange.getRequestBody().readNBytes(32769);
+        var response = HttpClient.newHttpClient().send(request.method(exchange.getRequestMethod(),
+                HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofByteArray());
+        for (String header : List.of("Set-Cookie", "Content-Type", "Cache-Control", "X-Auth-Flow-Id",
+                "X-Auth-Flow-Epoch", "X-Auth-Flow-Revision")) {
+            for (String value : response.headers().allValues(header)) {
+                exchange.getResponseHeaders().add(header, value);
+            }
+        }
+        exchange.sendResponseHeaders(response.statusCode(), response.body().length == 0 ? -1 : response.body().length);
+        exchange.getResponseBody().write(response.body());
+    }
+
+    private HttpResponse<String> browserRequest(HttpClient browser, String method, String path, String body,
+            Map<String, String> headers) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create(productionCoreBase + path))
+                .timeout(java.time.Duration.ofSeconds(10)).header("Origin", ORIGIN)
+                .header("Content-Type", "application/json");
+        headers.forEach(request::header);
+        return browser.send(request.method(method, body == null
+                ? HttpRequest.BodyPublishers.noBody()
+                : HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private void prepareDirectAuthAuthority(JdbcTemplate jdbc) throws Exception {
+        // Fresh isolated database: synthetic restore epoch and key pin, never an operational restore approval.
+        byte[] key = java.util.Base64.getDecoder().decode("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+        byte[] derived = javax.crypto.KDF.getInstance("HKDF-SHA256").deriveData(
+                javax.crypto.spec.HKDFParameterSpec.ofExtract().addIKM(key)
+                        .addSalt("meomuneum/auth-replay/v2/hkdf-salt".getBytes(StandardCharsets.UTF_8))
+                        .thenExpand("meomuneum/auth-replay/v2/aes-256-gcm".getBytes(StandardCharsets.UTF_8), 32));
+        var digest = java.security.MessageDigest.getInstance("SHA-256");
+        digest.update("meomuneum/auth-replay/v2/key-id".getBytes(StandardCharsets.UTF_8));
+        String keyId = java.util.HexFormat.of().formatHex(digest.digest(derived));
+        jdbc.update("INSERT INTO auth_replay_key_pin VALUES (1, ?)", keyId);
+        jdbc.update("INSERT INTO auth_replay_iv_allocators VALUES (?, ?, FALSE)", keyId, new byte[12]);
+        jdbc.update("""
+                UPDATE auth_direct_projection_control SET cookie_mode='GENERATION_SCOPED',
+                    readiness='PRODUCTION_READY', replay_key_id=?, restore_verified=TRUE WHERE singleton_id=1
+                """, keyId);
+    }
+
+    private String login() throws Exception {
+        var browser = HttpClient.newBuilder().sslContext(TLS.clientContext())
+                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
+        var csrf = browserRequest(browser, "GET", "/api/v1/auth/token/csrf", null, Map.of());
+        assertEquals(200, csrf.statusCode());
+        String csrfToken = json.readTree(csrf.body()).path("data").path("csrf_token").asText();
+        var bootstrap = browserRequest(browser, "POST", "/api/v1/auth/flows", null,
+                Map.of("X-Auth-Login-Protocol", "direct-v2", "X-CSRF-TOKEN", csrfToken,
+                        "X-Auth-Flow-Operation-Id", UUID.randomUUID().toString()));
+        assertEquals(200, bootstrap.statusCode(), bootstrap.body());
+        var flow = json.readTree(bootstrap.body()).path("data");
+        String flowId = flow.path("flowId").asText();
+        long epoch = flow.path("flowEpoch").asLong();
+        assertFalse(flowId.isBlank(), "flow bootstrap must return an identity");
+        var loginHeaders = Map.of("X-CSRF-TOKEN", csrfToken, "X-Auth-Flow-Id", flowId,
+                "X-Auth-Flow-Epoch", Long.toString(epoch), "X-Login-Operation-Id", UUID.randomUUID().toString(),
+                "X-Auth-Login-Protocol", "direct-v2", "X-Auth-Client-Expires-At",
+                Long.toString(System.currentTimeMillis() + 60000));
+        var loggedIn = browserRequest(browser, "POST", "/api/v1/auth/login",
+                json.writeValueAsString(Map.of("email", "auth-process@example.test",
+                        "password", "synthetic-login-password")),
+                loginHeaders);
+        assertEquals(200, loggedIn.statusCode(), loggedIn.body());
+        String access = json.readTree(loggedIn.body()).path("data").path("access_token").asText();
+        String sid = new JwtTokenProvider(new JwtProperties("project-api", "project-api", SECRET, 3600, 1209600))
+                .parseAccessToken(access).sessionId();
+        var current = browserRequest(browser, "GET", "/api/v1/auth/flow", null,
+                Map.of("X-Auth-Login-Protocol", "direct-v2"));
+        assertEquals(200, current.statusCode());
+        var activated = json.readTree(current.body()).path("data");
+        assertTrue(activated.path("authenticated").asBoolean());
+        issuedTokens.put(sid, access);
+        browsers.put(sid, new BrowserSession(browser, activated.path("flowId").asText(),
+                activated.path("flowEpoch").asLong(), csrfToken));
+        var pair = new SessionPair(411001, sid);
+        String validationBody = new String(InternalSessionProtocol.encodeRequest(List.of(pair)),
+                StandardCharsets.UTF_8);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        boolean projected = false;
+        do {
+            var checked = browserRequest(browser, "POST", "/internal/v1/auth/sessions/validate", validationBody,
+                    Map.of("Authorization", "Bearer " + SERVICE));
+            assertEquals(200, checked.statusCode(), checked.body());
+            projected = InternalSessionProtocol.response(checked.body().getBytes(StandardCharsets.UTF_8),
+                    List.of(pair)).getFirst().active();
+            if (!projected) {
+                Thread.sleep(50);
+            }
+        } while (!projected && System.nanoTime() < deadline);
+        assertTrue(projected, "direct login must reach the Core Chat session projection within five seconds");
+        return sid;
+    }
+
+    private void productionChecks(JdbcTemplate jdbc,
+            com.hazelcast.map.IMap<String, HazelcastAuthStateStore.AuthSession> sessions, Map<String, String> chatEnv,
+            Path trust, Node firstTask, Node secondTask, long region) throws Exception {
+        var trustedClient = HttpClient.newBuilder().sslContext(TLS.clientContext()).build();
+        String wrongHost = productionCoreBase.replace(ProductionTlsFixture.CORE_HOST, "127.0.0.1");
+        assertThrows(javax.net.ssl.SSLHandshakeException.class,
+                () -> trustedClient.send(HttpRequest.newBuilder(URI.create(wrongHost + "/api/v1/auth/flow"))
+                        .build(), HttpResponse.BodyHandlers.discarding()));
+        var untrustedRedis = new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
+                REDIS.getMappedPort(6379), "chat-auth", REDIS_PASSWORD, true,
+                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1));
+        assertThrows(IllegalStateException.class,
+                () -> new com.muse.meomuneum.chat.redis.ChatRedisConnection(untrustedRedis));
+        String revoked = login();
+        String survivor = login();
+        long room = jdbc.queryForObject("SELECT id FROM chat_rooms WHERE region_id=?", Long.class, region);
+        Probe first = join(firstTask, revoked, region, room);
+        Probe second = join(secondTask, revoked, region, room);
+        Probe other = join(firstTask, survivor, region, room);
+        other.sendMessage(room);
+        long message = frameData(other.await("CHAT_ACK")).path("message").path("message_id").asLong();
+        assertTrue(message > 0);
+        for (Probe probe : List.of(first, second, other)) {
+            assertEquals(message, frameData(probe.await("CHAT_MESSAGE")).path("message_id").asLong());
+        }
+        BrowserSession browser = browsers.get(revoked);
+        var logout = browserRequest(browser.client(), "POST", "/api/v1/auth/logout", null,
+                Map.of("X-Auth-Login-Protocol", "direct-v2", "X-CSRF-TOKEN", browser.csrf(),
+                        "X-Auth-Flow-Id", browser.flowId(),
+                        "X-Auth-Flow-Epoch", Long.toString(browser.epoch()), "Idempotency-Key",
+                        UUID.randomUUID().toString()));
+        assertEquals(200, logout.statusCode());
+        assertEquals(4100, first.closed.get(5, TimeUnit.SECONDS));
+        assertEquals(4100, second.closed.get(5, TimeUnit.SECONDS));
+        assertFalse(other.closed.isDone());
+        assertEquals(401, request(firstTask, "GET", "/api/v1/regions/" + region + "/chat-room",
+                token(revoked), null, Map.of()).statusCode());
+        relayMode.set(503);
+        assertEquals(503, request(secondTask, "GET", "/api/v1/regions/" + region + "/chat-room",
+                token(survivor), null, Map.of()).statusCode());
+        assertEquals(1013, other.closed.get(5, TimeUnit.SECONDS));
+        await(() -> status(firstTask, "/actuator/health/readiness") == 503);
+        assertEquals(200, status(firstTask, "/actuator/health/liveness"));
+        relayMode.set(0);
+        await(() -> status(firstTask, "/actuator/health/readiness") == 200);
+        runtimeChecks(jdbc, sessions, chatEnv, trust, firstTask, secondTask, survivor, region, room);
+        Files.writeString(evidence.resolve("result.json"), json.writeValueAsString(Map.of(
+                "profile", "prod", "chatTasks", 2, "coreHttps", true, "redisTls", true,
+                "realLogin", true, "crossTaskMessage", true, "sidLogout", true,
+                "dependencyFailures", true, "sigtermAndHistory", true, "offlineRecovery", true)));
+    }
+
     private void recoveryCommand() throws Exception {
         var log = evidence.resolve("recovery-" + UUID.randomUUID() + ".log");
         var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
@@ -502,11 +725,14 @@ class CoreAuthProcessTest {
                 System.getProperty("auth.integration.chat-jar"),
                 "org.springframework.boot.loader.launch.PropertiesLauncher");
         builder.environment().clear();
+        if (PRODUCTION) {
+            builder.environment().put("CHAT_REDIS_SSL_CA_CERTIFICATE", TLS.certificate().toString());
+        }
         builder.environment().putAll(Map.of("CHAT_DB_URL", MYSQL.getJdbcUrl(), "CHAT_DB_USERNAME", MYSQL.getUsername(),
                 "CHAT_DB_PASSWORD", MYSQL.getPassword(), "CHAT_REDIS_ENVIRONMENT", "auth-test",
                 "CHAT_REDIS_HOST", REDIS.getHost(), "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(),
                 "CHAT_REDIS_USERNAME", "chat-auth", "CHAT_REDIS_PASSWORD", REDIS_PASSWORD,
-                "CHAT_REDIS_SSL", "false", "CHAT_RECOVERY_CONFIRM", "chat-stopped"));
+                "CHAT_REDIS_SSL", Boolean.toString(PRODUCTION), "CHAT_RECOVERY_CONFIRM", "chat-stopped"));
         var command = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
         try {
             assertTrue(command.waitFor(30, TimeUnit.SECONDS));
@@ -532,8 +758,10 @@ class CoreAuthProcessTest {
                 request(polling, "GET", "/actuator/prometheus", token(survivingSid), null, Map.of()).statusCode());
         assertEquals(200, request(polling, "GET", "/actuator/prometheus", METRICS, null, Map.of()).statusCode());
         Node terminating = start("chat", chatEnv, trust);
-        String drainSid = UUID.randomUUID().toString();
-        sessions.put(drainSid, session(drainSid));
+        String drainSid = PRODUCTION ? login() : UUID.randomUUID().toString();
+        if (!PRODUCTION) {
+            sessions.put(drainSid, session(drainSid));
+        }
         Probe draining = join(terminating, drainSid, region, room);
         Probe other = join(subscribed, survivingSid, region, room);
         terminating.process().destroy();
@@ -549,8 +777,9 @@ class CoreAuthProcessTest {
                 + draining.membership + "&mode=history", token(drainSid), null,
                 Map.of("X-Chat-View-Session", resumed.view)).statusCode());
         var adminProperties = new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
-                REDIS.getMappedPort(6379), "fixture-admin", REDIS_PASSWORD, false,
-                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1));
+                REDIS.getMappedPort(6379), "fixture-admin", REDIS_PASSWORD, PRODUCTION,
+                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1), 1024,
+                PRODUCTION ? TLS.certificate().toString() : "");
         var channels = new com.muse.meomuneum.chat.redis.ChatRedisChannels(adminProperties);
         try (var admin = new com.muse.meomuneum.chat.redis.ChatRedisConnection(adminProperties)) {
             String marker = admin.commands().sync().hget(channels.runtimeMarkerKey(), "generation");
@@ -563,6 +792,10 @@ class CoreAuthProcessTest {
             admin.commands().sync().hset(channels.runtimeMarkerKey(), "generation", marker);
             Thread.sleep(1200);
             assertEquals(503, status(subscribed, "/actuator/health/readiness"));
+            assertEquals(200, status(subscribed, "/actuator/health/liveness"));
+            assertEquals(503, request(subscribed, "GET", "/api/v1/regions/" + region + "/chat-room",
+                    token(drainSid), null, Map.of()).statusCode());
+            assertTrue(subscribed.process().isAlive());
         }
         stop(polling);
         stop(subscribed);
@@ -620,25 +853,35 @@ class CoreAuthProcessTest {
             command.addAll(List.of("-Djavax.net.ssl.trustStore=" + trust,
                     "-Djavax.net.ssl.trustStorePassword=synthetic-fixture-password"));
         }
+        if (PRODUCTION) {
+            command.add("-Djdk.net.hosts.file=" + TLS.hosts());
+        }
         command.addAll(
                 List.of("-jar", System.getProperty("auth.integration." + role + "-jar"), "--server.address=127.0.0.1",
                         "--server.port=0", "--chat.message-cleanup.enabled=false"));
-        if (role.equals("chat")) {
-            command.add("--spring.profiles.active=chat-isolated");
+        if (PRODUCTION || role.equals("chat")) {
+            command.add("--spring.profiles.active=" + (PRODUCTION ? "prod" : "chat-isolated"));
+        }
+        if (PRODUCTION && role.equals("core")) {
+            command.addAll(List.of("--auth.direct-v2.safety-mode=PRODUCTION",
+                    "--auth.direct-v2.backend-instances=1", "--auth.direct-v2.external-restore-epoch=1"));
         }
         var builder = new ProcessBuilder(command);
         builder.environment().clear();
         builder.environment().putAll(Map.of(role.toUpperCase() + "_DB_URL", MYSQL.getJdbcUrl(),
                 role.toUpperCase() + "_DB_USERNAME", MYSQL.getUsername(), role.toUpperCase() + "_DB_PASSWORD",
                 MYSQL.getPassword(),
-                "AUTH_JWT_SECRET", SECRET, "LOCATION_TOKEN_SECRET", SECRET, "AUTH_CORS_ALLOWED_ORIGINS", ORIGIN,
-                "AUTH_COOKIE_SECURE", "false"));
+                "AUTH_JWT_SECRET", SECRET, "LOCATION_TOKEN_SECRET", LOCATION, "AUTH_CORS_ALLOWED_ORIGINS", ORIGIN,
+                "AUTH_COOKIE_SECURE", Boolean.toString(PRODUCTION)));
         if (role.equals("core")) {
             builder.environment().putAll(Map.of("RECOMMENDATION_AI_BASE_URL", "http://127.0.0.1:1",
                     "SPEECH_TRANSCRIPTION_AI_BASE_URL", "http://127.0.0.1:1", "LOCATION_REVERSE_GEOCODING_BASE_URL",
                     "http://127.0.0.1:1"));
         }
         builder.environment().putAll(additions);
+        if (PRODUCTION && role.equals("core")) {
+            builder.environment().put("AUTH_DIRECT_V2_ENABLED", "true");
+        }
         builder.redirectErrorStream(true).redirectOutput(log.toFile());
         Node pending = new Node(builder.start(), 0);
         nodes.add(pending); // Cleanup owns the process even if startup fails before a port is assigned.
@@ -676,7 +919,7 @@ class CoreAuthProcessTest {
 
     private String location(String sid, long region) {
         var provider = new com.muse.meomuneum.location.security.LocationResolutionTokenProvider(
-                new com.muse.meomuneum.location.config.LocationTokenProperties(SECRET), java.time.Clock.systemUTC());
+                new com.muse.meomuneum.location.config.LocationTokenProperties(LOCATION), java.time.Clock.systemUTC());
         // Issue the existing token format from persisted administrative metadata, with synthetic signing material.
         var jdbc = new JdbcTemplate(
                 new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()));
@@ -759,6 +1002,9 @@ class CoreAuthProcessTest {
     }
 
     private String token(String sid) {
+        if (PRODUCTION) {
+            return java.util.Objects.requireNonNull(issuedTokens.get(sid), "real login token required");
+        }
         User user = new User() {
         };
         ReflectionTestUtils.setField(user, "id", 411001L);

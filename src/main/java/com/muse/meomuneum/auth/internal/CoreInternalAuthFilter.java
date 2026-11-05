@@ -5,13 +5,18 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongSupplier;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,15 +25,24 @@ import com.muse.meomuneum.global.security.InternalSessionProtocol;
 
 /** Terminates the internal protocol before user JWT, Origin or CSRF filters can inspect its credential. */
 public final class CoreInternalAuthFilter extends OncePerRequestFilter {
+    private static final Logger log = LoggerFactory.getLogger(CoreInternalAuthFilter.class);
+    private final AtomicBoolean failureLogged = new AtomicBoolean();
     public static final String PATH = "/internal/v1/auth/sessions/validate";
     private final byte[] current;
     private final byte[] next;
     private final boolean nextEnabled;
     private final CoreSessionValidationService validation;
     private final Map<String, Window> callers = new ConcurrentHashMap<>();
+    private final LongSupplier clock;
     private final ObjectMapper json = new ObjectMapper();
 
     public CoreInternalAuthFilter(String current, String next, CoreSessionValidationService validation) {
+        this(current, next, validation, System::nanoTime);
+    }
+
+    public CoreInternalAuthFilter(String current, String next, CoreSessionValidationService validation,
+            LongSupplier clock) {
+        this.clock = clock;
         this.current = credential(current);
         this.nextEnabled = next != null && !next.isBlank();
         this.next = next == null || next.isBlank() ? new byte[32] : credential(next);
@@ -64,9 +78,24 @@ public final class CoreInternalAuthFilter extends OncePerRequestFilter {
             error(response, 400, "INVALID");
             return;
         }
-        long now = System.nanoTime();
+        var taskHeaders = Collections.list(request.getHeaders("X-Chat-Task-Id"));
+        String caller = "source:" + request.getRemoteAddr();
+        if (!taskHeaders.isEmpty()) {
+            String task = taskHeaders.getFirst();
+            try {
+                if (taskHeaders.size() != 1 || !UUID.fromString(task).toString().equals(task)) {
+                    throw new IllegalArgumentException("invalid task identity");
+                }
+                caller = "task:" + task;
+            } catch (IllegalArgumentException invalid) {
+                error(response, 400, "INVALID");
+                return;
+            }
+        }
+        long now = clock.getAsLong();
         callers.entrySet().removeIf(entry -> now - entry.getValue().started() > 2_000_000_000L);
-        if (callers.size() > 21024 || !allow("task:" + request.getRemoteAddr(), now)) {
+        if (callers.size() > 21024 || !allow(caller, now)) {
+            unavailable(callers.size() > 21024 ? "caller_capacity" : "caller_rate", "none");
             error(response, 503, "UNAVAILABLE");
             return;
         }
@@ -84,6 +113,7 @@ public final class CoreInternalAuthFilter extends OncePerRequestFilter {
             for (long user : pairs.stream().mapToLong(com.muse.meomuneum.global.security.SessionPair::userId).distinct()
                     .toArray()) {
                 if (!allow("user:" + user, now)) {
+                    unavailable("user_rate", "none");
                     error(response, 503, "UNAVAILABLE");
                     return;
                 }
@@ -94,7 +124,14 @@ public final class CoreInternalAuthFilter extends OncePerRequestFilter {
         } catch (IllegalArgumentException invalid) {
             error(response, 400, "INVALID");
         } catch (RuntimeException unavailable) {
+            unavailable("validation", unavailable.getClass().getSimpleName());
             error(response, 503, "UNAVAILABLE");
+        }
+    }
+
+    private void unavailable(String stage, String cause) {
+        if (failureLogged.compareAndSet(false, true)) {
+            log.warn("event=core_chat_auth_first_unavailable stage={} cause={}", stage, cause);
         }
     }
 

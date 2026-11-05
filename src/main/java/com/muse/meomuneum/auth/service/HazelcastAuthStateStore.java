@@ -96,6 +96,7 @@ public class HazelcastAuthStateStore {
                 encryptedRefreshToken, accessExpiresAt, refreshExpiresAt, userAgentSummary, ownerClaimId);
     }
 
+    /** Fresh bounded read only; never rotates a session or extends its expiration. */
     public Map<String, AuthSession> getSessions(Set<String> sids) {
         return sessionStore.getSessions(sids);
     }

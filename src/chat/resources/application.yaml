@@ -12,6 +12,11 @@ spring:
       data-source-properties:
         connectTimeout: 1000
         socketTimeout: 2000
+        # Cache SQL preparation only; every execution still reads current DB authority.
+        useServerPrepStmts: "true"
+        cachePrepStmts: "true"
+        prepStmtCacheSize: "250"
+        prepStmtCacheSqlLimit: "8192"
   jpa:
     hibernate:
       ddl-auto: validate
@@ -67,7 +72,7 @@ chat:
     service-token: ${CORE_AUTH_SERVICE_TOKEN:}
     redis-enabled: ${CHAT_AUTH_REDIS_ENABLED:false}
     producer-ids: ${CORE_AUTH_PRODUCER_IDS:}
-  # Temporary activation for isolated verification only; shared state and recovery remain later steps.
+  # Production activation requires the complete startup contract and prepared runtime state.
   runtime:
     enabled: ${CHAT_RUNTIME_ENABLED:false}
   redis:
