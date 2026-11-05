@@ -697,3 +697,94 @@ Redis 기반만 되돌릴 때는 활성화를 해제한다. 이번 단계에는 
 전체 테스트는 738개 중 705통과·10실패·23조건부 제외다. 실패 10개는 프로필 이미지 테스트의
 `AuthService` 구성 누락, 약관·동시 가입 테스트이며 변경 전 `dev` 7406ba5에서도 동일하게 재현했다.
 격리 검증 기록은 `build/redis-foundation-reintegration/summary.json`에 보존한다.
+
+## Core·Chat 독립 앱·이미지 (P1 3단계)
+
+같은 저장소의 `core`·`chat` 소스셋을 독립 컴파일한다. 공유 계약·모델은 기존 소스에서 재사용하며
+각 JAR에는 선택된 역할의 클래스·리소스·라이브러리만 들어간다. 기존 단일 앱 `bootJar`·`bootRun`은
+전환 전 회귀/실행 경로로 유지한다. 새 앱과 기존 단일 앱을 운영 DB에서 함께 실행하지 않는다.
+
+| 구분 | Core | Chat |
+| --- | --- | --- |
+| 진입점 | `com.muse.apps.core.CoreApplication` | `com.muse.apps.chat.ChatApplication` |
+| 산출물 | `build/libs/meomuneum-core.jar` | `build/libs/meomuneum-chat.jar` |
+| 소유 API | 인증·사용자·추천·음악·지도·위치 발급 | `/ws`, `/api/v1/chat-rooms/**`, `/api/v1/regions/{id}/chat-room` |
+| 배치/초기화 | 기존 인증 스케줄러 | 채팅 초기화·checkpoint·보관 기간 정리 |
+| 제외 | 채팅 런타임·WebSocket·Lettuce·마스킹 라이브러리 | Core 서비스/컨트롤러·Hazelcast·AI·역지오코딩 클라이언트·Flyway |
+| 이미지 | `Dockerfile.core`, FFmpeg 포함 | `Dockerfile.chat`, FFmpeg 제외 |
+
+Core의 위치 토큰 발급과 Chat의 토큰 검증은 같은 계약을 쓴다. 세션 ID 형식 검사는 공통 코드로
+옮겨 Core가 채팅 연결 registry에 의존하지 않게 했다. JWT 필터의 사용자 확인도 읽기 인터페이스로
+분리해 Chat에서 로그인/BCrypt 서비스를 만들지 않는다. 공통 오류 응답의 예외 타입은 재사용한다.
+공개 REST/STOMP 필드·destination·기존 이력/재연결 정책·DB schema는 변경하지 않는다.
+
+```sh
+./gradlew coreBootJar chatBootJar bootJar --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest --no-daemon
+./gradlew appSeparationTest --no-daemon
+# 각 앱 실행 (필요한 환경 변수 주입 후):
+./gradlew coreBootRun --no-daemon
+./gradlew chatBootRun --no-daemon
+```
+
+앱별 설정은 `src/core/resources/application.yaml`, `src/chat/resources/application.yaml`이다.
+기존 단일 앱의 `application-dev/test/prod.yaml`을 새 앱에 복사하지 않아 역할별 DB 설정을 덮어쓰거나
+Chat에서 Core 비밀값을 요구하지 않는다. `.env.example`은 변수 예시이며 자동으로 로딩하지 않는다.
+
+| 설정 | 설명 |
+| --- | --- |
+| `CORE_DB_URL/USERNAME/PASSWORD`, `CHAT_DB_URL/USERNAME/PASSWORD` | 같은 schema의 앱별 접속 정보; 실제 DB 계정/권한 분리는 클라우드 조치 |
+| `CORE_DB_MAXIMUM_POOL_SIZE`, `CHAT_DB_MAXIMUM_POOL_SIZE` | 각각 기본 10; Core + Chat Task 수 × pool + migration/운영 여유분을 협의 |
+| `CORE_SERVER_PORT`, `CHAT_SERVER_PORT` | 각각 기본 8080; 같은 호스트에서는 서로 다른 포트 지정 |
+| `CORE_SHUTDOWN_TIMEOUT`, `CHAT_SHUTDOWN_TIMEOUT` | 각각 기본 30s; 프레임워크 종료 유예이며 WS drain 실측 완료를 뜻하지 않음 |
+| `AUTH_JWT_SECRET`, `LOCATION_TOKEN_SECRET`, JWT issuer/audience·허용 Origin | 양 앱의 토큰 계약 일치; Chat은 Hazelcast/AI 비밀값을 받지 않음 |
+| `CORE_FLYWAY_ENABLED` | 기본 false; 합의한 단일 migration 실행 주체만 명시적으로 활성화 |
+| `CHAT_RUNTIME_ENABLED` | 기본 false; 후속 Core 세션 검증 연동 전 운영 진입 차단 |
+
+Chat은 Flyway 라이브러리·migration SQL을 패키징하지 않고 Hibernate `validate`만 수행한다.
+Core는 migration 원본을 보존하되 평상시 자동 실행을 하지 않는다. 두 앱은 이미 준비된 schema에
+접속해야 한다. DB 계정/권한·migration 실행 주체·SSM 매핑은 이번 코드 변경으로 생성되지 않는다.
+
+`GET /actuator/health/liveness`와 `/actuator/health/readiness`만 인증 없이 health를 확인할 수 있다.
+Core readiness는 기존 `authState` 조건을 유지한다. Chat readiness는 DB·런타임 활성화를 확인하고,
+기본 상태에서는 liveness 200·readiness 503과 채팅 경로 503을 반환한다. 이때 채팅 초기화·배치를
+생성하지 않는다. 상대 앱의 경로는 인증 처리 전에 404로 거절한다.
+
+현재 Chat 런타임 활성화는 **격리 검증 전용**이다. `CHAT_RUNTIME_ENABLED=true`와 `chat-isolated`
+profile을 함께 지정해야 하며 `prod`와 함께 사용하면 DB 연결 전에 기동을 거절한다.
+기존 JWT/사용자 확인만으로 Core의 폐기 sid를 확인했다고 간주하지 않기 위한 임시 전환 경계다.
+후속 Core 인증 연동 후 이 활성화 제한을 교체하고 readiness에 내부 인증·Redis 실제 구독·공유 상태
+복구 조건을 연결해야 한다. 현 단계만으로 다중 Chat Task를 운영하지 않는다.
+
+```sh
+# 커밋된 소스로 빌드한다. 플랫폼은 ECS runtimePlatform과 맞춘다.
+docker build -f Dockerfile.core --build-arg BUILD_GIT_COMMIT="$(git rev-parse HEAD)" -t meomuneum-core:app-separation-check .
+docker build -f Dockerfile.chat --build-arg BUILD_GIT_COMMIT="$(git rev-parse HEAD)" -t meomuneum-chat:app-separation-check .
+./gradlew appSeparationTest -PappSplitImages=true --no-daemon
+```
+
+두 이미지는 JDK 25 builder/JRE 25 runtime과 UID/GID 10001을 사용한다. Java를 exec 형식으로
+실행해 종료 신호를 전달한다. `.dockerignore`는 소스·빌드 설정만 허용하며 `.git`, `.env`, 로컬
+`tools/`·문서·검증 결과를 build context에서 제외한다. 빌드 커밋과 소스 SHA를 JAR에 기록한다.
+이미지 검증은 위 로컬 태그와 Docker가 필요하다. 새 library/서비스의 자격 증명을 운영에서 가져오지 않는다.
+
+`appSeparationTest`는 격리 MySQL 9.7.0을 단일 시험 migrator로 준비하고 실제 JAR 프로세스를 실행한다.
+Core의 채팅 미초기화·API 경계·위치 토큰 발급, 차단 Chat의 부작용 없음, 단일 활성 Chat의
+REST 입장·STOMP 실제 구독/저장 ACK·세션 쿠키 미생성을 확인한다. Core 종료 후 Chat 유지 시험은
+앱 프로세스 분리 확인이며 Core 장애 중 인증 허용 정책을 확정하거나 검증한 것은 아니다.
+이미지 옵션은 컨테이너 기동·health·비루트 실행·Core FFmpeg/Chat 미포함을 추가 확인한다.
+실제 로그인/폐기·Redis 제품 전파·다중 서버 정원·운영 부하·ALB/ECS 배포는 후속 검증이다.
+
+전환은 후속 P1 구현·검증과 클라우드 협의가 끝난 뒤 짧은 채팅 중단을 두고 진행한다.
+기존 채팅 처리 중단과 연결/열람 경계 정리 → 단일 주체 migration → 새 Core/Chat 준비 → 라우팅 개방과
+smoke 확인을 맞춘다. 동시에 채팅 상태를 쓰는 구/신 앱이나 인증 Task 수 가정을 깨는 배포를 피한다.
+클라우드 팀에는 이미지/플랫폼, 경로 목록, 앱별 secret/DB pool, 두 health 경로와 실제 drain 측정값을 전달한다.
+롤백은 후속 데이터 변경과 호환되는 버전으로만 수행한다. 이번 단계 자체에는 DB migration이 없다.
+
+2026-10-26 최종 검증: 앱/JAR/이미지 통합 3개와 Redis 기반 회귀 4개 전부 통과·제외 0개.
+분리 Chat에서 실제 단절·동일 view 재연결 뒤 history/recovery의 저장 메시지 복원까지 확인했다.
+Spotless·Checkstyle main/core/chat/test·기존 및 분리 JAR 생성이 통과했다.
+일반 test는 738개 중 705통과·10실패·23조건부 제외이며 채팅은 197통과·4조건부 제외·실패0이다.
+실패 10개의 테스트 이름과 원인은 이전에 변경 전 dev에서도 재현한 프로필 이미지·약관·가입 실패와 같다.
+로컬 Linux arm64 이미지로 검증했으며 ECS 대상 플랫폼·운영 인증·AWS 배포 결과로 표시하지 않는다.
+증빙은 `build/app-separation-verification/`과 `build/app-separation/run-*/`에 보존한다.

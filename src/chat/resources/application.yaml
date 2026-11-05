@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: meomuneum-chat
+  datasource:
+    url: ${CHAT_DB_URL}
+    username: ${CHAT_DB_USERNAME}
+    password: ${CHAT_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${CHAT_DB_MAXIMUM_POOL_SIZE:10}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  lifecycle:
+    timeout-per-shutdown-phase: ${CHAT_SHUTDOWN_TIMEOUT:30s}
+server:
+  port: ${CHAT_SERVER_PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: framework
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db,chatRuntime
+        liveness:
+          include: livenessState
+auth:
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  jwt:
+    issuer: ${AUTH_JWT_ISSUER:project-api}
+    audience: ${AUTH_JWT_AUDIENCE:project-api}
+    secret: ${AUTH_JWT_SECRET}
+    access-token-expiration-seconds: 3600
+    refresh-token-expiration-seconds: 1209600
+location:
+  token:
+    secret: ${LOCATION_TOKEN_SECRET}
+chat:
+  # Temporary activation for isolated verification only; Core session auth is a later step.
+  runtime:
+    enabled: ${CHAT_RUNTIME_ENABLED:false}
+  redis:
+    enabled: ${CHAT_REDIS_ENABLED:false}
+    environment: ${CHAT_REDIS_ENVIRONMENT:}
+    host: ${CHAT_REDIS_HOST:localhost}
+    port: ${CHAT_REDIS_PORT:6379}
+    username: ${CHAT_REDIS_USERNAME:default}
+    password: ${CHAT_REDIS_PASSWORD:}
+    ssl: ${CHAT_REDIS_SSL:true}
+    connect-timeout: ${CHAT_REDIS_CONNECT_TIMEOUT:1s}
+    command-timeout: ${CHAT_REDIS_COMMAND_TIMEOUT:1s}
+    request-queue-size: ${CHAT_REDIS_REQUEST_QUEUE_SIZE:1024}
+    ssl-ca-certificate: ${CHAT_REDIS_SSL_CA_CERTIFICATE:}
+  message-cleanup:
+    enabled: ${CHAT_MESSAGE_CLEANUP_ENABLED:true}
+  message-policy:
+    minimum-interval: ${CHAT_MESSAGE_MINIMUM_INTERVAL:1s}
+    detection-enabled: ${CHAT_PERSONAL_CONTENT_DETECTION_ENABLED:true}

@@ -11,8 +11,8 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
-import com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry;
 import com.muse.meomuneum.chat.region.domain.Region;
+import com.muse.meomuneum.global.security.AuthSessionIds;
 import com.muse.meomuneum.location.config.LocationTokenProperties;
 import com.muse.meomuneum.location.exception.LocationErrorCode;
 import com.muse.meomuneum.location.exception.LocationException;
@@ -52,7 +52,7 @@ public class LocationResolutionTokenProvider {
 
     public IssuedLocationToken issueForSession(Long userId, String authSessionId, Region sido, Region sigungu,
             Long mapDotId) {
-        if (!ChatAuthSessionRegistry.isValidSessionId(authSessionId)) {
+        if (!AuthSessionIds.isValid(authSessionId)) {
             throw invalidToken();
         }
         return issue(userId, sido, sigungu, mapDotId, authSessionId);
@@ -118,7 +118,7 @@ public class LocationResolutionTokenProvider {
 
     public LocationResolutionClaims validateForChat(String token, Long userId, String authSessionId) {
         LocationResolutionClaims claims = validate(token, userId);
-        if (!ChatAuthSessionRegistry.isValidSessionId(authSessionId)
+        if (!AuthSessionIds.isValid(authSessionId)
                 || !authSessionId.equals(claims.authSessionId())) {
             throw invalidToken();
         }

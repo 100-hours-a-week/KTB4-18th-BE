@@ -3,12 +3,12 @@ package com.muse.meomuneum.chat.connection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
+import com.muse.meomuneum.global.security.AuthSessionIds;
 import com.muse.meomuneum.global.security.TokenClaims;
 
 /** Identity comes exclusively from the verified access token, never from a device header. */
@@ -25,11 +25,7 @@ public class ChatAuthSessionRegistry {
     }
 
     public static boolean isValidSessionId(String sid) {
-        try {
-            return sid != null && UUID.fromString(sid).toString().equals(sid);
-        } catch (IllegalArgumentException invalid) {
-            return false;
-        }
+        return AuthSessionIds.isValid(sid);
     }
 
     public void register(String connectionId, Context context) {
