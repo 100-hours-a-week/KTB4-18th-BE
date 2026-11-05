@@ -99,7 +99,7 @@ class ChatParticipationMySqlTest {
         Flyway latest = Flyway.configure().dataSource(dataSource).load();
         var pending = latest.info().pending();
         assertEquals(1, java.util.Arrays.stream(pending)
-                .filter(migration -> migration.getVersion().toString().equals("20261027002610")).count());
+                .filter(migration -> migration.getVersion().toString().equals("20261027131057")).count());
         assertEquals(pending.length, latest.migrate().migrationsExecuted);
         assertEquals(0, latest.migrate().migrationsExecuted);
         assertTrue(latest.validateWithResult().validationSuccessful);
