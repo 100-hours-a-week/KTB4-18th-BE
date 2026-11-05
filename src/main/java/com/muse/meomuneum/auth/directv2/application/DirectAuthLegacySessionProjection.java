@@ -61,7 +61,7 @@ public class DirectAuthLegacySessionProjection {
                         session.refreshGeneration(), existing.createdAt(), now.toInstant(ZoneOffset.UTC),
                         session.accessExpiry().toInstant(ZoneOffset.UTC),
                         session.idleExpiry().toInstant(ZoneOffset.UTC),
-                        session.absoluteExpiry().toInstant(ZoneOffset.UTC), null, null, "direct-v2", null);
+                        session.absoluteExpiry().toInstant(ZoneOffset.UTC), null, "direct-v2");
                 if (!store.replaceSession(existing, updated)) {
                     throw DirectAuthFailure.unavailable();
                 }
@@ -69,7 +69,7 @@ public class DirectAuthLegacySessionProjection {
             }
             store.createSession(session.userId(), session.sid(), session.accessJti(), session.refreshHash(), null,
                     session.encryptedRefresh(), session.accessExpiry().toInstant(ZoneOffset.UTC),
-                    session.idleExpiry().toInstant(ZoneOffset.UTC), "direct-v2", null, "direct-v2", null);
+                    session.idleExpiry().toInstant(ZoneOffset.UTC), "direct-v2", "direct-v2");
             if (session.refreshGeneration() != 1) {
                 throw DirectAuthFailure.unavailable();
             }

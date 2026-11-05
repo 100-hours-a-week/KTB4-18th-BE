@@ -23,7 +23,7 @@ public class DirectAuthProtocolMarkerFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String path = request.getRequestURI();
+        String path = AuthRequestPath.path(request);
         if (!path.startsWith("/api/v1/auth/")) {
             chain.doFilter(request, response);
             return;
@@ -33,8 +33,7 @@ public class DirectAuthProtocolMarkerFilter extends OncePerRequestFilter {
                 || path.equals("/api/v1/auth/flow/rebootstrap") || path.startsWith("/api/v1/auth/login/operations/")
                 || path.startsWith("/api/v1/auth/token/refresh/operations/");
         if (markers.isEmpty() && directOnly || !markers.isEmpty()
-                && (markers.size() != 1 || !"direct-v2".equals(markers.getFirst())
-                        || path.equals("/api/v1/auth/login/recovery"))) {
+                && (markers.size() != 1 || !"direct-v2".equals(markers.getFirst()))) {
             writer.write(request, response, SecurityErrorCode.INVALID_LOGIN_PROTOCOL);
             return;
         }

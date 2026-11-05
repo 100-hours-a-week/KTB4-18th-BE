@@ -34,7 +34,6 @@ class DirectAuthLegacyProjectionIntegrationTest {
         try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
             var provider = new StaticListableBeanFactory(Map.of("hz", hz)).getBeanProvider(HazelcastInstance.class);
             var store = new HazelcastAuthStateStore(provider, f.properties);
-            store.restoreActiveTicketReservations();
             var legacy = new DirectAuthLegacySessionProjection(store, f.cookies);
             var worker = new DirectAuthProjectionService(f.jdbc, f.transactions, f.flows, f.sessions,
                     f.projections, provider, legacy);

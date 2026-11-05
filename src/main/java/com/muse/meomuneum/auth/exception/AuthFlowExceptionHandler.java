@@ -8,10 +8,9 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.muse.meomuneum.auth.controller.AuthFlowController;
-import com.muse.meomuneum.auth.controller.LoginQueueController;
 import com.muse.meomuneum.global.response.ApiResponse;
 
-@RestControllerAdvice(assignableTypes = {AuthFlowController.class, LoginQueueController.class})
+@RestControllerAdvice(assignableTypes = {AuthFlowController.class})
 public class AuthFlowExceptionHandler {
     @ExceptionHandler(AuthFlowException.class)
     public ResponseEntity<ApiResponse<Void>> handleFlowFailure(AuthFlowException exception) {
@@ -35,9 +34,6 @@ public class AuthFlowExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleConflict(AuthStateConflictException exception) {
         ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.CONFLICT)
                 .cacheControl(CacheControl.noStore());
-        if (exception instanceof AuthStateOperationInProgressException) {
-            response.header(HttpHeaders.RETRY_AFTER, "1");
-        }
         return response.body(ApiResponse.failure(exception.code()));
     }
 }

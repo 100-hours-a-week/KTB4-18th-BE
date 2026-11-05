@@ -1,4 +1,4 @@
-package com.muse.meomuneum.auth.queue;
+package com.muse.meomuneum.auth.lifecycle;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,15 +26,6 @@ public class AuthFlowExpiryReaper {
             flowService.reapRetainedFlowData(BATCH_SIZE);
         } catch (RuntimeException failure) {
             log.warn("Auth flow expiry cleanup deferred type={}", failure.getClass().getSimpleName());
-        }
-    }
-
-    @Scheduled(fixedDelayString = "${auth.flow.queue-create-reaper-interval:5s}")
-    public void reapStaleQueueCreateReservations() {
-        try {
-            flowService.reapStaleQueueCreateReservations(BATCH_SIZE);
-        } catch (RuntimeException failure) {
-            log.warn("Auth queue create cleanup deferred type={}", failure.getClass().getSimpleName());
         }
     }
 }

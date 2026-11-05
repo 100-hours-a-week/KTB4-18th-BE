@@ -1,10 +1,10 @@
 package com.muse.meomuneum.auth.directv2.http;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import jakarta.servlet.http.Cookie;
@@ -85,12 +85,9 @@ class DirectAuthHybridRoutingIntegrationTest {
     }
 
     @Test
-    void directLegacyRecoveryIsRejectedBeforeCsrfAndNeverDelegates() throws Exception {
-        var response = mvc(false).perform(post("/api/v1/auth/login/recovery")
-                .header("X-Auth-Login-Protocol", "direct-v2")).andReturn().getResponse();
-        assertThat(response.getStatus()).isEqualTo(400);
-        assertThat(response.getContentAsString()).contains("INVALID_LOGIN_PROTOCOL");
-        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+    void legacyLoginRecoveryRouteIsNotRegistered() throws Exception {
+        var response = mvc(false).perform(get("/api/v1/auth/login/recovery")).andReturn().getResponse();
+        assertThat(response.getStatus()).isEqualTo(404);
         verifyNoInteractions(legacy, direct);
     }
 
@@ -100,7 +97,7 @@ class DirectAuthHybridRoutingIntegrationTest {
                 .header("X-Auth-Login-Protocol", "direct-v2")
                 .header("Origin", "http://localhost:5173")
                 .contentType("application/json")
-                .content("{\"email\":\"test@example.invalid\",\"password\":\"test-only\"}"))
+                .content("{\"email\":\"test@example.com\",\"password\":\"test-only\"}"))
                 .andReturn().getResponse();
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(response.getHeaders("Set-Cookie")).isEmpty();
@@ -125,23 +122,26 @@ class DirectAuthHybridRoutingIntegrationTest {
     }
 
     @Test
-    void generationModeRejectsMarkerlessMutationAndLegacyModePreservesDispatch() throws Exception {
+    void markerlessLoginIsRejectedInEveryModeWithoutLegacyDispatch() throws Exception {
         when(projections.generationMode()).thenReturn(true);
         var response = mvc(true).perform(post("/api/v1/auth/login")
                 .header("Origin", "http://localhost:5173")
                 .contentType("application/json")
-                .content("{\"email\":\"test@example.invalid\",\"password\":\"test-only\"}"))
+                .content("{\"email\":\"test@example.com\",\"password\":\"test-only\"}"))
                 .andReturn().getResponse();
-        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(response.getContentAsString()).contains("INVALID_LOGIN_PROTOCOL");
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
         verifyNoInteractions(legacy);
         when(projections.generationMode()).thenReturn(false);
-        when(legacy.login(any(), any(), any()))
-                .thenReturn(new com.muse.meomuneum.auth.dto.TokenResponse("test-access", 300));
         var preserved = mvc(false).perform(post("/api/v1/auth/login")
                 .header("Origin", "http://localhost:5173")
                 .contentType("application/json")
                 .content("{\"email\":\"test@example.invalid\",\"password\":\"test-only\"}"))
                 .andReturn().getResponse();
-        assertThat(preserved.getStatus()).isEqualTo(200);
+        assertThat(preserved.getStatus()).isEqualTo(400);
+        assertThat(preserved.getContentAsString()).contains("INVALID_LOGIN_PROTOCOL");
+        verifyNoInteractions(legacy);
     }
 }

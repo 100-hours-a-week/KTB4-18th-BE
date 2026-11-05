@@ -100,8 +100,8 @@ public class DirectAuthRuntimeFixture implements AutoCloseable {
         String stateKey = "test-only-state-key-" + UUID.randomUUID();
         byte[] encryption = new byte[32];
         new java.security.SecureRandom().nextBytes(encryption);
-        properties = new AuthStateProperties(stateKey, Base64.getEncoder().encodeToString(encryption), null,
-                1800, 3600, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        properties = new AuthStateProperties(stateKey, Base64.getEncoder().encodeToString(encryption), 1209600, 7776000,
+                10, 64, 16, 86400, 1, 100000, 300, 45);
         cookies = new DirectAuthCookieService(properties, false, "Lax");
         byte[] derived = KDF.getInstance("HKDF-SHA256").deriveData(HKDFParameterSpec.ofExtract().addIKM(encryption)
                 .addSalt("meomuneum/auth-replay/v2/hkdf-salt".getBytes(StandardCharsets.UTF_8))

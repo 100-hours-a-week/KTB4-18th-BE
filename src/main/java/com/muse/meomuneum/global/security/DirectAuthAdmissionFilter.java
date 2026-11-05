@@ -52,7 +52,7 @@ public class DirectAuthAdmissionFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String path = request.getRequestURI();
+        String path = AuthRequestPath.path(request);
         boolean direct = "direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"));
         boolean post = "POST".equals(request.getMethod());
         if (post && direct && !flag.enabled() && (path.equals("/api/v1/auth/login")
@@ -67,11 +67,11 @@ public class DirectAuthAdmissionFilter extends OncePerRequestFilter {
             return;
         }
         boolean sensitive = post && (path.equals("/api/v1/auth/login") || path.equals("/api/v1/auth/logout")
-                || path.equals("/api/v1/auth/login/recovery") || path.equals("/api/v1/auth/token/refresh")
+                || path.equals("/api/v1/auth/token/refresh")
                 || path.equals("/api/v1/auth/flows")
                 || path.matches("/api/v1/auth/login/operations/[^/]+/session-recovery")
                 || path.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery"));
-        if (sensitive && projections != null) {
+        if (sensitive && projections != null && (direct || !path.equals("/api/v1/auth/login"))) {
             try {
                 boolean generation = projections.generationMode();
                 if (direct != generation) {

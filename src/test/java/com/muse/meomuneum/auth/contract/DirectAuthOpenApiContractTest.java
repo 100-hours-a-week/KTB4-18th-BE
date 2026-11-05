@@ -28,9 +28,9 @@ class DirectAuthOpenApiContractTest {
             .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
     private static final List<Route> ROUTES = List.of(
             new Route("/flow", "get", "200,400,404,409,503",
-                    "7ec202552ba5014a905636082af325560a7fade2d149fad81a17b5eb4b8972ba"),
+                    "8ecbf32f6f3b10d2c249d9d7de6717c38f164dd17a1e6d8a41a51fc193760e03"),
             new Route("/login", "post", "200,202,400,401,403,409,429,503",
-                    "870d3a8a32b29e3bfa5091bb2a45c2e0ab1f1ba6b75fb035b06e84e840c61fb1"),
+                    "27e73681942bf6fdffe889528206770edbf6e2d726c9099ff758e5e2a40a9508"),
             new Route("/login/operations/{operationId}", "get", "200,202,400,404,503",
                     "c9db2c814e11ecfb815349b4bc5438fd1a378ad1f5591fb2bc0b304110434f5a"),
             new Route("/login/operations/{operationId}/session-recovery", "post", "200,202,400,403,404,409,503",
@@ -41,7 +41,7 @@ class DirectAuthOpenApiContractTest {
                     "aab7d7149413845604fbeb5cb6f6b0c147a0024b4223118b2c0530c3eac11d51"),
             new Route("/token/csrf", "get", "200", "47dc02ab3e0ef9e5e8a9f59ea994e39c6608cf2f356139111b977bf239169068"),
             new Route("/flow/current-operation", "get", "200,400,404,409,503",
-                    "34b355794e1ebbf1a52189e2e64a4b65515aa65322ccf1853a3a779da921def1"),
+                    "446efcf06e42843726ea5b4a50ac6dae99efa3f8e65144a7555dc7108e4a6f82"),
             new Route("/flow/rebootstrap", "post", "200,400,403,404,409,429,503",
                     "8d8452fbf7d7ad891c664df3ef0b6fefba2dfc48abd4856076db4a78b2059f6b"),
             new Route("/token/refresh/operations/{operationId}/session-recovery", "post",
@@ -52,7 +52,7 @@ class DirectAuthOpenApiContractTest {
             new Route("/token/refresh/operations/{operationId}/session-recovery/current", "get",
                     "200,400,403,404,409,503", "f8349710d0762d4f1ad020910e610529ca89e73cc28b961ea4a3591309d574ba"),
             new Route("/flows", "post", "200,400,403,409,429,503",
-                    "ddcfc689dd19c574d36ede06141d4eac784cb825827e2e4c9dd152aaf50b9178"));
+                    "09ca5f7c31322a4ec767e3b87953716cfed328e707aeb602a012fe4a398e7eb3"));
 
     @Test
     void routesParametersSecurityAndResponsesMatchApprovedContract() throws Exception {
@@ -77,6 +77,12 @@ class DirectAuthOpenApiContractTest {
             assertThat(hash(operation)).as(route.path() + " " + route.method()
                     + " parameters, security, responses and request body").isEqualTo(route.digest());
         }
+        Map<String, Object> login = map(map(paths.get("/login")).get("post"));
+        Map<String, Object> protocolMarker = parameter(login, "X-Auth-Login-Protocol");
+        assertThat(protocolMarker.get("required")).isEqualTo(false);
+        assertThat(map(protocolMarker.get("schema"))).doesNotContainKey("const");
+        Map<String, Object> login400 = map(map(login.get("responses")).get("400"));
+        assertThat(map(login400.get("headers"))).containsKey("Cache-Control");
     }
 
     @Test
@@ -84,7 +90,7 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> document = document();
         Map<String, Object> components = map(document.get("components"));
         assertThat(hash(components.get("schemas"))).as("schemas, closed error codes and conditions")
-                .isEqualTo("44f66c5c111d0189c2f7a3fe3d6e098c549c1a9aaa24dc92cd3230a974c10bbf");
+                .isEqualTo("5305f6e600adb62bdb5e9f36cdead506b9402355e9b5b0be763b7d7c97c00450");
         assertThat(hash(components.get("securitySchemes"))).as("security schemes")
                 .isEqualTo("788d536415e602398a62e3d9af82426dbc0c2da08e80856c4832ccd6e141ffd6");
         checkReferences(document, document);
