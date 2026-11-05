@@ -113,11 +113,15 @@ public class ChatMessageDeliveryService {
                 broker.getObject().convertAndSend("/topic/chat-rooms/" + roomId,
                         new ChatMessageEvent("CHAT_MESSAGE", saved), headers.getMessageHeaders());
                 acknowledge(userId, membershipId, sessionId, saved);
+            } catch (com.muse.meomuneum.chat.auth.ChatAuthUnavailableException unavailable) {
+                sockets.close(Set.of(sessionId), 1013, "CHAT_SERVICE_UNAVAILABLE");
             } catch (ChatMessageRejection rejection) {
                 reject(userId, roomId, membershipId, sessionId, clientId, rejection);
             } catch (ChatRoomException exception) {
                 if (exception.getErrorCode() == ChatRoomErrorCode.CHAT_BANNED) {
                     entry.leaveAll(userId, 4101, "CHAT_BANNED|" + exception.getBannedUntil());
+                } else if (exception.getErrorCode() == ChatRoomErrorCode.AUTH_REQUIRED) {
+                    sockets.close(Set.of(sessionId), 4102, "AUTH_REQUIRED");
                 } else {
                     sockets.close(Set.of(sessionId), 4100, "CHAT_LEFT");
                 }
