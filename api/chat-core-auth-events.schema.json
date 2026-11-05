@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:meomuneum:chat:redis-events:v1",
   "title": "Regional chat Redis events v1",
-  "description": "최대16KiB UTF-8. Channel/producer allowlist, DB 권한·epoch·pair/room 일치는 소비자가 별도 검사.",
+  "description": "최대16KiB UTF-8. Channel/producer allowlist, DB 권한·epoch·pair/room 일치는 소비자가 별도 검사. P1 8단계 Chat VIEW_ENDED/MEMBERSHIP_ENDED/PRESENCE_CHANGED는 committed outbox와 종료 상태를 확인하며 AUTH_SESSION_REVOKED는 기존 Core 검증을 유지한다. CHAT_ACCESS_INVALIDATED 생산은 후속 범위.",
   "oneOf": [
     {
       "$ref": "#/definitions/CHAT_MESSAGE_CREATED"

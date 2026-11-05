@@ -37,6 +37,13 @@ import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
 /** Handles SEND without allowing rejected payloads into framework error logging. */
 @Service
 public class ChatMessageDeliveryService {
+    private DistributedChatMessageService distributed;
+
+    @Autowired(required = false)
+    public void setDistributed(DistributedChatMessageService service) {
+        distributed = service;
+    }
+
     private ChatParticipationService participation;
 
     @Autowired(required = false)
@@ -93,6 +100,13 @@ public class ChatMessageDeliveryService {
                     throw new ChatMessageRejection("INVALID_CONTENT");
                 }
                 String text = contentPolicy.validateText(request.path("content").textValue());
+                if (distributed != null) {
+                    contentPolicy.validatePersonalContent(text);
+                    String masked = masking.mask(text);
+                    var saved = distributed.send(userId, roomId, membershipId, sessionId, clientId, text, masked);
+                    acknowledge(userId, membershipId, sessionId, saved.message(), saved.deduplicated());
+                    return null;
+                }
                 transmission.purgeReceipts();
                 ChatTransmissionPolicy.Receipt previous = transmission.previous(userId, clientId);
                 if (previous != null) {
@@ -181,8 +195,13 @@ public class ChatMessageDeliveryService {
     }
 
     private void acknowledge(Long userId, Long membershipId, String sessionId, ChatMessageResponse saved) {
+        acknowledge(userId, membershipId, sessionId, saved, false);
+    }
+
+    private void acknowledge(Long userId, Long membershipId, String sessionId, ChatMessageResponse saved,
+            boolean deduplicated) {
         privateEvent(userId, sessionId, new ChatMessageEvent("CHAT_ACK",
-                Map.of("membership_id", membershipId, "message", saved)));
+                Map.of("membership_id", membershipId, "message", saved, "deduplicated", deduplicated)));
     }
 
     private void reject(Long userId, Long roomId, Long membershipId, String sessionId, String clientId,

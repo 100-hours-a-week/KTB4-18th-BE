@@ -63,9 +63,11 @@ import com.muse.meomuneum.user.domain.UserRole;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 
-/** Auth fanout only: both Chat processes start before views exist; this is not a shared-state acceptance test. */
+/** Packaged Core/Chat authentication with optional shared participation and product message relay checks. */
 @Testcontainers
 class CoreAuthProcessTest {
+    private static final boolean CONTROL = Boolean.getBoolean("auth.integration.control-events");
+    private static final boolean RELAY = Boolean.getBoolean("auth.integration.message-relay");
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
     private static final String HMAC_KEY = "auth-process-synthetic-hmac-secret-at-least-32";
@@ -82,14 +84,15 @@ class CoreAuthProcessTest {
             .withCopyToContainer(Transferable
                     .of("""
                             user default off
+                            user fixture-admin on >%s +@all ~* &*
                             user core-auth on >%s &auth-test:chat:control:v1 \
                             +hello +ping +quit +client|setinfo +client|setname +publish
                             user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
-                            +hello +ping +quit +client|setinfo +client|setname \
+                            +hello +ping +quit +publish +client|setinfo +client|setname \
                             +subscribe +psubscribe +unsubscribe +punsubscribe \
                             ~auth-test:chat:state:* +eval +hget +hset +expire
                             """
-                            .formatted(REDIS_PASSWORD, REDIS_PASSWORD)),
+                            .formatted(REDIS_PASSWORD, REDIS_PASSWORD, REDIS_PASSWORD)),
                     "/fixture/acl")
             .withCommand("redis-server", "--aclfile", "/fixture/acl", "--appendonly", "no", "--save", "");
     private final Path evidence = Path.of("build/core-auth-integration", "run-" + Instant.now().toEpochMilli());
@@ -204,6 +207,14 @@ class CoreAuthProcessTest {
                         "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(), "CHAT_REDIS_USERNAME", "chat-auth",
                         "CHAT_REDIS_PASSWORD", REDIS_PASSWORD, "CHAT_REDIS_SSL", "false"));
             }
+            if (RELAY) {
+                chatEnv.put("CHAT_MESSAGE_RELAY_ENABLED", "true");
+                chatEnv.put("CHAT_MESSAGE_FINGERPRINT_KEYS", "v1:" + java.util.Base64.getEncoder().encodeToString(
+                        "synthetic-message-fingerprint-key-at-least-32-bytes".getBytes(StandardCharsets.UTF_8)));
+            }
+            if (CONTROL) {
+                chatEnv.put("CHAT_CONTROL_EVENTS_ENABLED", "true");
+            }
             Node polling = start("chat", chatEnv, trust);
             var fastEnv = new HashMap<>(chatEnv);
             fastEnv.put("CORE_AUTH_SERVICE_TOKEN", NEXT);
@@ -244,12 +255,86 @@ class CoreAuthProcessTest {
             }
             Probe second = join(subscribed, revokedSid, region, room);
             Probe survivor = join(polling, survivingSid, region, room);
+            if (CONTROL) {
+                String controlSid = UUID.randomUUID().toString();
+                sessions.put(controlSid, session(controlSid));
+                Probe tab = join(subscribed, polling, controlSid, region, room);
+                Probe peer = join(polling, subscribed, controlSid, region, room);
+                assertEquals(tab.membership, peer.membership);
+                var leave = request(subscribed, "DELETE", "/api/v1/chat-rooms/" + room + "/members/me?membership_id="
+                        + tab.membership + "&view_session_id=" + tab.view, token(controlSid), null, Map.of());
+                assertEquals(204, leave.statusCode(), leave.body());
+                assertEquals(4100, tab.closed.get(5, TimeUnit.SECONDS));
+                assertFalse(peer.closed.isDone());
+                assertFalse(first.closed.isDone());
+                assertFalse(survivor.closed.isDone());
+                // Location evidence, handled on the opposite Task, terminates only the moving sid.
+                var departure = request(polling, "POST", "/api/v1/chat-rooms/" + room
+                        + "/region-departures?membership_id=" + peer.membership, token(controlSid),
+                        json.writeValueAsString(Map.of("location_resolution_token", location(controlSid,
+                                jdbc.queryForObject("SELECT id FROM regions WHERE code='41150'", Long.class)))),
+                        Map.of());
+                assertEquals(204, departure.statusCode(), departure.body());
+                assertEquals(4100, peer.closed.get(5, TimeUnit.SECONDS));
+                assertFalse(second.closed.isDone());
+                assertFalse(survivor.closed.isDone());
+                Probe replacement = join(subscribed, controlSid, region, room);
+                assertTrue(replacement.membership != peer.membership);
+                // All original terminal references may be delivered late; replacement must survive.
+                var oldBodies = jdbc.queryForList("SELECT event_body FROM chat_message_outbox WHERE event_type IN "
+                        + "('CHAT_VIEW_ENDED','CHAT_MEMBERSHIP_ENDED') ORDER BY room_seq DESC", String.class);
+                try (var publish = new com.muse.meomuneum.chat.redis.ChatRedisConnection(
+                        new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
+                                REDIS.getMappedPort(6379), "chat-auth", REDIS_PASSWORD, false,
+                                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1)))) {
+                    for (String body : oldBodies) {
+                        publish.commands().sync().publish("auth-test:chat:control:v1", body);
+                        publish.commands().sync().publish("auth-test:chat:control:v1", body);
+                    }
+                }
+                Thread.sleep(300);
+                assertFalse(replacement.closed.isDone());
+                await(() -> jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE "
+                        + "event_type='CHAT_VIEW_ENDED' AND status='SENT'", Integer.class) > 0
+                        && jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_outbox WHERE "
+                                + "event_type='CHAT_MEMBERSHIP_ENDED' AND status='SENT'", Integer.class) > 0);
+                Files.writeString(evidence.resolve("control-events.json"),
+                        json.writeValueAsString(Map.of("crossTaskTabOnly", true, "sidRegionDeparture", true,
+                                "otherSidSurvived", true, "lateDuplicate", true)));
+                var examples = new java.util.ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+                for (String type : List.of("CHAT_VIEW_ENDED", "CHAT_MEMBERSHIP_ENDED", "CHAT_PRESENCE_CHANGED")) {
+                    examples.add(json.readTree(jdbc.queryForObject("SELECT event_body FROM chat_message_outbox "
+                            + "WHERE event_type=? ORDER BY room_seq LIMIT 1", String.class, type)));
+                }
+                Files.writeString(evidence.resolve("control-event-examples.json"), json.writeValueAsString(examples));
+            }
             var original = sessions.get(survivingSid);
             sessions.replace(survivingSid, original, original.withRotation("rotated-jti", "rotated-hash", "jti", "hash",
                     UUID.randomUUID().toString(), Instant.now().plusSeconds(60), "synthetic-encrypted-replay",
                     Instant.now().plusSeconds(3600), Instant.now().plusSeconds(3600)));
             survivor.sendMessage(room);
-            survivor.await("CHAT_ACK");
+            String savedAck = survivor.await("CHAT_ACK");
+            if (RELAY) {
+                long message = frameData(savedAck).path("message").path("message_id").asLong();
+                assertTrue(message > 0);
+                for (Probe probe : List.of(first, second, survivor)) {
+                    assertEquals(message, frameData(probe.await("CHAT_MESSAGE")).path("message_id").asLong());
+                }
+                Probe retrying = join(subscribed, survivingSid, region, room);
+                retrying.sendMessage(room, survivor.lastClient, "인증 연동 검증");
+                var retry = frameData(retrying.await("CHAT_ACK"));
+                assertTrue(retry.path("deduplicated").asBoolean());
+                assertEquals(message, retry.path("message").path("message_id").asLong());
+                retrying.sendMessage(room, survivor.lastClient, "변경된 내용");
+                assertEquals("CLIENT_ID_CONFLICT", frameData(retrying.await("CHAT_REJECTED")).path("reason").asText());
+                assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_room_messages", Integer.class));
+                assertEquals(1,
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM chat_message_outbox WHERE event_type='CHAT_MESSAGE_CREATED'",
+                                Integer.class));
+                Files.writeString(evidence.resolve("message-relay.json"),
+                        "{\"senderViaPubSub\":true,\"peerMessage\":true,\"crossTaskRetry\":true,\"conflict\":true}");
+            }
             var csrf = request(core, "GET", "/api/v1/auth/token/csrf", null, null, Map.of());
             String csrfToken = json.readTree(csrf.body()).path("data").path("csrf_token").asText();
             var redisProperties = new com.muse.meomuneum.chat.redis.ChatRedisProperties("auth-test", REDIS.getHost(),
@@ -261,7 +346,9 @@ class CoreAuthProcessTest {
                     new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
                         @Override
                         public void message(String channel, String value) {
-                            notifications.add(value);
+                            if (com.muse.meomuneum.chat.control.ChatControlEvent.isCoreAuth(value)) {
+                                notifications.add(value);
+                            }
                         }
                     });
             await(subscription::isReady);
@@ -345,6 +432,15 @@ class CoreAuthProcessTest {
                 assertEquals(200, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
                         + "/messages?membership_id=" + survivor.membership + "&mode=history&size=10",
                         token(survivingSid), null, Map.of("X-Chat-View-Session", reclaimed.view)).statusCode());
+                if (RELAY) {
+                    REDIS.execInContainer("redis-cli", "--user", "fixture-admin", "--pass", REDIS_PASSWORD,
+                            "CLIENT", "KILL", "TYPE", "pubsub");
+                    assertEquals("PONG", observer.commands().sync().ping());
+                    assertEquals(1013, reclaimed.closed.get(5, TimeUnit.SECONDS));
+                    await(() -> status(subscribed, "/actuator/health/readiness") == 503);
+                    Files.writeString(evidence.resolve("pubsub-interruption.json"),
+                            "{\"commandPing\":true,\"ws1013\":true,\"readinessDown\":true}");
+                }
                 Files.writeString(evidence.resolve("cross-task-read.json"),
                         "{\"history\":true,\"recovery\":true,\"byClientId\":true,\"killedOwnerReclaimed\":true}");
             }
@@ -376,7 +472,7 @@ class CoreAuthProcessTest {
     }
 
     private Node start(String role, Map<String, String> additions, Path trust) throws Exception {
-        int port = port();
+        var log = evidence.resolve(role + "-" + UUID.randomUUID() + ".log");
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString()));
         if (trust != null) {
             command.addAll(List.of("-Djavax.net.ssl.trustStore=" + trust,
@@ -384,7 +480,7 @@ class CoreAuthProcessTest {
         }
         command.addAll(
                 List.of("-jar", System.getProperty("auth.integration." + role + "-jar"), "--server.address=127.0.0.1",
-                        "--server.port=" + port, "--chat.message-cleanup.enabled=false"));
+                        "--server.port=0", "--chat.message-cleanup.enabled=false"));
         if (role.equals("chat")) {
             command.add("--spring.profiles.active=chat-isolated");
         }
@@ -401,14 +497,25 @@ class CoreAuthProcessTest {
                     "http://127.0.0.1:1"));
         }
         builder.environment().putAll(additions);
-        builder.redirectErrorStream(true).redirectOutput(evidence.resolve(role + "-" + port + ".log").toFile());
-        Node node = new Node(builder.start(), port);
-        nodes.add(node);
+        builder.redirectErrorStream(true).redirectOutput(log.toFile());
+        Node pending = new Node(builder.start(), 0);
+        nodes.add(pending); // Cleanup owns the process even if startup fails before a port is assigned.
+        int[] actualPort = {0};
         await(() -> {
-            assertTrue(node.process().isAlive(), "app exited; inspect core-auth-integration logs");
-            return status(node, "/actuator/health/liveness") == 200;
+            assertTrue(pending.process().isAlive(), "app exited; inspect core-auth-integration logs");
+            try {
+                var match = java.util.regex.Pattern.compile("Tomcat started on port ([0-9]+)")
+                        .matcher(Files.readString(log));
+                if (match.find()) {
+                    actualPort[0] = Integer.parseInt(match.group(1));
+                    return status(new Node(pending.process(), actualPort[0]), "/actuator/health/liveness") == 200;
+                }
+                return false;
+            } catch (java.io.IOException unavailable) {
+                return false;
+            }
         });
-        return node;
+        return new Node(pending.process(), actualPort[0]);
     }
 
     private Probe join(Node node, String sid, long region, long room) throws Exception {
@@ -416,6 +523,16 @@ class CoreAuthProcessTest {
     }
 
     private Probe join(Node node, Node socketNode, String sid, long region, long room) throws Exception {
+        String location = location(sid, region);
+        var response = request(node, "POST", "/api/v1/chat-rooms/" + room + "/members", token(sid),
+                json.writeValueAsString(Map.of("location_resolution_token", location)), Map.of());
+        assertTrue(response.statusCode() == 200 || response.statusCode() == 201, response.body());
+        return connect(socketNode, sid, room,
+                json.readTree(response.body()).path("data").path("membership_id").asLong(),
+                json.readTree(response.body()).path("data").path("view_session_id").asText());
+    }
+
+    private String location(String sid, long region) {
         var provider = new com.muse.meomuneum.location.security.LocationResolutionTokenProvider(
                 new com.muse.meomuneum.location.config.LocationTokenProperties(SECRET), java.time.Clock.systemUTC());
         // Issue the existing token format from persisted administrative metadata, with synthetic signing material.
@@ -425,16 +542,11 @@ class CoreAuthProcessTest {
                 com.muse.meomuneum.chat.region.domain.RegionLevel.SIDO, null);
         ReflectionTestUtils.setField(parent, "id",
                 jdbc.queryForObject("SELECT parent_id FROM regions WHERE id=?", Long.class, region));
-        var local = com.muse.meomuneum.chat.region.domain.Region.create("41135", "fixture",
+        var local = com.muse.meomuneum.chat.region.domain.Region.create(
+                jdbc.queryForObject("SELECT code FROM regions WHERE id=?", String.class, region), "fixture",
                 com.muse.meomuneum.chat.region.domain.RegionLevel.SIGUNGU, parent);
         ReflectionTestUtils.setField(local, "id", region);
-        String location = provider.issueForSession(411001L, sid, parent, local, null).value();
-        var response = request(node, "POST", "/api/v1/chat-rooms/" + room + "/members", token(sid),
-                json.writeValueAsString(Map.of("location_resolution_token", location)), Map.of());
-        assertTrue(response.statusCode() == 200 || response.statusCode() == 201, response.body());
-        return connect(socketNode, sid, room,
-                json.readTree(response.body()).path("data").path("membership_id").asLong(),
-                json.readTree(response.body()).path("data").path("view_session_id").asText());
+        return provider.issueForSession(411001L, sid, parent, local, null).value();
     }
 
     private Probe connect(Node node, String sid, long room, long membership, String view) throws Exception {
@@ -544,6 +656,11 @@ class CoreAuthProcessTest {
         throw new AssertionError("integration deadline exceeded; inspect evidence");
     }
 
+    private com.fasterxml.jackson.databind.JsonNode frameData(String frame) throws Exception {
+        int start = frame.indexOf("\n\n");
+        return json.readTree(frame.substring(start + 2).replace("\u0000", "")).path("data");
+    }
+
     private int port() throws Exception {
         try (var socket = new ServerSocket(0)) {
             return socket.getLocalPort();
@@ -573,10 +690,14 @@ class CoreAuthProcessTest {
         void send(String value) {
             socket.sendText(value + "\u0000", true).join();
         }
+        private String lastClient;
         void sendMessage(long room) throws Exception {
+            sendMessage(room, UUID.randomUUID().toString(), "인증 연동 검증");
+        }
+        void sendMessage(long room, String client, String content) throws Exception {
+            lastClient = client;
             send("SEND\ndestination:/app/chat-rooms/" + room + "/messages\ncontent-type:application/json\n\n"
-                    + json.writeValueAsString(
-                            Map.of("client_message_id", UUID.randomUUID().toString(), "content", "인증 연동 검증")));
+                    + json.writeValueAsString(Map.of("client_message_id", client, "content", content)));
         }
         String await(String wanted) throws Exception {
             for (int i = 0; i < pending.size(); i++) {

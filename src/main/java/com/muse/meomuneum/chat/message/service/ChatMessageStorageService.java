@@ -6,6 +6,9 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +26,13 @@ public class ChatMessageStorageService {
     private final UserRepository userRepository;
     private final ChatRoomRepository roomRepository;
     private final Clock clock;
+    private JdbcTemplate databaseClock;
+
+    @Autowired
+    public void setDatabaseClock(JdbcTemplate jdbc,
+            @Value("${chat.distributed-presence.enabled:false}") boolean distributed) {
+        databaseClock = distributed ? jdbc : null;
+    }
 
     public ChatMessageStorageService(ChatRoomMessageRepository repository, UserRepository userRepository,
             ChatRoomRepository roomRepository, Clock clock) {
@@ -68,6 +78,9 @@ public class ChatMessageStorageService {
     }
 
     private LocalDateTime now() {
+        if (databaseClock != null) {
+            return databaseClock.queryForObject("SELECT UTC_TIMESTAMP(6)", LocalDateTime.class);
+        }
         return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
     }
 }

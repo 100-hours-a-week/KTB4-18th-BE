@@ -24,6 +24,7 @@ public class ChatRedisConnection implements AutoCloseable {
     private final AtomicBoolean connected = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final List<ChatRedisSubscription> subscriptions = new CopyOnWriteArrayList<>();
+    private final List<Runnable> unavailableListeners = new CopyOnWriteArrayList<>();
 
     public ChatRedisConnection(ChatRedisProperties properties) {
         RedisURI.Builder uri = RedisURI.Builder.redis(properties.host(), properties.port())
@@ -56,6 +57,7 @@ public class ChatRedisConnection implements AutoCloseable {
                 @Override
                 public void onRedisDisconnected(io.lettuce.core.RedisChannelHandler<?, ?> connection) {
                     connected.set(false);
+                    unavailable();
                 }
             });
         } catch (RuntimeException failure) {
@@ -81,13 +83,21 @@ public class ChatRedisConnection implements AutoCloseable {
         }
         try {
             ChatRedisSubscription subscription = new ChatRedisSubscription(client.connectPubSub(), channels, listener,
-                    subscriptions::remove);
+                    subscriptions::remove, this::unavailable);
             subscriptions.add(subscription);
             return subscription;
         } catch (RuntimeException failure) {
             // ACL and endpoint details must not escape through application startup errors.
             throw new IllegalStateException("Chat Redis subscription could not be initialized");
         }
+    }
+
+    public void onUnavailable(Runnable listener) {
+        unavailableListeners.add(Objects.requireNonNull(listener));
+    }
+
+    private void unavailable() {
+        unavailableListeners.forEach(Runnable::run);
     }
 
     public boolean areSubscriptionsReady() {
