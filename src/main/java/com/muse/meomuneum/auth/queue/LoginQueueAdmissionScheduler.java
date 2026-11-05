@@ -14,6 +14,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.hazelcast.core.HazelcastException;
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore.ReconciliationAccumulator;
@@ -36,6 +37,7 @@ public class LoginQueueAdmissionScheduler implements ApplicationRunner {
     private static final int MAX_CREATE_APPEND_BATCH = 20;
 
     private final HazelcastAuthStateStore store;
+    private final AuthFlowService flowService;
     private final MeterRegistry meterRegistry;
     private final AtomicLong lastRecoverySuccessEpochSeconds = new AtomicLong();
     private final AtomicLong reportedRecovered = new AtomicLong();
@@ -58,8 +60,10 @@ public class LoginQueueAdmissionScheduler implements ApplicationRunner {
             ReconciliationStage.class);
 
     @Autowired
-    public LoginQueueAdmissionScheduler(HazelcastAuthStateStore store, MeterRegistry meterRegistry) {
+    public LoginQueueAdmissionScheduler(HazelcastAuthStateStore store, MeterRegistry meterRegistry,
+            AuthFlowService flowService) {
         this.store = store;
+        this.flowService = flowService;
         this.meterRegistry = meterRegistry;
         this.retryableScannedCounter = Counter.builder("auth.queue.reconcile.retryable.scanned")
                 .register(meterRegistry);
@@ -100,8 +104,12 @@ public class LoginQueueAdmissionScheduler implements ApplicationRunner {
         registerRecoveryGauges();
     }
 
+    public LoginQueueAdmissionScheduler(HazelcastAuthStateStore store, MeterRegistry meterRegistry) {
+        this(store, meterRegistry, null);
+    }
+
     public LoginQueueAdmissionScheduler(HazelcastAuthStateStore store) {
-        this(store, new SimpleMeterRegistry());
+        this(store, new SimpleMeterRegistry(), null);
     }
 
     @Override
@@ -117,7 +125,20 @@ public class LoginQueueAdmissionScheduler implements ApplicationRunner {
                 if (waiting.isEmpty()) {
                     return;
                 }
-                store.admit(waiting.get());
+                var ticket = waiting.get();
+                if (flowService == null) {
+                    store.admit(ticket);
+                } else if (!flowService.isQueueTicketCurrent(ticket.ticketId())) {
+                    return;
+                } else {
+                    store.admit(ticket);
+                    // The authority tuple may have changed while Hazelcast was applying the
+                    // admission. Recheck immediately and clean only this exact stale ticket.
+                    if (!flowService.isQueueTicketCurrent(ticket.ticketId())) {
+                        store.cancelTicketById(ticket.ticketId());
+                        return;
+                    }
+                }
             }
         } catch (AuthStateUnavailableException | HazelcastException failure) {
             logFailure(nextAdmissionLogAt, "admission", failure);

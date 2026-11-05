@@ -43,6 +43,9 @@ auth:
     same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
   cors:
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  mutation-gate-open: ${AUTH_MUTATION_GATE_OPEN:false}
+  flow:
+    bootstrap-requests-per-minute: ${AUTH_FLOW_BOOTSTRAP_REQUESTS_PER_MINUTE:120}
   jwt:
     issuer: ${AUTH_JWT_ISSUER:project-api}
     audience: ${AUTH_JWT_AUDIENCE:project-api}

@@ -1,5 +1,6 @@
 package com.muse.meomuneum.global.config;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -7,7 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -17,11 +17,21 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.auth.directv2.repository.DirectAuthProjectionRepository;
+import com.muse.meomuneum.global.security.DeferredAuthCorsRejectionFilter;
+import com.muse.meomuneum.global.security.DirectAuthAdmissionFilter;
+import com.muse.meomuneum.global.security.DirectAuthAdmissionFlag;
+import com.muse.meomuneum.global.security.DirectAuthCorsProcessor;
+import com.muse.meomuneum.global.security.DirectAuthProtocolMarkerFilter;
 import com.muse.meomuneum.global.security.JwtAuthenticationFilter;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.LocalMockLoginNoStoreFilter;
@@ -41,16 +51,21 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
-            SecurityContextRepository securityContextRepository,
+            SecurityContextRepository securityContextRepository, CorsConfigurationSource corsConfigurationSource,
             JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
             UserAuthenticationService userAuthenticationService,
+            ObjectProvider<AuthFlowService> authFlowServiceProvider,
+            ObjectProvider<DirectAuthProjectionRepository> projectionProvider,
+            com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard directGuard,
+            @Value("${auth.direct-v2.refresh-verified:false}") boolean refreshVerified,
+            @Value("${auth.direct-v2.refresh-recovery-verified:false}") boolean recoveryVerified,
+            @Value("${auth.direct-v2.rebootstrap-verified:false}") boolean rebootstrapVerified,
             @Value("${recommendation.allow-guests:false}") boolean allowGuests,
             @Value("${auth.cors.allowed-origins}") String allowedOrigins,
             @Value("${auth.local-mock-login.enabled:false}") boolean localMockLoginEnabled,
             Environment environment)
             throws Exception {
         String[] csrfIgnoredPaths = {
-                "/api/v1/auth/login",
                 "/api/v1/auth/login-queue/tickets",
                 "/api/v1/recommendations",
                 "/api/v1/recommendations/**",
@@ -62,14 +77,31 @@ public class SecurityConfig {
                 "/api/v1/users/me",
                 "/api/v1/users/me/**"
         };
+        RequestMatcher bearerOnlyBusinessMutation = request -> {
+            String method = request.getMethod();
+            boolean unsafe = HttpMethod.POST.matches(method) || HttpMethod.PUT.matches(method)
+                    || HttpMethod.PATCH.matches(method) || HttpMethod.DELETE.matches(method);
+            String authorization = request.getHeader("Authorization");
+            return unsafe && !request.getRequestURI().startsWith("/api/v1/auth/")
+                    && authorization != null && authorization.startsWith("Bearer ");
+        };
 
-        http.cors(Customizer.withDefaults())
+        RequestMatcher legacyLogin = request -> HttpMethod.POST.matches(request.getMethod())
+                && "/api/v1/auth/login".equals(request.getRequestURI())
+                && request.getHeader("X-Auth-Login-Protocol") == null;
+
+        CorsFilter corsFilter = new CorsFilter(corsConfigurationSource);
+        corsFilter.setCorsProcessor(new DirectAuthCorsProcessor());
+
+        http.cors(cors -> cors.disable())
                 .securityContext(securityContext -> securityContext
                         .securityContextRepository(securityContextRepository))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .ignoringRequestMatchers(csrfIgnoredPaths))
+                        .ignoringRequestMatchers(csrfIgnoredPaths)
+                        .ignoringRequestMatchers(legacyLogin)
+                        .ignoringRequestMatchers(bearerOnlyBusinessMutation))
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> {
@@ -100,12 +132,21 @@ public class SecurityConfig {
                                             : SecurityErrorCode.ACCESS_DENIED;
                             errorResponseWriter.write(request, response, code);
                         }))
+                .addFilterAt(corsFilter, CorsFilter.class)
+                .addFilterBefore(new DirectAuthProtocolMarkerFilter(errorResponseWriter), CsrfFilter.class)
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService),
+                        new JwtAuthenticationFilter(jwtTokenProvider, errorResponseWriter, userAuthenticationService,
+                                authFlowServiceProvider.getIfAvailable(), directGuard),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new RequestOriginValidationFilter(allowedOrigins, errorResponseWriter),
-                        JwtAuthenticationFilter.class);
+                        JwtAuthenticationFilter.class)
+                .addFilterBefore(new DeferredAuthCorsRejectionFilter(errorResponseWriter),
+                        RequestOriginValidationFilter.class)
+                .addFilterAfter(new DirectAuthAdmissionFilter(new DirectAuthAdmissionFlag(environment),
+                        errorResponseWriter, projectionProvider.getIfAvailable(), refreshVerified, recoveryVerified,
+                        rebootstrapVerified),
+                        RequestOriginValidationFilter.class);
         if (localMockLoginEnabled && environment.acceptsProfiles(Profiles.of("local-mock & !prod"))) {
             http.addFilterBefore(new LocalMockLoginNoStoreFilter(), CorsFilter.class);
         }

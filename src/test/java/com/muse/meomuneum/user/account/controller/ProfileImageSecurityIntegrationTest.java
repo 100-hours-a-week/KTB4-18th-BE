@@ -46,6 +46,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.config.SecurityConfig;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -191,6 +192,11 @@ class ProfileImageSecurityIntegrationTest {
     @TestConfiguration
     @EnableTransactionManagement
     static class Configuration {
+
+        @Bean
+        AuthService authService() {
+            return mock(AuthService.class);
+        }
 
         @Bean
         ProfileImageStorage profileImageStorage() {

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -34,6 +35,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -54,14 +56,18 @@ class JwtAuthenticationFilterTest {
     private FilterChain filterChain;
     private JwtAuthenticationFilter jwtAuthenticationFilter;
     private UserAuthenticationService userAuthenticationService;
+    private AuthFlowService authFlowService;
 
     @BeforeEach
     void setUp() {
         jwtTokenProvider = mock(JwtTokenProvider.class);
         filterChain = mock(FilterChain.class);
         userAuthenticationService = mock(UserAuthenticationService.class);
+        authFlowService = mock(AuthFlowService.class);
+        when(authFlowService.checkSession(1L, "550e8400-e29b-41d4-a716-446655440000"))
+                .thenReturn(AuthFlowService.SessionDecision.ACTIVE);
         jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtTokenProvider,
-                new SecurityErrorResponseWriter(objectMapper), userAuthenticationService);
+                new SecurityErrorResponseWriter(objectMapper), userAuthenticationService, authFlowService);
     }
 
     @AfterEach
@@ -190,6 +196,24 @@ class JwtAuthenticationFilterTest {
         assertThatThrownBy(() -> jwtAuthenticationFilter.doFilter(request, response, filterChain))
                 .isInstanceOf(IllegalStateException.class).hasMessage("database unavailable");
 
+        verifyNoInteractions(filterChain);
+    }
+
+    @Test
+    void returnsRetryableUnavailableWhenActiveUserLookupCannotReachDatabase() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/users/me");
+        request.addHeader("Authorization", "Bearer valid-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(jwtTokenProvider.parseAccessToken("valid-token")).thenReturn(new TokenClaims(1L, List.of("USER")));
+        when(userAuthenticationService.findActiveUser(1L))
+                .thenThrow(new DataAccessResourceFailureException("database unavailable"));
+
+        jwtAuthenticationFilter.doFilter(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE.value());
+        assertThat(response.getHeader("Retry-After")).isEqualTo("1");
+        JsonNode responseBody = objectMapper.readTree(response.getContentAsByteArray());
+        assertThat(responseBody.path("message").asText()).isEqualTo("AUTH_STATE_UNAVAILABLE");
         verifyNoInteractions(filterChain);
     }
 

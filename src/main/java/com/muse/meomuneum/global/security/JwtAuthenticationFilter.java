@@ -3,18 +3,22 @@ package com.muse.meomuneum.global.security;
 import java.io.IOException;
 import java.util.List;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
+import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -30,12 +34,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final UserAuthenticationService userAuthenticationService;
+    private final AuthFlowService sessionAuthority;
+    private final DirectAuthProtectedSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService) {
+                                   UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+                                   UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority,
+            DirectAuthProtectedSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
+        this.sessionAuthority = sessionAuthority;
+        this.directGuard = directGuard;
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+                                   UserAuthenticationService userAuthenticationService) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null, null);
     }
 
     @Override
@@ -45,7 +64,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (requestUri.startsWith(LOGIN_QUEUE_PREFIX) || LOGIN_RECOVERY_PATH.equals(requestUri)) {
             return true;
         }
-        return ("POST".equals(method)
+        boolean directRead = "GET".equals(method) && (requestUri.equals("/api/v1/auth/flow")
+                || requestUri.equals("/api/v1/auth/flow/current-operation")
+                || requestUri.matches("/api/v1/auth/login/operations/[^/]+")
+                || requestUri.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery/[^/]+"));
+        boolean directWrite = "POST".equals(method) && (requestUri.equals("/api/v1/auth/flows")
+                || requestUri.equals("/api/v1/auth/flow/rebootstrap")
+                || requestUri.matches("/api/v1/auth/login/operations/[^/]+/session-recovery")
+                || requestUri.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery"));
+        return directRead || directWrite || ("POST".equals(method)
                 && (LOGIN_PATH.equals(requestUri) || REFRESH_PATH.equals(requestUri) || LOGOUT_PATH.equals(requestUri)))
                 || ("GET".equals(method) && CSRF_PATH.equals(requestUri));
     }
@@ -68,6 +95,36 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             claims = jwtTokenProvider.parseAccessToken(authorization.substring(BEARER_PREFIX.length()));
             userAuthenticationService.findActiveUser(claims.userId());
+            if (sessionAuthority == null) {
+                SecurityContextHolder.clearContext();
+                errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+                response.setHeader("Retry-After", "1");
+                return;
+            } else {
+                if (claims.sessionId() == null) {
+                    writeUnauthorizedResponse(request, response);
+                    return;
+                }
+                AuthFlowService.SessionDecision decision = directGuard == null
+                        ? sessionAuthority.checkSession(claims.userId(), claims.sessionId())
+                        : directGuard.check(claims.sessionId(),
+                                () -> sessionAuthority.checkSession(claims.userId(), claims.sessionId()));
+                if (decision == null || decision == AuthFlowService.SessionDecision.UNAVAILABLE) {
+                    SecurityContextHolder.clearContext();
+                    errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+                    response.setHeader("Retry-After", "1");
+                    return;
+                }
+                if (decision != AuthFlowService.SessionDecision.ACTIVE) {
+                    writeUnauthorizedResponse(request, response);
+                    return;
+                }
+            }
+        } catch (DataAccessException | DirectAuthFailure exception) {
+            SecurityContextHolder.clearContext();
+            errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+            response.setHeader("Retry-After", "1");
+            return;
         } catch (AuthenticationFailedException exception) {
             writeUnauthorizedResponse(request, response);
             return;
