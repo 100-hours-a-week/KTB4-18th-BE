@@ -32,7 +32,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = LocationController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
-@Import({SecurityConfig.class, LocationSecurityIntegrationTest.SecurityTestConfiguration.class})
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class,
+        LocationSecurityIntegrationTest.SecurityTestConfiguration.class})
 class LocationSecurityIntegrationTest {
 
     @Autowired
@@ -68,7 +69,7 @@ class LocationSecurityIntegrationTest {
         User user = mock(User.class);
         when(user.getId()).thenReturn(1L);
         when(user.getRole()).thenReturn(UserRole.USER);
-        return jwtTokenProvider.createAccessToken(user);
+        return jwtTokenProvider.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     private LocationResolveResponse response() {
