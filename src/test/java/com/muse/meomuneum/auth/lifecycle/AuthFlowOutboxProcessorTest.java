@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import java.sql.ResultSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,6 +20,7 @@ import org.springframework.transaction.TransactionStatus;
 
 import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
+import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
 
 class AuthFlowOutboxProcessorTest {
     @Test

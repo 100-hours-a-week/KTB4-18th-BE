@@ -151,19 +151,28 @@ class DirectAuthOperationMigrationTest {
             auth_login_operations|IDX_AUTH_LOGIN_OPERATIONS_LEASE_EXPIRY|1|status,lease_expires_at,flow_id,operation_id
             auth_direct_operation_receipts|PRIMARY|0|flow_id,operation_kind,operation_id
             auth_direct_operation_receipts|IDX_AUTH_DIRECT_OPERATION_RECEIPTS_FLOW_EXPIRY|1|flow_id,receipt_expires_at
-            auth_direct_operation_receipts|IDX_AUTH_DIRECT_OPERATION_RECEIPTS_RECEIPT_EXPIRY|1|receipt_expires_at,flow_id,operation_kind,operation_id
-            auth_direct_operation_receipts|IDX_AUTH_DIRECT_OPERATION_RECEIPTS_TOMBSTONE_PURGE|1|tombstone_purge_at,flow_id,operation_kind,operation_id
+            auth_direct_operation_receipts|IDX_AUTH_DIRECT_OPERATION_RECEIPTS_RECEIPT_EXPIRY|1|\
+            receipt_expires_at,flow_id,operation_kind,operation_id
+            auth_direct_operation_receipts|IDX_AUTH_DIRECT_OPERATION_RECEIPTS_TOMBSTONE_PURGE|1|\
+            tombstone_purge_at,flow_id,operation_kind,operation_id
             auth_flow_rebootstrap_operations|PRIMARY|0|flow_id,operation_id
             auth_flow_rebootstrap_operations|IDX_AUTH_FLOW_REBOOTSTRAP_OPS_FLOW_EXPIRY|1|flow_id,receipt_expires_at
-            auth_flow_rebootstrap_operations|IDX_AUTH_FLOW_REBOOTSTRAP_OPS_RECEIPT_EXPIRY|1|receipt_expires_at,flow_id,operation_id
-            auth_flow_rebootstrap_operations|IDX_AUTH_FLOW_REBOOTSTRAP_OPS_TOMBSTONE_PURGE|1|tombstone_purge_at,flow_id,operation_id
+            auth_flow_rebootstrap_operations|IDX_AUTH_FLOW_REBOOTSTRAP_OPS_RECEIPT_EXPIRY|1|\
+            receipt_expires_at,flow_id,operation_id
+            auth_flow_rebootstrap_operations|IDX_AUTH_FLOW_REBOOTSTRAP_OPS_TOMBSTONE_PURGE|1|\
+            tombstone_purge_at,flow_id,operation_id
             auth_refresh_recovery_operations|PRIMARY|0|flow_id,recovery_operation_id
-            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_SOURCE|1|flow_id,source_refresh_operation_id,created_at,recovery_operation_id
-            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_LEASE|1|status,lease_expires_at,flow_id,recovery_operation_id
-            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_RECEIPT_EXPIRY|1|receipt_expires_at,flow_id,recovery_operation_id
-            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_TOMBSTONE_PURGE|1|tombstone_purge_at,flow_id,recovery_operation_id
+            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_SOURCE|1|flow_id,\
+            source_refresh_operation_id,created_at,recovery_operation_id
+            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_LEASE|1|status,lease_expires_at,\
+            flow_id,recovery_operation_id
+            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_RECEIPT_EXPIRY|1|receipt_expires_at,\
+            flow_id,recovery_operation_id
+            auth_refresh_recovery_operations|IDX_AUTH_REFRESH_RECOVERY_TOMBSTONE_PURGE|1|tombstone_purge_at,\
+            flow_id,recovery_operation_id
             auth_flow_bootstrap_operations|PRIMARY|0|operation_id
-            auth_flow_bootstrap_operations|IDX_AUTH_FLOW_BOOTSTRAP_FLOW_STATUS_EXPIRY|1|flow_id,status,receipt_expires_at
+            auth_flow_bootstrap_operations|IDX_AUTH_FLOW_BOOTSTRAP_FLOW_STATUS_EXPIRY|1|flow_id,status,\
+            receipt_expires_at
             auth_flow_bootstrap_operations|IDX_AUTH_FLOW_BOOTSTRAP_RECEIPT_EXPIRY|1|receipt_expires_at,operation_id
             auth_flow_bootstrap_operations|IDX_AUTH_FLOW_BOOTSTRAP_TOMBSTONE_PURGE|1|tombstone_purge_at,operation_id
             auth_replay_iv_allocators|PRIMARY|0|key_id
@@ -256,8 +265,10 @@ class DirectAuthOperationMigrationTest {
 
     private void verifyConstraints(JdbcTemplate jdbc) {
         jdbc.update("INSERT INTO auth_refresh_recovery_operations (flow_id,recovery_operation_id,"
-                + "source_refresh_operation_id,starting_epoch,binding_generation,claim_flow_cookie_generation,claim_refresh_generation,status,receipt_expires_at,"
-                + "tombstone_purge_at,created_at,updated_at) VALUES (?,?,?,1,1,1,1,'TOMBSTONE',NOW(6),NOW(6),NOW(6),NOW(6))",
+                + "source_refresh_operation_id,starting_epoch,binding_generation,"
+                + "claim_flow_cookie_generation,claim_refresh_generation,status,receipt_expires_at,"
+                + "tombstone_purge_at,created_at,updated_at) "
+                + "VALUES (?,?,?,1,1,1,1,'TOMBSTONE',NOW(6),NOW(6),NOW(6),NOW(6))",
                 FLOW, FLOW, FLOW);
         assertThrows(DataIntegrityViolationException.class,
                 () -> jdbc.update("DELETE FROM auth_browser_flows WHERE flow_id=?", FLOW));
