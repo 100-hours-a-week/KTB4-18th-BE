@@ -47,7 +47,8 @@ class DirectAuthRecoverySchemaMigrationTest {
                 + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='auth_login_operations' AND COLUMN_NAME='owner_token'",
                 Integer.class));
         assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM information_schema.COLUMNS "
-                + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='auth_direct_operation_receipts' AND COLUMN_NAME='result_session_sid'",
+                + "WHERE TABLE_SCHEMA=DATABASE() AND "
+                + "TABLE_NAME='auth_direct_operation_receipts' AND COLUMN_NAME='result_session_sid'",
                 Integer.class));
     }
 
@@ -79,10 +80,12 @@ class DirectAuthRecoverySchemaMigrationTest {
         assertThrows(DataIntegrityViolationException.class,
                 () -> db.update("DELETE FROM auth_browser_flows WHERE flow_id=?", FLOW));
         db.update("UPDATE auth_refresh_recovery_operations SET binding_generation=NULL, "
-                + "claim_flow_cookie_generation=NULL, claim_refresh_generation=NULL, status='TOMBSTONE' WHERE flow_id=?",
+                + "claim_flow_cookie_generation=NULL, claim_refresh_generation=NULL, "
+                + "status='TOMBSTONE' WHERE flow_id=?",
                 FLOW);
         assertEquals(1, db.queryForObject("SELECT COUNT(*) FROM auth_refresh_recovery_operations WHERE "
-                + "binding_generation IS NULL AND claim_flow_cookie_generation IS NULL AND claim_refresh_generation IS NULL",
+                + "binding_generation IS NULL AND claim_flow_cookie_generation IS NULL AND "
+                + "claim_refresh_generation IS NULL",
                 Integer.class));
         db.update("DELETE FROM auth_refresh_recovery_operations WHERE flow_id=?", FLOW);
         assertEquals(1, db.update(
@@ -113,7 +116,8 @@ class DirectAuthRecoverySchemaMigrationTest {
         for (String line : columns.strip().split("\n")) {
             String[] parts = line.strip().split("\\|");
             var rows = db.queryForList("SELECT LOWER(COLUMN_TYPE) AS type, IS_NULLABLE, COLUMN_DEFAULT "
-                    + "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?",
+                    + "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND "
+                    + "TABLE_NAME=? AND COLUMN_NAME=?",
                     parts[0], parts[1]);
             assertEquals(1, rows.size(), line);
             assertEquals(parts[2], rows.getFirst().get("type"), line);
@@ -136,8 +140,11 @@ class DirectAuthRecoverySchemaMigrationTest {
                 + "FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() "
                 + "AND CONSTRAINT_NAME='FK_AUTH_REFRESH_RECOVERY_SOURCE'", String.class));
         assertEquals(3, db.queryForObject("SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE k "
-                + "JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA=k.TABLE_SCHEMA AND c.TABLE_NAME=k.TABLE_NAME AND c.COLUMN_NAME=k.COLUMN_NAME "
-                + "JOIN information_schema.COLUMNS p ON p.TABLE_SCHEMA=k.REFERENCED_TABLE_SCHEMA AND p.TABLE_NAME=k.REFERENCED_TABLE_NAME AND p.COLUMN_NAME=k.REFERENCED_COLUMN_NAME "
+                + "JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA=k.TABLE_SCHEMA AND "
+                + "c.TABLE_NAME=k.TABLE_NAME AND c.COLUMN_NAME=k.COLUMN_NAME "
+                + "JOIN information_schema.COLUMNS p ON "
+                + "p.TABLE_SCHEMA=k.REFERENCED_TABLE_SCHEMA AND p.TABLE_NAME=k.REFERENCED_TABLE_NAME "
+                + "AND p.COLUMN_NAME=k.REFERENCED_COLUMN_NAME "
                 + "WHERE k.CONSTRAINT_SCHEMA=DATABASE() AND k.CONSTRAINT_NAME='FK_AUTH_REFRESH_RECOVERY_SOURCE' "
                 + "AND c.COLUMN_TYPE=p.COLUMN_TYPE AND c.COLLATION_NAME=p.COLLATION_NAME", Integer.class));
     }
@@ -150,21 +157,27 @@ class DirectAuthRecoverySchemaMigrationTest {
     private static void source(JdbcTemplate db, String flow, String kind, String id) {
         db.update(
                 "INSERT INTO auth_direct_operation_receipts (flow_id,operation_kind,operation_id,starting_epoch,status,"
-                        + "receipt_expires_at,tombstone_purge_at,created_at) VALUES (?,?,?,1,'SUCCEEDED',NOW(6),NOW(6),NOW(6))",
+                        + "receipt_expires_at,tombstone_purge_at,created_at) VALUES (?,?,?,1,"
+                        + "'SUCCEEDED',NOW(6),NOW(6),NOW(6))",
                 flow, kind, id);
     }
 
     private static void recovery(JdbcTemplate db, String flow, String id, String source, String kind) {
         if (kind.equals("REFRESH")) {
             db.update(
-                    "INSERT INTO auth_refresh_recovery_operations (flow_id,recovery_operation_id,source_refresh_operation_id,"
-                            + "starting_epoch,binding_generation,claim_flow_cookie_generation,claim_refresh_generation,status,receipt_expires_at,"
-                            + "tombstone_purge_at,created_at,updated_at) VALUES (?,?,?,1,1,1,1,'IN_PROGRESS',NOW(6),NOW(6),NOW(6),NOW(6))",
+                    "INSERT INTO auth_refresh_recovery_operations (flow_id,"
+                            + "recovery_operation_id,source_refresh_operation_id,"
+                            + "starting_epoch,binding_generation,claim_flow_cookie_generation,"
+                            + "claim_refresh_generation,status,receipt_expires_at,"
+                            + "tombstone_purge_at,created_at,updated_at) VALUES (?,?,?,1,1,1,1,"
+                            + "'IN_PROGRESS',NOW(6),NOW(6),NOW(6),NOW(6))",
                     flow, id, source);
         } else {
             db.update(
-                    "INSERT INTO auth_refresh_recovery_operations (flow_id,recovery_operation_id,source_refresh_operation_id,"
-                            + "source_operation_kind,starting_epoch,status,receipt_expires_at,tombstone_purge_at,created_at,updated_at) "
+                    "INSERT INTO auth_refresh_recovery_operations (flow_id,"
+                            + "recovery_operation_id,source_refresh_operation_id,"
+                            + "source_operation_kind,starting_epoch,status,receipt_expires_at,"
+                            + "tombstone_purge_at,created_at,updated_at) "
                             + "VALUES (?,?,?,?,1,'IN_PROGRESS',NOW(6),NOW(6),NOW(6),NOW(6))",
                     flow, id, source, kind);
         }

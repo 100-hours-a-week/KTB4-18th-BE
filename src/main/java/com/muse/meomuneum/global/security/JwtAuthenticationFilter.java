@@ -3,8 +3,6 @@ package com.muse.meomuneum.global.security;
 import java.io.IOException;
 import java.util.List;
 
-import com.muse.meomuneum.auth.application.AuthFlowService;
-import com.muse.meomuneum.user.service.UserAuthenticationService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,9 +14,11 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
 import com.muse.meomuneum.auth.directv2.security.DirectAuthProtectedSessionGuard;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -36,12 +36,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final DirectAuthProtectedSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-                                   UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority) {
+            UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-                                   UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority,
+            UserAuthenticationService userAuthenticationService, AuthFlowService sessionAuthority,
             DirectAuthProtectedSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
@@ -51,7 +51,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-                                   UserAuthenticationService userAuthenticationService) {
+            UserAuthenticationService userAuthenticationService) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null, null);
     }
 

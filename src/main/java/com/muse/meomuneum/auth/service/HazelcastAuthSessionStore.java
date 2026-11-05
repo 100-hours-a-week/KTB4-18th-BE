@@ -154,8 +154,8 @@ final class HazelcastAuthSessionStore {
             throw new IllegalArgumentException("invalid session read batch");
         }
         try {
-            return Map.copyOf(stateAccess.requireHazelcast()
-                    .<String, HazelcastAuthStateStore.AuthSession>getMap(SESSIONS).getAll(sids));
+            return Map.copyOf(stateAccess
+                    .requireHazelcast().<String, HazelcastAuthStateStore.AuthSession>getMap(SESSIONS).getAll(sids));
         } catch (RuntimeException exception) {
             throw stateAccess.unavailable(exception);
         }

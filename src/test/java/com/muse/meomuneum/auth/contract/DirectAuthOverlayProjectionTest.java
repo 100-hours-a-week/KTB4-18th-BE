@@ -23,7 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 class DirectAuthOverlayProjectionTest {
     private static final Path FIXTURES = Path.of("src/test/resources/auth-contract");
     private static final String RECOVERY = "/token/refresh/operations/{operationId}/session-recovery";
-    private static final String APPROVED_OVERLAY_SHA256 = "f716de5abffd6b1b651aa324c17be3d050b47b976920a0844937bc10a3b6b928";
+    private static final String OVERLAY_SHA256 = "f716de5abffd6b1b651aa324c17be3d050b47b976920a0844937bc10a3b6b928";
 
     @Test
     void allRoutesStatusesAndErrorCodesMatchBaseWithApprovedExpiryAndRefresh500Additions() throws Exception {
@@ -69,7 +69,7 @@ class DirectAuthOverlayProjectionTest {
     void pinnedOverlayProjectsRoutingReplayRetentionAndAuthoritySemantics() throws Exception {
         byte[] fixtureBytes = Files.readAllBytes(FIXTURES.resolve("proposal-overlay.json"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(fixtureBytes)))
-                .isEqualTo(APPROVED_OVERLAY_SHA256);
+                .isEqualTo(OVERLAY_SHA256);
         Map<String, Object> overlay = json("proposal-overlay.json");
         assertThat(overlay.get("kind")).isEqualTo("explicit-contract-overrides");
         assertThat(overlay.get("status")).isEqualTo("proposed_not_implemented");
