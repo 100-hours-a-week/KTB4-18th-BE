@@ -638,8 +638,8 @@ public class LocationRecommendationRepository {
         if (!testRepeatEnabled) {
             try {
                 jdbc.update("INSERT INTO location_recommendation_daily_issues (user_id, region_id, issued_date, "
-                        + "canonical_request_id, created_at) VALUES (?, ?, DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), ?, "
-                        + "UTC_TIMESTAMP(6))",
+                        + "canonical_request_id, created_at) VALUES (?, ?, "
+                        + "DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), ?, UTC_TIMESTAMP(6))",
                         userId, request.regionId(), request.requestId().toString());
             } catch (org.springframework.dao.DuplicateKeyException exception) {
                 updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "REGION_ISSUED_TODAY", true);
