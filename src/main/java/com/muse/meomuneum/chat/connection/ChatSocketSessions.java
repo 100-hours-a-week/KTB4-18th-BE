@@ -21,6 +21,10 @@ public class ChatSocketSessions {
         sessions.remove(sessionId);
     }
 
+    public void closeAll(int code, String reason) {
+        close(Set.copyOf(sessions.keySet()), code, reason);
+    }
+
     public void close(Set<String> sessionIds, int code, String reason) {
         for (String id : sessionIds) {
             WebSocketSession session = sessions.remove(id);

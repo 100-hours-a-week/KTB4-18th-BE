@@ -66,6 +66,7 @@ import com.sun.net.httpserver.HttpsServer;
 /** Auth fanout only: both Chat processes start before views exist; this is not a shared-state acceptance test. */
 @Testcontainers
 class CoreAuthProcessTest {
+    private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
     private static final String HMAC_KEY = "auth-process-synthetic-hmac-secret-at-least-32";
     private static final String SERVICE = "auth-process-synthetic-service-secret-current";
@@ -85,7 +86,8 @@ class CoreAuthProcessTest {
                             +hello +ping +quit +client|setinfo +client|setname +publish
                             user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
                             +hello +ping +quit +client|setinfo +client|setname \
-                            +subscribe +psubscribe +unsubscribe +punsubscribe
+                            +subscribe +psubscribe +unsubscribe +punsubscribe \
+                            ~auth-test:chat:state:* +eval +hget +hset +expire
                             """
                             .formatted(REDIS_PASSWORD, REDIS_PASSWORD)),
                     "/fixture/acl")
@@ -196,6 +198,12 @@ class CoreAuthProcessTest {
             assertEquals(503, request(badPeer, "GET", "/api/v1/regions/1/chat-room", token(revokedSid), null, Map.of())
                     .statusCode());
             stop(badPeer);
+            if (PARTICIPATION) {
+                chatEnv.putAll(Map.of("CHAT_DISTRIBUTED_PRESENCE_ENABLED", "true", "CHAT_REDIS_ENABLED", "true",
+                        "CHAT_REDIS_ENVIRONMENT", "auth-test", "CHAT_REDIS_HOST", REDIS.getHost(),
+                        "CHAT_REDIS_PORT", REDIS.getMappedPort(6379).toString(), "CHAT_REDIS_USERNAME", "chat-auth",
+                        "CHAT_REDIS_PASSWORD", REDIS_PASSWORD, "CHAT_REDIS_SSL", "false"));
+            }
             Node polling = start("chat", chatEnv, trust);
             var fastEnv = new HashMap<>(chatEnv);
             fastEnv.put("CORE_AUTH_SERVICE_TOKEN", NEXT);
@@ -221,7 +229,19 @@ class CoreAuthProcessTest {
                     internal(core, SERVICE, InternalSessionProtocol.encodeRequest(List.of(pair, pair))).statusCode());
             long region = jdbc.queryForObject("SELECT id FROM regions WHERE code='41135'", Long.class);
             long room = jdbc.queryForObject("SELECT id FROM chat_rooms WHERE region_id=?", Long.class, region);
-            Probe first = join(polling, revokedSid, region, room);
+            Probe first = join(PARTICIPATION ? subscribed : polling, polling, revokedSid, region, room);
+            if (PARTICIPATION) {
+                assertEquals(1, jdbc.queryForObject("""
+                        SELECT COUNT(DISTINCT user_id) FROM chat_view_runtime
+                        WHERE environment='auth-test' AND state='CONNECTED'
+                        """, Integer.class));
+                // Start a Task after a live range exists; startup must leave it open.
+                Node late = start("chat", chatEnv, trust);
+                assertEquals(1, jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL
+                        """, Integer.class, first.view));
+                stop(late);
+            }
             Probe second = join(subscribed, revokedSid, region, room);
             Probe survivor = join(polling, survivingSid, region, room);
             var original = sessions.get(survivingSid);
@@ -286,17 +306,56 @@ class CoreAuthProcessTest {
                     "SELECT COUNT(*) FROM chat_view_intervals WHERE view_session_id=? AND ends_at IS NULL",
                     Integer.class, survivor.view) == 0);
             Probe recovered = connect(polling, survivingSid, room, survivor.membership, survivor.view);
-            var history = request(polling, "GET", "/api/v1/chat-rooms/" + room + "/messages?membership_id="
-                    + survivor.membership + "&mode=history&size=10", token(survivingSid), null,
+            blockNext.set(false);
+            var history = request(PARTICIPATION ? subscribed : polling, "GET",
+                    "/api/v1/chat-rooms/" + room + "/messages?membership_id="
+                            + survivor.membership + "&mode=history&size=10",
+                    token(survivingSid), null,
                     Map.of("X-Chat-View-Session", recovered.view));
             assertEquals(200, history.statusCode(), history.body());
             assertEquals(1, json.readTree(history.body()).path("data").path("items").size());
+            if (PARTICIPATION) {
+                var recovery = request(subscribed, "GET", "/api/v1/chat-rooms/" + room + "/messages?membership_id="
+                        + survivor.membership + "&mode=recovery&size=10", token(survivingSid), null,
+                        Map.of("X-Chat-View-Session", recovered.view));
+                assertEquals(200, recovery.statusCode(), recovery.body());
+                assertEquals(1, json.readTree(recovery.body()).path("data").path("items").size());
+                String client = json.readTree(history.body()).path("data").path("items").get(0)
+                        .path("client_message_id").asText();
+                assertEquals(200, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
+                        + "/messages/by-client-id/" + client + "?membership_id=" + survivor.membership,
+                        token(survivingSid), null, Map.of("X-Chat-View-Session", recovered.view)).statusCode());
+                // A killed owner supplies no disconnect evidence: only its last checkpoint is readable.
+                polling.process().destroyForcibly();
+                assertTrue(polling.process().waitFor(5, TimeUnit.SECONDS));
+                await(() -> "OFFLINE".equals(jdbc.queryForObject(
+                        "SELECT state FROM chat_view_runtime WHERE view_id=?", String.class, recovered.view)));
+                assertEquals(1, jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM chat_view_intervals i
+                        WHERE view_session_id=? AND end_reason='RESTART'
+                            AND id=(SELECT MAX(latest.id) FROM chat_view_intervals latest
+                                WHERE latest.view_session_id=i.view_session_id)
+                            AND ends_at=verified_at AND end_message_id=verified_through_message_id
+                            AND end_room_seq=verified_through_room_seq
+                        """, Integer.class, recovered.view));
+                assertEquals(403, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
+                        + "/messages?membership_id=" + survivor.membership + "&mode=history&size=10",
+                        token(survivingSid), null, Map.of("X-Chat-View-Session", recovered.view)).statusCode());
+                Probe reclaimed = connect(subscribed, survivingSid, room, survivor.membership, survivor.view);
+                assertEquals(200, request(subscribed, "GET", "/api/v1/chat-rooms/" + room
+                        + "/messages?membership_id=" + survivor.membership + "&mode=history&size=10",
+                        token(survivingSid), null, Map.of("X-Chat-View-Session", reclaimed.view)).statusCode());
+                Files.writeString(evidence.resolve("cross-task-read.json"),
+                        "{\"history\":true,\"recovery\":true,\"byClientId\":true,\"killedOwnerReclaimed\":true}");
+            }
             Files.writeString(evidence.resolve("result.json"),
                     json.writeValueAsString(Map.of("revocationMillis", revokeMillis,
                             "redisAndPolling", true, "redisWhileHttpBlocked", true, "tlsTrustAndHostname", true,
                             "otherSidSurvived", true,
                             "outageClose", 1013, "historyRecovered", true, "scope",
-                            "isolated auth fanout; no distributed-state acceptance")));
+                            PARTICIPATION
+                                    ? "isolated shared participation and auth; no message relay/load acceptance"
+                                    : "isolated auth fanout; no distributed-state acceptance")));
         } finally {
             for (Probe probe : probes) {
                 if (probe.socket != null) {
@@ -353,6 +412,10 @@ class CoreAuthProcessTest {
     }
 
     private Probe join(Node node, String sid, long region, long room) throws Exception {
+        return join(node, node, sid, region, room);
+    }
+
+    private Probe join(Node node, Node socketNode, String sid, long region, long room) throws Exception {
         var provider = new com.muse.meomuneum.location.security.LocationResolutionTokenProvider(
                 new com.muse.meomuneum.location.config.LocationTokenProperties(SECRET), java.time.Clock.systemUTC());
         // Issue the existing token format from persisted administrative metadata, with synthetic signing material.
@@ -369,8 +432,9 @@ class CoreAuthProcessTest {
         var response = request(node, "POST", "/api/v1/chat-rooms/" + room + "/members", token(sid),
                 json.writeValueAsString(Map.of("location_resolution_token", location)), Map.of());
         assertTrue(response.statusCode() == 200 || response.statusCode() == 201, response.body());
-        return connect(node, sid, room, json.readTree(response.body()).path("data").path("membership_id").asLong(),
-                null);
+        return connect(socketNode, sid, room,
+                json.readTree(response.body()).path("data").path("membership_id").asLong(),
+                json.readTree(response.body()).path("data").path("view_session_id").asText());
     }
 
     private Probe connect(Node node, String sid, long room, long membership, String view) throws Exception {

@@ -8,18 +8,27 @@ import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.muse.meomuneum.chat.connection.ChatPresenceRegistry;
+import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 
-/** One view per socket/tab; the existing presence monitor orders all lifecycle and message operations. */
+/** Local socket/subscription registry; optional DB transitions provide cross-Task serialization. */
 @Component
 public class ChatViewLifecycle {
     private static final Logger log = LoggerFactory.getLogger(ChatViewLifecycle.class);
+    private ChatParticipationService participation;
+
+    @Autowired(required = false)
+    public void setParticipation(ChatParticipationService service) {
+        participation = service;
+    }
+
     private final ChatPresenceRegistry presence;
     private final ChatViewStorageService storage;
     private final Map<String, Connection> connections = new HashMap<>();
@@ -30,11 +39,22 @@ public class ChatViewLifecycle {
     }
 
     public void connected(Long userId, Long roomId, Long membershipId, String socketId, String requestedViewId) {
+        connected(userId, roomId, membershipId, socketId, requestedViewId, null);
+    }
+
+    public void connected(Long userId, Long roomId, Long membershipId, String socketId, String requestedViewId,
+            String authSessionId) {
         presence.exclusive(() -> {
+            if (participation != null) {
+                participation.claim(userId, authSessionId, roomId, membershipId, requestedViewId, socketId);
+                presence.connect(userId, roomId, membershipId, Integer.MAX_VALUE, socketId);
+            }
             if (!presence.ownsConnection(userId, membershipId, socketId)) {
                 throw denied();
             }
-            storage.validateContext(userId, roomId, membershipId, requestedViewId);
+            if (participation == null) {
+                storage.validateContext(userId, roomId, membershipId, requestedViewId);
+            }
             if (requestedViewId != null && connections.values().stream()
                     .anyMatch(connection -> requestedViewId.equals(connection.viewId))) {
                 throw denied();
@@ -58,8 +78,11 @@ public class ChatViewLifecycle {
                 throw denied();
             }
             if (connection.subscriptions.isEmpty()) {
-                connection.viewId = storage.subscribed(connection.userId, connection.roomId,
-                        connection.membershipId, connection.viewId);
+                connection.viewId = participation == null
+                        ? storage.subscribed(connection.userId, connection.roomId, connection.membershipId,
+                                connection.viewId)
+                        : participation.ready(connection.userId, connection.roomId, connection.membershipId,
+                                connection.viewId, socketId);
             }
             presence.attachTab(connection.membershipId, connection.viewId, socketId);
             connection.subscriptions.add(subscriptionId);
@@ -73,7 +96,12 @@ public class ChatViewLifecycle {
             Connection connection = connections.get(socketId);
             if (connection != null && connection.subscriptions.remove(subscriptionId)
                     && connection.subscriptions.isEmpty()) {
-                storage.unsubscribed(connection.viewId, connection.roomId);
+                if (participation == null) {
+                    storage.unsubscribed(connection.viewId, connection.roomId);
+                } else {
+                    participation.paused(connection.userId, connection.roomId, connection.membershipId,
+                            connection.viewId, socketId);
+                }
             }
             return null;
         });
@@ -95,9 +123,14 @@ public class ChatViewLifecycle {
     public void disconnected(ChatViewConnectionClosedEvent event) {
         presence.exclusive(() -> {
             Connection connection = connections.remove(event.sessionId());
-            if (connection != null && !connection.subscriptions.isEmpty()) {
+            if (connection != null && (participation != null || !connection.subscriptions.isEmpty())) {
                 try {
-                    storage.disconnected(connection.viewId);
+                    if (participation == null) {
+                        storage.disconnected(connection.viewId);
+                    } else {
+                        participation.disconnected(connection.userId, connection.roomId, connection.membershipId,
+                                connection.viewId, event.sessionId());
+                    }
                 } catch (RuntimeException failure) {
                     // Runtime permission is already revoked. An unrecorded gap must not reopen on reconnect.
                     log.warn("event=chat_view_disconnect_failed exception={}", failure.getClass().getSimpleName());
@@ -164,7 +197,9 @@ public class ChatViewLifecycle {
                     activeViews.add(connection.viewId);
                 }
             });
-            activeViews.forEach(active -> storage.checkpoint(active, roomId));
+            if (participation == null) {
+                activeViews.forEach(active -> storage.checkpoint(active, roomId));
+            }
             return storage.authorizedAccountIntervals(userId, roomId, membershipId, viewId);
         });
     }
@@ -173,8 +208,16 @@ public class ChatViewLifecycle {
     public void checkpointConnections() {
         try {
             presence.exclusive(() -> {
-                connections.values().stream().filter(connection -> !connection.subscriptions.isEmpty())
-                        .forEach(connection -> storage.checkpoint(connection.viewId, connection.roomId));
+                connections.forEach((socket, connection) -> {
+                    if (!connection.subscriptions.isEmpty()) {
+                        if (participation == null) {
+                            storage.checkpoint(connection.viewId, connection.roomId);
+                        } else {
+                            participation.checkpoint(connection.userId, connection.roomId, connection.membershipId,
+                                    connection.viewId, socket);
+                        }
+                    }
+                });
                 return null;
             });
         } catch (RuntimeException failure) {
