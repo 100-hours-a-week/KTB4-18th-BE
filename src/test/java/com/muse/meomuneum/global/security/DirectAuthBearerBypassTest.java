@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -26,7 +27,7 @@ class DirectAuthBearerBypassTest {
                 {"POST", "/api/v1/auth/token/refresh/operations/id/session-recovery"}};
         var provider = mock(JwtTokenProvider.class);
         var filter = new JwtAuthenticationFilter(provider, new SecurityErrorResponseWriter(new ObjectMapper()),
-                mock(ActiveUserLookup.class));
+            mock(UserAuthenticationService.class));
         for (String[] route : allowed) {
             var request = new MockHttpServletRequest(route[0], route[1]);
             request.addHeader("Authorization", "Basic invalid");
@@ -54,7 +55,7 @@ class DirectAuthBearerBypassTest {
     @Test
     void protectedRequestsFailClosedWithoutActiveDbAuthority() throws Exception {
         var provider = mock(JwtTokenProvider.class);
-        var lookup = mock(ActiveUserLookup.class);
+        var lookup = mock(UserAuthenticationService.class);
         var claims = new TokenClaims(1L, java.util.List.of("USER"), java.time.Instant.now().plusSeconds(60),
                 "session", "token");
         when(provider.parseAccessToken("valid")).thenReturn(claims);

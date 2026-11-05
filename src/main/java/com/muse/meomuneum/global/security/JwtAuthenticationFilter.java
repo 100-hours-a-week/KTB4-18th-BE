@@ -3,6 +3,7 @@ package com.muse.meomuneum.global.security;
 import java.io.IOException;
 import java.util.List;
 
+import com.muse.meomuneum.user.service.UserAuthenticationService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,11 +31,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
-    private final ActiveUserLookup userAuthenticationService;
+    private final UserAuthenticationService userAuthenticationService;
     private final AuthFlowService authFlowService;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            ActiveUserLookup userAuthenticationService, AuthFlowService authFlowService) {
+                                   UserAuthenticationService userAuthenticationService, AuthFlowService authFlowService) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
@@ -42,7 +43,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            ActiveUserLookup userAuthenticationService) {
+                                   UserAuthenticationService userAuthenticationService) {
         this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null);
     }
 
