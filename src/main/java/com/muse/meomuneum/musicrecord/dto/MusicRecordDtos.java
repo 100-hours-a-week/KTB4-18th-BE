@@ -19,7 +19,7 @@ public final class MusicRecordDtos {
     public record Region(RegionPart sido, RegionPart sigungu) {
     }
 
-    public record MusicSearchResponse(List<MusicItem> items, String next_cursor, boolean has_next) {
+    public record MusicSearchResponse(List<MusicItem> items, String next_cursor, boolean has_next, String source) {
     }
 
     public record MusicItem(Long music_id, String provider, String external_music_id, String title,

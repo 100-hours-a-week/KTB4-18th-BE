@@ -373,8 +373,9 @@ AI의 `done` 이후 곡을 저장한 다음 공개 SSE에 `done`을 보냅니다
 `COMPLETED` 처리하며, 오류 또는 완료 전 연결 종료는 `FAILED`(제한 시간 초과는 `TIMEOUT`)로
 저장하고 `error` 이벤트를 보냅니다. 기존 GET 상세 조회는 완료 결과 재조회에 사용합니다.
 기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
-기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
-음악 기록 검색과 텍스트 음악 추천은 이 국가·요청 제한 시간 설정을 공유합니다.
+추천 기능의 기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
+음악 기록 검색도 기본 스토어는 `US`이고 `MUSIC_SEARCH_COUNTRY`로 별도 변경할 수 있습니다.
+두 기능은 iTunes 요청 제한 시간 설정을 공유합니다.
 실제 API 확인 시 `KR` 스토어는 검색 결과가 없었고 `US` 스토어에서는 한국어 곡도 검색됐습니다.
 측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
 각각 선택된 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다. 인증 정보,

@@ -4,16 +4,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
-import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,15 +26,13 @@ import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
-import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.StoredMusic;
 
 import tools.jackson.databind.JsonNode;
 
 @Service
 public class MusicRecordService {
     private static final int PAGE_SIZE = 20;
-    private static final Logger log = LoggerFactory.getLogger(MusicRecordService.class);
-    private final MusicSearchStorageService searchStorage;
+    private final MusicSearchCandidateCache candidates;
     private final MusicRecordRepository repository;
     private final ItunesMusicSearchClient itunes;
     private final LocationResolutionTokenProvider tokens;
@@ -50,8 +41,8 @@ public class MusicRecordService {
 
     public MusicRecordService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
             LocationResolutionTokenProvider tokens,
-            MusicSearchCursorCodec searchCursors, MusicSearchStorageService searchStorage) {
-        this.searchStorage = searchStorage;
+            MusicSearchCursorCodec searchCursors, MusicSearchCandidateCache candidates) {
+        this.candidates = candidates;
         this.repository = repository;
         this.itunes = itunes;
         this.tokens = tokens;
@@ -59,97 +50,68 @@ public class MusicRecordService {
     }
 
     public MusicSearchResponse search(String query, String provider, String cursor, Integer size) {
-        if (query == null || query.isBlank() || !"ITUNES".equals(provider)
+        String normalized = query == null
+                ? ""
+                : java.text.Normalizer.normalize(query,
+                        java.text.Normalizer.Form.NFC).replaceAll("[\\p{javaWhitespace}\\p{Z}]+", " ").trim();
+        if (normalized.isEmpty() || !"ITUNES".equals(provider)
                 || (size != null && (size < 1 || size > PAGE_SIZE))) {
-            throw new MusicRecordException("music_search_invalid_query", HttpStatus.BAD_REQUEST,
-                    "search query required");
+            throw invalidSearchCursor("music_search_invalid_query");
         }
-        String normalized = query.trim();
         int pageSize = size == null ? PAGE_SIZE : size;
+        String country = itunes.country();
         MusicSearchCursorCodec.Cursor position = cursor == null || cursor.isBlank()
                 ? null
-                : searchCursors.decode(cursor, normalized);
+                : searchCursors.decode(cursor, normalized, country, pageSize);
+        if (position != null && "ITUNES".equals(position.source())) {
+            var snapshot = candidates.findSnapshot(position.snapshotId()).orElseThrow(this::expiredSearch);
+            if (!snapshot.key().equals(searchKey(country, normalized))
+                    || position.offset() >= snapshot.items().size()
+                    || position.expiresAt().getEpochSecond() != snapshot.expiresAt().getEpochSecond()) {
+                throw invalidSearchCursor("music_cursor_invalid_snapshot_position");
+            }
+            return externalPage(snapshot, normalized, country, position.offset(), pageSize);
+        }
         long highWatermark = position == null ? repository.highestMusicId() : position.highWatermark();
-        if (position != null && "ITUNES".equals(position.phase())) {
-            List<MusicItem> external = externalCandidates(normalized, highWatermark);
-            String hash = externalHash(external);
-            if (!hash.equals(position.externalHash()) || position.externalIndex() > external.size()) {
-                throw invalidSearchCursor("music_external_results_changed");
-            }
-            return externalPage(external, normalized, highWatermark, position.lastDbId(),
-                    position.externalIndex(), pageSize, hash, position.expiresAt());
-        }
         long beforeId = position == null ? Long.MAX_VALUE : position.lastDbId();
-        if (beforeId <= 0) {
-            throw invalidSearchCursor("music_cursor_invalid_db_position");
-        }
-        List<MusicItem> db = repository.searchMusic(normalized, beforeId, highWatermark, pageSize + 1);
-        if (!db.isEmpty() || position != null) {
+        List<MusicItem> db = repository.searchMusic(normalized, beforeId, highWatermark,
+                position == null ? PAGE_SIZE + 1 : pageSize + 1);
+        if (position != null || db.size() > PAGE_SIZE) {
             boolean hasNext = db.size() > pageSize;
-            List<MusicItem> items = hasNext ? List.copyOf(db.subList(0, pageSize)) : List.copyOf(db);
-            long lastId = items.isEmpty() ? beforeId : items.getLast().music_id();
-            String next = hasNext
-                    ? searchCursors.encode(normalized, "DB", lastId,
-                            highWatermark, 0, "", position == null
-                                    ? searchCursors.newExpiresAt()
-                                    : position.expiresAt())
-                    : null;
-            return new MusicSearchResponse(items, next, hasNext);
-        }
-        List<MusicItem> external = externalCandidates(normalized, highWatermark);
-        String hash = externalHash(external);
-        return externalPage(external, normalized, highWatermark, beforeId, 0,
-                pageSize, hash, searchCursors.newExpiresAt());
-    }
-
-    private List<MusicItem> externalCandidates(String query, long highWatermark) {
-        List<MusicItem> results = itunes.search(query);
-        List<String> ids = results.stream().map(MusicItem::external_music_id).distinct().toList();
-        Map<String, StoredMusic> stored = repository.findStoredMusicByIds(ids, highWatermark, query);
-        Set<String> seen = new HashSet<>();
-        List<MusicItem> candidates = results.stream().filter(item -> seen.add(item.external_music_id()))
-                .filter(item -> !stored.containsKey(item.external_music_id())
-                        || !stored.get(item.external_music_id()).matchesSearch())
-                .map(item -> stored.containsKey(item.external_music_id())
-                        ? mergeSearchMetadata(item, stored.get(item.external_music_id()).music())
-                        : item)
-                .toList();
-        Set<String> storageSeen = new HashSet<>();
-        List<MusicItem> storageSnapshot = List.copyOf(results.stream()
-                .filter(item -> storageSeen.add(item.external_music_id())).toList());
-        if (!storageSnapshot.isEmpty()) {
-            try {
-                searchStorage.store(storageSnapshot);
-            } catch (TaskRejectedException exception) {
-                log.warn("event=music_search_storage_rejected count={} exception={}",
-                        storageSnapshot.size(), exception.getClass().getSimpleName());
+            List<MusicItem> items = List.copyOf(db.subList(0, Math.min(pageSize, db.size())));
+            String next = null;
+            if (hasNext) {
+                long lastId = items.getLast().music_id();
+                var nextPosition = position == null
+                        ? searchCursors.database(lastId, highWatermark)
+                        : position.advance(lastId, 0);
+                next = searchCursors.encode(normalized, country, pageSize, nextPosition);
             }
+            return new MusicSearchResponse(items, next, hasNext, "DB");
         }
-        return candidates;
+        String key = searchKey(country, normalized);
+        var snapshot = candidates.findQuery(key)
+                .orElseGet(() -> candidates.put(key, country, itunes.search(normalized)));
+        return externalPage(snapshot, normalized, country, 0, pageSize);
     }
 
-    private MusicItem mergeSearchMetadata(MusicItem external, MusicItem stored) {
-        return new MusicItem(stored.music_id(), stored.provider(), stored.external_music_id(),
-                external.title(), external.artist_name(),
-                external.album_cover_url(),
-                stored.preview_url() == null ? external.preview_url() : stored.preview_url(),
-                stored.youtube_video_id(), stored.is_queueable());
+    private String searchKey(String country, String query) {
+        return "3:" + country + ":" + searchCursors.hash(query);
     }
 
-    private MusicSearchResponse externalPage(List<MusicItem> external, String query, long highWatermark,
-            long lastDbId, int index, int pageSize, String hash, Instant expiresAt) {
-        int end = Math.min(index + pageSize, external.size());
-        List<MusicItem> items = List.copyOf(external.subList(index, end));
-        boolean hasNext = end < external.size();
-        return new MusicSearchResponse(items, hasNext
-                ? searchCursors.encode(query, "ITUNES",
-                        lastDbId, highWatermark, end, hash, expiresAt)
-                : null, hasNext);
+    private MusicSearchResponse externalPage(MusicSearchCandidateCache.Snapshot snapshot, String query,
+            String country, int offset, int size) {
+        int end = Math.min(offset + size, snapshot.items().size());
+        boolean hasNext = end < snapshot.items().size();
+        var position = new MusicSearchCursorCodec.Cursor("ITUNES", 0, 0, snapshot.id(), end,
+                snapshot.issuedAt(), snapshot.expiresAt());
+        return new MusicSearchResponse(List.copyOf(snapshot.items().subList(offset, end)), hasNext
+                ? searchCursors.encode(query, country, size, position)
+                : null, hasNext, "ITUNES");
     }
 
-    private String externalHash(List<MusicItem> external) {
-        return searchCursors.hash(external.stream().map(MusicItem::external_music_id)
-                .collect(Collectors.joining("|")));
+    private MusicRecordException expiredSearch() {
+        return new MusicRecordException("music_search_expired", HttpStatus.GONE, "music search expired");
     }
 
     private MusicRecordException invalidSearchCursor(String reason) {
@@ -175,7 +137,7 @@ public class MusicRecordService {
         Location location = repository.findLocation(claims.mapDotId(), claims.sigunguRegionId(),
                 claims.sidoRegionId()).orElseThrow(() -> new MusicRecordException("location_token_target_missing"));
         MusicItem music = resolveMusicForRecord(request.music().external_music_id());
-        long musicId = repository.upsertMusic(music);
+        long musicId = music.music_id() == null ? repository.upsertMusic(music) : music.music_id();
         Instant now = clock.instant();
         long id = repository.saveRecord(userId, musicId, location,
                 blankToNull(request.custom_place_name()), blankToNull(request.emotion_memo()), now);
@@ -196,24 +158,13 @@ public class MusicRecordService {
     }
 
     private MusicItem resolveMusicForRecord(String trackId) {
-        MusicItem stored = repository.findMusic("ITUNES", trackId).orElse(null);
-        MusicItem external;
-        try {
-            external = lookupMusic(trackId);
-        } catch (MusicRecordException exception) {
-            if (stored == null) {
-                throw exception;
-            }
-            return stored;
-        }
-        if (stored == null) {
-            return external;
-        }
-        return new MusicItem(stored.music_id(), external.provider(), external.external_music_id(),
-                external.title(), external.artist_name(),
-                external.album_cover_url() == null ? stored.album_cover_url() : external.album_cover_url(),
-                external.preview_url() == null ? stored.preview_url() : external.preview_url(),
-                stored.youtube_video_id(), stored.is_queueable());
+        return repository.findMusic("ITUNES", trackId).orElseGet(() -> lookupMusic(trackId));
+    }
+
+    private MusicItem resolveMusicForUpdate(String trackId) {
+        return repository.findMusic("ITUNES", trackId).orElseGet(() -> itunes.lookup(trackId)
+                .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
+                        "music not found")));
     }
 
     public MusicRecordListResponse list(long userId, String cursor, Integer size) {
@@ -320,10 +271,8 @@ public class MusicRecordService {
                 return new UpdateResponse(recordId, current.updated_at());
             }
             if (!sameMusic) {
-                MusicItem selected = itunes.lookup(externalId)
-                        .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
-                                "music not found"));
-                long musicId = repository.upsertMusic(selected);
+                MusicItem selected = resolveMusicForUpdate(externalId);
+                long musicId = selected.music_id() == null ? repository.upsertMusic(selected) : selected.music_id();
                 Instant updatedAt = clock.instant();
                 if (repository.updateRecordMusic(userId, recordId, musicId, updatedAt) != 1) {
                     throw new MusicRecordException("music_record_update_target_missing");
