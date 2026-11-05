@@ -22,6 +22,10 @@ public class ChatRedisChannels {
         return prefix + "control:v1";
     }
 
+    public String runtimeMarkerKey() {
+        return prefix + "state:runtime";
+    }
+
     public String roomStateKey(long roomId, long epoch, String component) {
         if (roomId <= 0 || epoch <= 0 || component == null || !component.matches("[a-z][a-z0-9-]{0,31}")) {
             throw new IllegalArgumentException("Chat Redis state key requires valid room, epoch and component");

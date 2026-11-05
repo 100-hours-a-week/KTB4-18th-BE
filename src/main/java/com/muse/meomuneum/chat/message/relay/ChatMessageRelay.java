@@ -31,11 +31,18 @@ import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.chat.redis.ChatRedisChannels;
 import com.muse.meomuneum.chat.redis.ChatRedisConnection;
 import com.muse.meomuneum.chat.redis.ChatRedisSubscription;
+import com.muse.meomuneum.chat.runtime.ChatRuntimeMetrics;
 
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
 
 /** Both sender and peers use the same Pub/Sub path; ACK remains a DB-commit acknowledgement only. */
 public final class ChatMessageRelay implements AutoCloseable {
+    private ChatRuntimeMetrics metrics;
+
+    @Autowired(required = false)
+    public void setMetrics(ChatRuntimeMetrics metrics) {
+        this.metrics = metrics;
+    }
     private ChatControlEventConsumer controls;
 
     @Autowired(required = false)
@@ -148,6 +155,7 @@ public final class ChatMessageRelay implements AutoCloseable {
                                 continue;
                             }
                             boolean sent = false;
+                            long started = System.nanoTime();
                             try {
                                 // Subscriber count is not a user delivery receipt.
                                 redis.commands().sync().publish(claim.event().channel(channels),
@@ -156,6 +164,9 @@ public final class ChatMessageRelay implements AutoCloseable {
                                 published.incrementAndGet();
                             } catch (RuntimeException unavailable) {
                                 failures.incrementAndGet();
+                            }
+                            if (metrics != null) {
+                                metrics.published(started, sent);
                             }
                             outbox.complete(claim, sent);
                             if (!sent) {
@@ -335,5 +346,13 @@ public final class ChatMessageRelay implements AutoCloseable {
         subscription.close();
         publishers.shutdownNow();
         receivers.shutdownNow();
+    }
+
+    public int publisherQueueSize() {
+        return publishers.getQueue().size();
+    }
+
+    public int receiverQueueSize() {
+        return receivers.getQueue().size();
     }
 }

@@ -6,15 +6,24 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
 import com.muse.meomuneum.chat.message.policy.ChatMessageFingerprint;
 import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
+import com.muse.meomuneum.chat.runtime.ChatRuntimeMetrics;
 
 /** All mutations join the participation transaction; Redis and broker calls stay outside it. */
 public final class DistributedChatMessageService {
+    private ChatRuntimeMetrics metrics;
+
+    @Autowired(required = false)
+    public void setMetrics(ChatRuntimeMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     private final JdbcTemplate jdbc;
     private final ChatParticipationService participation;
     private final ChatMessageStorageService storage;
@@ -43,6 +52,23 @@ public final class DistributedChatMessageService {
     }
 
     public Saved send(long user, long room, long member, String socket, String client, String text, String masked) {
+        long started = System.nanoTime();
+        String outcome = "unavailable";
+        try {
+            Saved saved = store(user, room, member, socket, client, text, masked);
+            outcome = saved.deduplicated() ? "deduplicated" : "stored";
+            return saved;
+        } catch (ChatMessageRejection rejected) {
+            outcome = "rejected";
+            throw rejected;
+        } finally {
+            if (metrics != null) {
+                metrics.stored(started, outcome);
+            }
+        }
+    }
+
+    private Saved store(long user, long room, long member, String socket, String client, String text, String masked) {
         return participation.messageTransaction(user, room, member, socket, operation -> {
             var receipts = jdbc.queryForList("""
                     SELECT * FROM chat_message_receipts WHERE environment=? AND user_id=? AND client_message_id=?
