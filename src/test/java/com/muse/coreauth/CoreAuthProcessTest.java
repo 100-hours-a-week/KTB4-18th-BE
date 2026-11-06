@@ -74,11 +74,11 @@ class CoreAuthProcessTest {
     private static final boolean RELAY = Boolean.getBoolean("auth.integration.message-relay");
     private static final boolean PARTICIPATION = Boolean.getBoolean("auth.integration.distributed-presence");
     private static final String SECRET = "auth-process-synthetic-jwt-secret-at-least-32";
+    private static final String HMAC_KEY = "auth-process-synthetic-hmac-secret-at-least-32";
     private static final String LOCATION = PRODUCTION
             ? "synthetic-distinct-location-signing-key-at-least-32"
             : SECRET;
     private static final String SERVICE = "auth-process-synthetic-service-secret-current";
-    private static final String HMAC = "auth-process-synthetic-hmac-secret-at-least-32";
     private static final String NEXT = "auth-process-synthetic-service-secret-next-key";
     private static final String REDIS_PASSWORD = "auth-process-redis-synthetic-password";
     private static final int REDIS_PORT = redisPort();
@@ -137,10 +137,6 @@ class CoreAuthProcessTest {
     private record BrowserSession(HttpClient client, String flowId, long epoch, String csrf) {
     }
 
-    private final Map<String, FlowFixture> flows = new HashMap<>();
-
-    private record FlowFixture(String id, String cookie) {
-    }
     private final AtomicInteger relayMode = new AtomicInteger();
     private final java.util.concurrent.atomic.AtomicBoolean blockNext = new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -151,6 +147,9 @@ class CoreAuthProcessTest {
                 .locations("filesystem:src/main/resources/db/migration").load().migrate();
         var jdbc = new JdbcTemplate(
                 new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()));
+        if (PRODUCTION) {
+            prepareDirectAuthAuthority(jdbc);
+        }
         jdbc.update("""
                 INSERT INTO users(id,email,password_hash,nickname,role,created_at)
                 VALUES (411001,'auth-process@example.test',?,'authprobe','USER',UTC_TIMESTAMP(6))
@@ -170,9 +169,13 @@ class CoreAuthProcessTest {
             var sessions = member.<String, HazelcastAuthStateStore.AuthSession>getMap("auth-sessions-v2");
             String revokedSid = UUID.randomUUID().toString();
             String survivingSid = UUID.randomUUID().toString();
+            String flowCookie = UUID.randomUUID().toString();
+            String flowId = null;
             if (!PRODUCTION) {
                 sessions.put(revokedSid, session(revokedSid));
                 sessions.put(survivingSid, session(survivingSid));
+                flowId = seedBrowserSession(jdbc, revokedSid, flowCookie);
+                seedBrowserSession(jdbc, survivingSid, UUID.randomUUID().toString());
             }
             Node core = start("core", Map.ofEntries(
                     Map.entry("CORE_CHAT_AUTH_ENABLED", "true"), Map.entry("CHAT_AUTH_SERVICE_TOKEN_CURRENT", SERVICE),
@@ -180,7 +183,7 @@ class CoreAuthProcessTest {
                     Map.entry("AUTH_STATE_HAZELCAST_MEMBERS", "127.0.0.1:" + hzPort),
                     Map.entry("AUTH_STATE_HAZELCAST_CLUSTER_NAME", config.getClusterName()),
                     Map.entry("AUTH_BACKEND_REPLICA_COUNT", "1"),
-                    Map.entry("AUTH_STATE_HMAC_KEY", HMAC),
+                    Map.entry("AUTH_STATE_HMAC_KEY", HMAC_KEY),
                     Map.entry("AUTH_MUTATION_GATE_OPEN", "true"),
                     Map.entry("AUTH_STATE_REPLAY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
                     Map.entry("CORE_AUTH_REDIS_ENABLED", "true"), Map.entry("CORE_AUTH_PRODUCER_ID", PRODUCER),
@@ -297,15 +300,6 @@ class CoreAuthProcessTest {
                         .response(checked.body().getBytes(StandardCharsets.UTF_8), List.of(pair)).getFirst().active());
                 assertFalse(checked.body().contains("hash"));
             }
-            String dbOnlySid = UUID.randomUUID().toString();
-            sessions.put(dbOnlySid, session(dbOnlySid));
-            var dbPair = new SessionPair(411001, dbOnlySid);
-            jdbc.update("UPDATE auth_browser_sessions SET status='REVOKED' WHERE sid=?", dbOnlySid);
-            var staleHazelcast = internal(core, SERVICE, InternalSessionProtocol.encodeRequest(List.of(dbPair)));
-            assertEquals(200, staleHazelcast.statusCode());
-            assertFalse(InternalSessionProtocol.response(staleHazelcast.body().getBytes(StandardCharsets.UTF_8),
-                    List.of(dbPair)).getFirst().active());
-            assertEquals(HazelcastAuthStateStore.SessionStatus.ACTIVE, sessions.get(dbOnlySid).status());
             assertEquals(401, internal(core, token(revokedSid), new byte[0]).statusCode());
             assertEquals(413, internal(core, SERVICE, new byte[32769]).statusCode());
             assertEquals(400,
@@ -330,6 +324,7 @@ class CoreAuthProcessTest {
             if (CONTROL) {
                 String controlSid = UUID.randomUUID().toString();
                 sessions.put(controlSid, session(controlSid));
+                seedBrowserSession(jdbc, controlSid, UUID.randomUUID().toString());
                 Probe tab = join(subscribed, polling, controlSid, region, room);
                 Probe peer = join(polling, subscribed, controlSid, region, room);
                 assertEquals(tab.membership, peer.membership);
@@ -432,10 +427,14 @@ class CoreAuthProcessTest {
             Thread.sleep(1100); // Let every earlier HTTP validation deadline finish before revoking.
             long beforeRevoke = System.nanoTime();
             var logout = request(core, "POST", "/api/v1/auth/logout", token(revokedSid), null,
-                    Map.of("X-CSRF-TOKEN", csrfToken, "Idempotency-Key", UUID.randomUUID().toString(),
-                            "X-Auth-Flow-Id", flows.get(revokedSid).id(), "X-Auth-Flow-Epoch", "1",
-                            "Cookie", "MEO_AUTH_FLOW=" + flows.get(revokedSid).cookie()));
+                    Map.of("X-CSRF-TOKEN", csrfToken, "Cookie", "MEO_AUTH_FLOW=" + flowCookie,
+                            "X-Auth-Flow-Id", flowId, "X-Auth-Flow-Epoch", "1",
+                            "Idempotency-Key", UUID.randomUUID().toString()));
             assertEquals(200, logout.statusCode(), logout.body());
+            assertTrue(json.readTree(logout.body()).path("data").path("logoutReceipt").path("committed").asBoolean(),
+                    logout.body());
+            assertEquals("REVOKED", jdbc.queryForObject(
+                    "SELECT status FROM auth_browser_sessions WHERE sid=?", String.class, revokedSid));
             await(() -> sessions.get(revokedSid).status() == HazelcastAuthStateStore.SessionStatus.REVOKED);
             String notification = notifications.poll(2, TimeUnit.SECONDS);
             assertTrue(notification != null, "actual Core Redis publication required");
@@ -568,7 +567,7 @@ class CoreAuthProcessTest {
                 .timeout(java.time.Duration.ofSeconds(5)).header("X-Forwarded-Proto", "https");
         for (String header : List.of("Authorization", "Content-Type", "Origin", "Cookie", "X-CSRF-TOKEN",
                 "X-Auth-Flow-Id", "X-Auth-Flow-Epoch", "X-Login-Operation-Id", "Idempotency-Key",
-                "X-Auth-Queue-Correlation")) {
+                "X-Auth-Login-Protocol", "X-Auth-Flow-Operation-Id", "X-Auth-Client-Expires-At")) {
             for (String value : exchange.getRequestHeaders().getOrDefault(header, List.of())) {
                 request.header(header, value);
             }
@@ -597,51 +596,74 @@ class CoreAuthProcessTest {
                 : HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    private void prepareDirectAuthAuthority(JdbcTemplate jdbc) throws Exception {
+        // Fresh isolated database: synthetic restore epoch and key pin, never an operational restore approval.
+        byte[] key = java.util.Base64.getDecoder().decode("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+        byte[] derived = javax.crypto.KDF.getInstance("HKDF-SHA256").deriveData(
+                javax.crypto.spec.HKDFParameterSpec.ofExtract().addIKM(key)
+                        .addSalt("meomuneum/auth-replay/v2/hkdf-salt".getBytes(StandardCharsets.UTF_8))
+                        .thenExpand("meomuneum/auth-replay/v2/aes-256-gcm".getBytes(StandardCharsets.UTF_8), 32));
+        var digest = java.security.MessageDigest.getInstance("SHA-256");
+        digest.update("meomuneum/auth-replay/v2/key-id".getBytes(StandardCharsets.UTF_8));
+        String keyId = java.util.HexFormat.of().formatHex(digest.digest(derived));
+        jdbc.update("INSERT INTO auth_replay_key_pin VALUES (1, ?)", keyId);
+        jdbc.update("INSERT INTO auth_replay_iv_allocators VALUES (?, ?, FALSE)", keyId, new byte[12]);
+        jdbc.update("""
+                UPDATE auth_direct_projection_control SET cookie_mode='GENERATION_SCOPED',
+                    readiness='PRODUCTION_READY', replay_key_id=?, restore_verified=TRUE WHERE singleton_id=1
+                """, keyId);
+    }
+
     private String login() throws Exception {
         var browser = HttpClient.newBuilder().sslContext(TLS.clientContext())
                 .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
         var csrf = browserRequest(browser, "GET", "/api/v1/auth/token/csrf", null, Map.of());
         assertEquals(200, csrf.statusCode());
         String csrfToken = json.readTree(csrf.body()).path("data").path("csrf_token").asText();
-        var bootstrap = browserRequest(browser, "GET", "/api/v1/auth/flow", null, Map.of());
-        assertEquals(200, bootstrap.statusCode());
+        var bootstrap = browserRequest(browser, "POST", "/api/v1/auth/flows", null,
+                Map.of("X-Auth-Login-Protocol", "direct-v2", "X-CSRF-TOKEN", csrfToken,
+                        "X-Auth-Flow-Operation-Id", UUID.randomUUID().toString()));
+        assertEquals(200, bootstrap.statusCode(), bootstrap.body());
         var flow = json.readTree(bootstrap.body()).path("data");
         String flowId = flow.path("flowId").asText();
         long epoch = flow.path("flowEpoch").asLong();
         assertFalse(flowId.isBlank(), "flow bootstrap must return an identity");
-        var headers = Map.of("X-CSRF-TOKEN", csrfToken, "X-Auth-Flow-Id", flowId,
-                "X-Auth-Flow-Epoch", Long.toString(epoch), "Idempotency-Key", UUID.randomUUID().toString());
-        var queue = browserRequest(browser, "POST", "/api/v1/auth/login-queue/tickets", null, headers);
-        assertEquals(200, queue.statusCode(), "real queue admission failed");
-        var queueData = json.readTree(queue.body()).path("data");
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-        while (!"READY".equals(queueData.path("status").asText()) && System.nanoTime() < deadline) {
-            assertEquals("WAITING", queueData.path("status").asText());
-            int pollSeconds = Math.max(1, queueData.path("nextPollSeconds").asInt(5));
-            Thread.sleep(TimeUnit.SECONDS.toMillis(pollSeconds) + 100);
-            queue = browserRequest(browser, "GET", "/api/v1/auth/login-queue/current", null, headers);
-            assertEquals(200, queue.statusCode(), "real queue polling failed");
-            queueData = json.readTree(queue.body()).path("data");
-        }
-        assertEquals("READY", queueData.path("status").asText());
-        var loginHeaders = new HashMap<>(headers);
-        loginHeaders.put("X-Login-Operation-Id", UUID.randomUUID().toString());
-        loginHeaders.put("X-Auth-Queue-Correlation", queueData.path("diagnosticCorrId").asText());
+        var loginHeaders = Map.of("X-CSRF-TOKEN", csrfToken, "X-Auth-Flow-Id", flowId,
+                "X-Auth-Flow-Epoch", Long.toString(epoch), "X-Login-Operation-Id", UUID.randomUUID().toString(),
+                "X-Auth-Login-Protocol", "direct-v2", "X-Auth-Client-Expires-At",
+                Long.toString(System.currentTimeMillis() + 60000));
         var loggedIn = browserRequest(browser, "POST", "/api/v1/auth/login",
                 json.writeValueAsString(Map.of("email", "auth-process@example.test",
                         "password", "synthetic-login-password")),
                 loginHeaders);
-        assertEquals(200, loggedIn.statusCode(), "real login failed");
+        assertEquals(200, loggedIn.statusCode(), loggedIn.body());
         String access = json.readTree(loggedIn.body()).path("data").path("access_token").asText();
         String sid = new JwtTokenProvider(new JwtProperties("project-api", "project-api", SECRET, 3600, 1209600))
                 .parseAccessToken(access).sessionId();
-        var current = browserRequest(browser, "GET", "/api/v1/auth/flow", null, Map.of());
+        var current = browserRequest(browser, "GET", "/api/v1/auth/flow", null,
+                Map.of("X-Auth-Login-Protocol", "direct-v2"));
         assertEquals(200, current.statusCode());
         var activated = json.readTree(current.body()).path("data");
         assertTrue(activated.path("authenticated").asBoolean());
         issuedTokens.put(sid, access);
         browsers.put(sid, new BrowserSession(browser, activated.path("flowId").asText(),
                 activated.path("flowEpoch").asLong(), csrfToken));
+        var pair = new SessionPair(411001, sid);
+        String validationBody = new String(InternalSessionProtocol.encodeRequest(List.of(pair)),
+                StandardCharsets.UTF_8);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        boolean projected = false;
+        do {
+            var checked = browserRequest(browser, "POST", "/internal/v1/auth/sessions/validate", validationBody,
+                    Map.of("Authorization", "Bearer " + SERVICE));
+            assertEquals(200, checked.statusCode(), checked.body());
+            projected = InternalSessionProtocol.response(checked.body().getBytes(StandardCharsets.UTF_8),
+                    List.of(pair)).getFirst().active();
+            if (!projected) {
+                Thread.sleep(50);
+            }
+        } while (!projected && System.nanoTime() < deadline);
+        assertTrue(projected, "direct login must reach the Core Chat session projection within five seconds");
         return sid;
     }
 
@@ -672,7 +694,8 @@ class CoreAuthProcessTest {
         }
         BrowserSession browser = browsers.get(revoked);
         var logout = browserRequest(browser.client(), "POST", "/api/v1/auth/logout", null,
-                Map.of("X-CSRF-TOKEN", browser.csrf(), "X-Auth-Flow-Id", browser.flowId(),
+                Map.of("X-Auth-Login-Protocol", "direct-v2", "X-CSRF-TOKEN", browser.csrf(),
+                        "X-Auth-Flow-Id", browser.flowId(),
                         "X-Auth-Flow-Epoch", Long.toString(browser.epoch()), "Idempotency-Key",
                         UUID.randomUUID().toString()));
         assertEquals(200, logout.statusCode());
@@ -739,6 +762,7 @@ class CoreAuthProcessTest {
         String drainSid = PRODUCTION ? login() : UUID.randomUUID().toString();
         if (!PRODUCTION) {
             sessions.put(drainSid, session(drainSid));
+            seedBrowserSession(jdbc, drainSid, UUID.randomUUID().toString());
         }
         Probe draining = join(terminating, drainSid, region, room);
         Probe other = join(subscribed, survivingSid, region, room);
@@ -826,8 +850,7 @@ class CoreAuthProcessTest {
 
     private Node start(String role, Map<String, String> additions, Path trust) throws Exception {
         var log = evidence.resolve(role + "-" + UUID.randomUUID() + ".log");
-        var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString(),
-                "-Duser.timezone=UTC"));
+        var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin/java").toString()));
         if (trust != null) {
             command.addAll(List.of("-Djavax.net.ssl.trustStore=" + trust,
                     "-Djavax.net.ssl.trustStorePassword=synthetic-fixture-password"));
@@ -840,6 +863,10 @@ class CoreAuthProcessTest {
                         "--server.port=0", "--chat.message-cleanup.enabled=false"));
         if (PRODUCTION || role.equals("chat")) {
             command.add("--spring.profiles.active=" + (PRODUCTION ? "prod" : "chat-isolated"));
+        }
+        if (PRODUCTION && role.equals("core")) {
+            command.addAll(List.of("--auth.direct-v2.safety-mode=PRODUCTION",
+                    "--auth.direct-v2.backend-instances=1", "--auth.direct-v2.external-restore-epoch=1"));
         }
         var builder = new ProcessBuilder(command);
         builder.environment().clear();
@@ -854,6 +881,9 @@ class CoreAuthProcessTest {
                     "http://127.0.0.1:1"));
         }
         builder.environment().putAll(additions);
+        if (PRODUCTION && role.equals("core")) {
+            builder.environment().put("AUTH_DIRECT_V2_ENABLED", "true");
+        }
         builder.redirectErrorStream(true).redirectOutput(log.toFile());
         Node pending = new Node(builder.start(), 0);
         nodes.add(pending); // Cleanup owns the process even if startup fails before a port is assigned.
@@ -931,6 +961,27 @@ class CoreAuthProcessTest {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    private String seedBrowserSession(JdbcTemplate jdbc, String sid, String cookie) throws Exception {
+        String flowId = UUID.randomUUID().toString();
+        var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(HMAC_KEY.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        String cookieHash = java.util.HexFormat.of().formatHex(
+                mac.doFinal(("auth-flow-cookie:" + cookie).getBytes(StandardCharsets.UTF_8)));
+        jdbc.update("""
+                INSERT INTO auth_browser_flows
+                    (flow_id,flow_cookie_hash,flow_epoch,revision,lifecycle,active_session_sid,
+                     cookie_expires_at,created_at,updated_at)
+                VALUES (?,?,1,1,'AUTHENTICATED',?,DATE_ADD(NOW(6),INTERVAL 1 DAY),NOW(6),NOW(6))
+                """, flowId, cookieHash, sid);
+        jdbc.update("""
+                INSERT INTO auth_browser_sessions
+                    (sid,flow_id,flow_epoch,user_id,status,idle_expires_at,absolute_expires_at,created_at,updated_at)
+                VALUES (?,?,1,411001,'ACTIVE',DATE_ADD(NOW(6),INTERVAL 1 DAY),
+                        DATE_ADD(NOW(6),INTERVAL 1 DAY),NOW(6),NOW(6))
+                """, sid, flowId);
+        return flowId;
+    }
+
     private HttpResponse<String> request(Node node, String method, String path, String bearer, String body,
             Map<String, String> headers) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create(node.base() + path)).timeout(java.time.Duration.ofSeconds(5))
@@ -965,41 +1016,11 @@ class CoreAuthProcessTest {
     }
 
     private HazelcastAuthStateStore.AuthSession session(String sid) {
-        seedBrowserSession(sid);
         Instant now = Instant.now();
         return new HazelcastAuthStateStore.AuthSession(411001L, sid, "fixture",
                 HazelcastAuthStateStore.SessionStatus.ACTIVE,
                 "jti", "hash", null, null, null, null, null, null, null, 0, null, null, 0,
                 now, now, now.plusSeconds(3600), now.plusSeconds(3600), now.plusSeconds(7200), null);
-    }
-
-    private void seedBrowserSession(String sid) {
-        String cookie = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
-        String id = UUID.randomUUID().toString();
-        String hash;
-        try {
-            var mac = javax.crypto.Mac.getInstance("HmacSHA256");
-            mac.init(new javax.crypto.spec.SecretKeySpec(HMAC.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            hash = java.util.HexFormat.of().formatHex(mac.doFinal(("auth-flow-cookie:" + cookie)
-                    .getBytes(StandardCharsets.UTF_8)));
-        } catch (java.security.GeneralSecurityException failure) {
-            throw new IllegalStateException("synthetic flow setup failed", failure);
-        }
-        var jdbc = new JdbcTemplate(new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(),
-                MYSQL.getPassword()));
-        jdbc.update("""
-                INSERT INTO auth_browser_flows(flow_id,flow_cookie_hash,flow_epoch,revision,lifecycle,
-                    active_session_sid,cookie_expires_at,created_at,updated_at)
-                VALUES (?, ?, 1, 1, 'AUTHENTICATED', ?, TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),
-                    UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
-                """, id, hash, sid);
-        jdbc.update("""
-                INSERT INTO auth_browser_sessions(sid,flow_id,flow_epoch,user_id,status,idle_expires_at,
-                    absolute_expires_at,created_at,updated_at)
-                VALUES (?, ?, 1, 411001, 'ACTIVE', TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),
-                    TIMESTAMPADD(HOUR,2,UTC_TIMESTAMP(6)),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
-                """, sid, id);
-        flows.put(sid, new FlowFixture(id, cookie));
     }
 
     private Path certificate() throws Exception {

@@ -44,7 +44,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
         "auth.local-mock-login.user-id=42"
 })
 @ActiveProfiles("local-mock")
-@Import({SecurityConfig.class, CorsConfig.class, LocalMockLoginExceptionHandler.class,
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class, CorsConfig.class,
+        LocalMockLoginExceptionHandler.class,
         LocalMockLoginHttpIntegrationTest.LocalTestConfiguration.class})
 class LocalMockLoginHttpIntegrationTest {
 

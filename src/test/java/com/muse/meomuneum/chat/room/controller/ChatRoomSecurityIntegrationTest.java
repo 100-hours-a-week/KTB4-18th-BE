@@ -33,7 +33,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = ChatRoomController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes", "recommendation.allow-guests=false"})
-@Import({SecurityConfig.class, ChatRoomSecurityIntegrationTest.SecurityTestConfiguration.class})
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class,
+        ChatRoomSecurityIntegrationTest.SecurityTestConfiguration.class})
 class ChatRoomSecurityIntegrationTest {
 
     @Autowired

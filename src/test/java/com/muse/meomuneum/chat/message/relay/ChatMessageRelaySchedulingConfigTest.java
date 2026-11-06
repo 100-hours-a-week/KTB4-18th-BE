@@ -23,7 +23,8 @@ import com.muse.meomuneum.chat.runtime.ChatRuntimeSchedulingConfig;
 class ChatMessageRelaySchedulingConfigTest {
     @Test
     void schedulerExistsOnlyWhenRelayIsEnabled() {
-        var runner = new ApplicationContextRunner().withUserConfiguration(ChatMessageRelaySchedulingConfig.class);
+        var runner = new ApplicationContextRunner().withUserConfiguration(ChatMessageRelaySchedulingConfig.class)
+                .withPropertyValues("chat.message-relay.enabled=false");
         runner.run(context -> assertThat(context).doesNotHaveBean("chatRelayDispatchScheduler"));
         runner.withPropertyValues("chat.message-relay.enabled=true")
                 .run(context -> assertThat(context).hasBean("chatRelayDispatchScheduler"));

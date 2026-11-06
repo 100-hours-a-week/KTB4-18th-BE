@@ -35,7 +35,7 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @WebMvcTest(value = SongController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes"})
-@Import({SecurityConfig.class, CurrentUserResolver.class,
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class, CurrentUserResolver.class,
         SongRegistrationSecurityIntegrationTest.SecurityTestConfiguration.class})
 class SongRegistrationSecurityIntegrationTest {
     @Autowired
@@ -51,24 +51,20 @@ class SongRegistrationSecurityIntegrationTest {
     }
 
     @Test
-    void validJwtCsrfAndOriginAllowRegistration() throws Exception {
+    void validBearerAndOriginAllowRegistrationWithoutCsrf() throws Exception {
         when(service.register(new Request("123"))).thenReturn(new Response(new MusicItem(42L, "ITUNES", "123",
                 "song", "artist", null, null, null, false), true));
-        mvc.perform(post("/api/v1/songs").with(csrf().asHeader())
+        mvc.perform(post("/api/v1/songs")
                 .header("Origin", "http://localhost:5173").header("Authorization", bearer())
                 .contentType("application/json").content("{\"externalTrackId\":\"123\"}"))
                 .andExpect(status().isCreated());
     }
 
     @Test
-    void anonymousMissingCsrfAndUntrustedOriginNeverReachRegistration() throws Exception {
+    void anonymousAndUntrustedOriginNeverReachRegistration() throws Exception {
         mvc.perform(post("/api/v1/songs").with(csrf().asHeader()).header("Origin", "http://localhost:5173")
                 .contentType("application/json").content("{\"externalTrackId\":\"123\"}"))
                 .andExpect(status().isUnauthorized());
-        mvc.perform(post("/api/v1/songs").header("Origin", "http://localhost:5173")
-                .header("Authorization", bearer()).contentType("application/json")
-                .content("{\"externalTrackId\":\"123\"}"))
-                .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/songs").with(csrf().asHeader()).header("Origin", "https://untrusted.example")
                 .header("Authorization", bearer()).contentType("application/json")
                 .content("{\"externalTrackId\":\"123\"}"))
@@ -80,7 +76,7 @@ class SongRegistrationSecurityIntegrationTest {
         User user = mock(User.class);
         when(user.getId()).thenReturn(11L);
         when(user.getRole()).thenReturn(UserRole.USER);
-        return "Bearer " + jwt.createAccessToken(user);
+        return "Bearer " + jwt.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     @TestConfiguration

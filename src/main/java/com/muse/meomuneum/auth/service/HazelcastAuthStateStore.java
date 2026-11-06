@@ -27,6 +27,7 @@ public class HazelcastAuthStateStore {
     private final AuthUserSessionIndexStore userSessionIndexStore;
     private final HazelcastAuthSessionStore sessionStore;
     private final Semaphore requestSemaphore;
+
     private ApplicationEventPublisher events = ignored -> {
     };
 
@@ -95,6 +96,7 @@ public class HazelcastAuthStateStore {
                 encryptedRefreshToken, accessExpiresAt, refreshExpiresAt, userAgentSummary, ownerClaimId);
     }
 
+    /** Fresh bounded read only; never rotates a session or extends its expiration. */
     public Map<String, AuthSession> getSessions(Set<String> sids) {
         return sessionStore.getSessions(sids);
     }
@@ -112,8 +114,8 @@ public class HazelcastAuthStateStore {
         if (revoked != null && revoked.status() == SessionStatus.REVOKED) {
             try {
                 events.publishEvent(new AuthSessionRevokedEvent(revoked.userId(), revoked.sid(), revoked.generation()));
-            } catch (RuntimeException ignored) {
-                return revoked;
+            } catch (RuntimeException unavailable) {
+                // Fresh validation remains authoritative if notification delivery fails.
             }
         }
         return revoked;

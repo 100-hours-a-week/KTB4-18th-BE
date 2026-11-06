@@ -25,7 +25,8 @@ class ChatParticipationSchedulingConfigTest {
     @Test
     void heartbeatSchedulerMatchesParticipationFlagIndependentlyOfRuntimeLifecycle() {
         var runner = new ApplicationContextRunner().withUserConfiguration(
-                ChatParticipationSchedulingConfig.class, ChatRuntimeSchedulingConfig.class);
+                ChatParticipationSchedulingConfig.class, ChatRuntimeSchedulingConfig.class)
+                .withPropertyValues("chat.distributed-presence.enabled=false", "chat.lifecycle.enabled=false");
         runner.run(context -> assertThat(context).doesNotHaveBean("chatServerHeartbeatScheduler"));
         runner.withPropertyValues("chat.distributed-presence.enabled=true").run(context -> {
             assertThat(context).hasBean("chatServerHeartbeatScheduler");

@@ -34,7 +34,8 @@ import com.muse.meomuneum.user.signup.service.UserAvailabilityService;
 @WebMvcTest(value = UserAvailabilityController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
         "auth.cors.allowed-origins=http://localhost:5174"})
-@Import({SecurityConfig.class, UserAvailabilityExceptionHandler.class,
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class,
+        UserAvailabilityExceptionHandler.class,
         UserAvailabilityControllerTest.AvailabilityTestConfiguration.class})
 class UserAvailabilityControllerTest {
     @Autowired
