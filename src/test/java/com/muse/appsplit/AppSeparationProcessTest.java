@@ -324,6 +324,8 @@ class AppSeparationProcessTest {
                 Map.entry("AUTH_CORS_ALLOWED_ORIGINS", ORIGIN), Map.entry("AUTH_STATE_HAZELCAST_ENABLED", "false"),
                 Map.entry("CHAT_RUNTIME_ENABLED", Boolean.toString(enabled))));
         if (role.equals("core")) {
+            builder.environment().put("AUTH_STATE_REPLAY_ENCRYPTION_KEY",
+                    java.util.Base64.getEncoder().encodeToString(new byte[32]));
             builder.environment().put("AUTH_STATE_HMAC_KEY", "split-synthetic-distinct-hmac-key-at-least-32");
             builder.environment().putAll(Map.of("RECOMMENDATION_AI_BASE_URL", "http://127.0.0.1:1",
                     "SPEECH_TRANSCRIPTION_AI_BASE_URL", "http://127.0.0.1:1",

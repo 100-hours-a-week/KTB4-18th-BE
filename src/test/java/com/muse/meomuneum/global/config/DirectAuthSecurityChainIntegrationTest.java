@@ -174,7 +174,8 @@ class DirectAuthSecurityChainIntegrationTest {
     @Configuration
     @EnableWebSecurity
     @EnableWebMvc
-    @Import({SecurityConfig.class, CorsConfig.class, Endpoint.class})
+    @Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class, CorsConfig.class,
+            Endpoint.class})
     static class TestConfig {
         @Bean
         JwtTokenProvider jwtTokenProvider() {

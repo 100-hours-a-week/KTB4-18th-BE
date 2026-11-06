@@ -119,8 +119,10 @@ class ChatParticipationMySqlTest {
         var before = jdbc.queryForList("SELECT * FROM chat_rooms ORDER BY id");
         Flyway latest = Flyway.configure().dataSource(dataSource).load();
         var pending = latest.info().pending();
-        assertTrue(java.util.Arrays.stream(pending).anyMatch(
-                migration -> migration.getScript().equals("V20261027205623__add_chat_runtime_recovery_control.sql")));
+        var baselineVersion = old.info().current().getVersion();
+        assertTrue(pending.length > 0, "expected migrations after the baseline");
+        assertTrue(java.util.Arrays.stream(pending)
+                .allMatch(migration -> migration.getVersion().compareTo(baselineVersion) > 0));
         assertEquals(pending.length, latest.migrate().migrationsExecuted);
         assertEquals(0, latest.migrate().migrationsExecuted);
         assertTrue(latest.validateWithResult().validationSuccessful);
