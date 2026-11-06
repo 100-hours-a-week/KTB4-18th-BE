@@ -58,7 +58,8 @@ class ChatRuntimeSchedulingConfigTest {
 
     @Test
     void schedulerIsCreatedOnlyForTheEnabledLifecycle() {
-        var runner = new ApplicationContextRunner().withUserConfiguration(ChatRuntimeSchedulingConfig.class);
+        var runner = new ApplicationContextRunner().withUserConfiguration(ChatRuntimeSchedulingConfig.class)
+                .withPropertyValues("chat.lifecycle.enabled=false");
         runner.run(context -> assertThat(context).doesNotHaveBean("chatRuntimeCheckScheduler"));
         runner.withPropertyValues("chat.lifecycle.enabled=true")
                 .run(context -> assertThat(context).hasBean("chatRuntimeCheckScheduler"));

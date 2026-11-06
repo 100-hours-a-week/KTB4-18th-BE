@@ -48,7 +48,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
         "auth.cors.allowed-origins=http://localhost:5173"
 })
-@Import({SecurityConfig.class, RequestOriginValidationIntegrationTest.LocalTestConfiguration.class})
+@Import({com.muse.meomuneum.global.config.CorsConfig.class, SecurityConfig.class,
+        RequestOriginValidationIntegrationTest.LocalTestConfiguration.class})
 class RequestOriginValidationIntegrationTest {
 
     @MockitoBean

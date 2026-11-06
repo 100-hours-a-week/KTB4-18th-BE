@@ -45,7 +45,7 @@ public class SignupRepository {
                 """, (row, index) -> new Term(
                 row.getLong("id"),
                 row.getString("type"),
-                row.getBoolean("is_required")), Timestamp.valueOf(LocalDateTime.ofInstant(now, ZoneOffset.UTC)));
+                row.getBoolean("is_required")), LocalDateTime.ofInstant(now, ZoneOffset.UTC));
     }
 
     public long createUser(
