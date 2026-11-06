@@ -20,7 +20,7 @@ import org.springframework.transaction.TransactionStatus;
 
 import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
-import com.muse.meomuneum.chat.connection.ChatSessionLogoutEvent;
+import com.muse.meomuneum.global.security.AuthSessionRevokedEvent;
 
 class AuthFlowOutboxProcessorTest {
     @Test
@@ -65,6 +65,6 @@ class AuthFlowOutboxProcessorTest {
         verify(store, never()).getSession("event-1");
         verify(store).revokeSession(sessionId, null);
         verify(flowService).shouldApplyOutboxAction("flow-1", 1L, 2L, "SESSION_REVOKED_LOGOUT", sessionId);
-        verify(events).publishEvent(new ChatSessionLogoutEvent(42L, sessionId));
+        verify(events).publishEvent(AuthSessionRevokedEvent.invalidation(42L, sessionId));
     }
 }

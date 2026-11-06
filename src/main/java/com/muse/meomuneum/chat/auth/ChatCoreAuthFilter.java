@@ -36,7 +36,7 @@ public final class ChatCoreAuthFilter extends OncePerRequestFilter {
                     reject(response, 401, "chat authentication session required");
                     return;
                 }
-                verifier.fresh(claims.userId(), claims.sessionId());
+                // The preceding bearer filter obtained a fresh remote decision; retain the operation guard.
                 try (var scope = new ChatAuthOperation(verifier,
                         new SessionPair(claims.userId(), claims.sessionId()), claims.expiresAt())) {
                     chain.doFilter(request, response);

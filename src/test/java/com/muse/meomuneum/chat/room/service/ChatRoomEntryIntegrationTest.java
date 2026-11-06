@@ -743,6 +743,7 @@ class ChatRoomEntryIntegrationTest {
     private Long createSessionMembership(Long userId, Long roomId) {
         // B4 will provide REST creation; B3 validates counting with explicit B2-compatible fixtures.
         String sid = java.util.UUID.randomUUID().toString();
+        prepareAuthSession(userId, sid);
         jdbcTemplate.update("INSERT INTO chat_room_members (user_id,room_id,auth_session_id) VALUES (?,?,?)",
                 userId, roomId, sid);
         return jdbcTemplate.queryForObject("SELECT id FROM chat_room_members WHERE auth_session_id=?", Long.class, sid);

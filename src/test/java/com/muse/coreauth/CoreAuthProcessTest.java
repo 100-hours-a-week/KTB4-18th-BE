@@ -324,6 +324,7 @@ class CoreAuthProcessTest {
             if (CONTROL) {
                 String controlSid = UUID.randomUUID().toString();
                 sessions.put(controlSid, session(controlSid));
+                seedBrowserSession(jdbc, controlSid, UUID.randomUUID().toString());
                 Probe tab = join(subscribed, polling, controlSid, region, room);
                 Probe peer = join(polling, subscribed, controlSid, region, room);
                 assertEquals(tab.membership, peer.membership);
@@ -761,6 +762,7 @@ class CoreAuthProcessTest {
         String drainSid = PRODUCTION ? login() : UUID.randomUUID().toString();
         if (!PRODUCTION) {
             sessions.put(drainSid, session(drainSid));
+            seedBrowserSession(jdbc, drainSid, UUID.randomUUID().toString());
         }
         Probe draining = join(terminating, drainSid, region, room);
         Probe other = join(subscribed, survivingSid, region, room);

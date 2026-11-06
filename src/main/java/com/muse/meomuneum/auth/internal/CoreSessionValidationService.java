@@ -20,14 +20,17 @@ import com.muse.meomuneum.user.repository.UserRepository;
 public final class CoreSessionValidationService implements AutoCloseable {
     private final HazelcastAuthStateStore sessions;
     private final UserRepository users;
+    private final CoreBrowserSessionLookup browserSessions;
     private final AtomicBoolean failureReported = new AtomicBoolean();
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(4, 8, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32), Thread.ofPlatform().name("core-chat-validation-", 0).factory(),
             new ThreadPoolExecutor.AbortPolicy());
 
-    public CoreSessionValidationService(HazelcastAuthStateStore sessions, UserRepository users) {
+    public CoreSessionValidationService(HazelcastAuthStateStore sessions, UserRepository users,
+            CoreBrowserSessionLookup browserSessions) {
         this.sessions = sessions;
         this.users = users;
+        this.browserSessions = browserSessions;
     }
 
     public List<SessionDecision> validate(List<SessionPair> pairs) {
@@ -42,6 +45,7 @@ public final class CoreSessionValidationService implements AutoCloseable {
             progress.stage = "sessions";
             Instant readStarted = Instant.now();
             progress.sessionStarted = System.nanoTime();
+            var browserState = browserSessions.findActiveSessions(pairs);
             var currentSessions = sessions.getSessions(pairs.stream().map(SessionPair::sid)
                     .collect(java.util.stream.Collectors.toSet()));
             progress.sessionStarted = 0;
@@ -51,14 +55,17 @@ public final class CoreSessionValidationService implements AutoCloseable {
                     throw new IllegalStateException("validation unavailable");
                 }
                 var session = currentSessions.get(pair.sid());
+                var browser = browserState.get(pair);
                 progress.sessionsCompleted++;
-                boolean active = session != null && pair.sid().equals(session.sid())
+                boolean active = browser != null && browser.active() && session != null
+                        && pair.sid().equals(session.sid())
                         && pair.userId() == session.userId()
                         && session.status() == HazelcastAuthStateStore.SessionStatus.ACTIVE
                         && activeUsers.contains(pair.userId());
                 long remaining = active
-                        ? Math.min(Duration.between(readStarted, session.refreshIdleExpiresAt()).toMillis(),
-                                Duration.between(readStarted, session.refreshAbsoluteExpiresAt()).toMillis())
+                        ? Math.min(browser.remainingMillis(), Math.min(
+                                Duration.between(readStarted, session.refreshIdleExpiresAt()).toMillis(),
+                                Duration.between(readStarted, session.refreshAbsoluteExpiresAt()).toMillis()))
                         : 0;
                 if (active && (session.generation() < 0 || session.generation() > SessionPair.MAX_SAFE_INTEGER
                         || remaining > SessionPair.MAX_SAFE_INTEGER)) {

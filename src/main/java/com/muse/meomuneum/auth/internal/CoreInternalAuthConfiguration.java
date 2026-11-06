@@ -6,6 +6,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.muse.meomuneum.auth.service.HazelcastAuthStateStore;
 import com.muse.meomuneum.user.repository.UserRepository;
@@ -15,8 +16,8 @@ import com.muse.meomuneum.user.repository.UserRepository;
 public class CoreInternalAuthConfiguration {
     @Bean(destroyMethod = "close")
     public CoreSessionValidationService coreSessionValidationService(HazelcastAuthStateStore sessions,
-            UserRepository users) {
-        return new CoreSessionValidationService(sessions, users);
+            UserRepository users, JdbcTemplate jdbc) {
+        return new CoreSessionValidationService(sessions, users, new CoreBrowserSessionLookup(jdbc));
     }
 
     @Bean

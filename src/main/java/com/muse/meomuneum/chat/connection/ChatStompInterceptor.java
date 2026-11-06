@@ -27,6 +27,7 @@ import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.service.ChatRoomEntryService;
 import com.muse.meomuneum.chat.view.ChatViewLifecycle;
+import com.muse.meomuneum.global.security.AccessSessionAuthority;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
 import com.muse.meomuneum.global.security.SessionPair;
 import com.muse.meomuneum.global.security.TokenClaims;
@@ -42,8 +43,10 @@ public class ChatStompInterceptor implements ChannelInterceptor {
     private final ChatMessageDeliveryService delivery;
     private final ChatViewLifecycle views;
     private final ChatAuthSessionRegistry authSessions;
+    private AccessSessionAuthority localAuthority;
     private final Map<String, Identity> identities = new ConcurrentHashMap<>();
 
+    @Autowired
     public ChatStompInterceptor(JwtTokenProvider tokens, ChatRoomEntryService entry, Clock clock,
             ChatSocketSessions sockets, ChatMessageDeliveryService delivery, ChatViewLifecycle views,
             ChatAuthSessionRegistry authSessions) {
@@ -54,6 +57,11 @@ public class ChatStompInterceptor implements ChannelInterceptor {
         this.delivery = delivery;
         this.views = views;
         this.authSessions = authSessions;
+    }
+
+    @Autowired(required = false)
+    public void setLocalAuthority(AccessSessionAuthority authority) {
+        localAuthority = authority;
     }
 
     @Autowired(required = false)
@@ -122,6 +130,19 @@ public class ChatStompInterceptor implements ChannelInterceptor {
             return message;
         }
         Map<String, Object> attributes = headers.getSessionAttributes();
+        if (coreVerifier == null && attributes != null && headers.getCommand() != StompCommand.CONNECT
+                && localAuthority != null) {
+            Identity existing = (Identity) attributes.get("chat.identity");
+            if (existing != null) {
+                var decision = localAuthority.verifySession(existing.userId(), existing.authSessionId());
+                if (decision != AccessSessionAuthority.Decision.ACTIVE) {
+                    boolean unavailable = decision == null || decision == AccessSessionAuthority.Decision.UNAVAILABLE;
+                    sockets.close(Set.of(headers.getSessionId()), unavailable ? 1013 : 4102,
+                            unavailable ? "CHAT_SERVICE_UNAVAILABLE" : "AUTH_REQUIRED");
+                    return null;
+                }
+            }
+        }
         if (headers.getCommand() == StompCommand.SEND) {
             Identity sender = attributes == null ? null : (Identity) attributes.get("chat.identity");
             if (sender == null || !sender.expiresAt().isAfter(clock.instant())) {
@@ -160,6 +181,15 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                     ? validated
                     : tokens.parseAccessToken(authorization.substring(7));
             ChatAuthSessionRegistry.Context authContext = authSessions.resolve(claims, requestedAuthSession);
+            if (coreVerifier == null && localAuthority != null) {
+                var decision = localAuthority.verifySession(claims.userId(), authContext.authSessionId());
+                if (decision != AccessSessionAuthority.Decision.ACTIVE) {
+                    boolean unavailable = decision == null || decision == AccessSessionAuthority.Decision.UNAVAILABLE;
+                    sockets.close(Set.of(headers.getSessionId()), unavailable ? 1013 : 4102,
+                            unavailable ? "CHAT_SERVICE_UNAVAILABLE" : "AUTH_REQUIRED");
+                    return null;
+                }
+            }
             Long roomId = positiveId(headers.getFirstNativeHeader("room_id"));
             Long membershipId = positiveId(headers.getFirstNativeHeader("membership_id"));
             if (claims.expiresAt() == null || !claims.expiresAt().isAfter(clock.instant())) {
@@ -186,7 +216,8 @@ public class ChatStompInterceptor implements ChannelInterceptor {
                 sockets.close(Set.of(headers.getSessionId()), 4103, "CHAT_VIEW_UNAVAILABLE");
                 throw failure;
             }
-            Identity identity = new Identity(claims.userId(), claims.expiresAt(), roomId, membershipId);
+            Identity identity = new Identity(claims.userId(), authContext.authSessionId(), claims.expiresAt(),
+                    roomId, membershipId);
             authSessions.register(headers.getSessionId(), authContext, claims.expiresAt());
             attributes.put("chat.identity", identity);
             identities.put(headers.getSessionId(), identity);
@@ -257,6 +288,6 @@ public class ChatStompInterceptor implements ChannelInterceptor {
         throw new IllegalArgumentException("CHAT_MEMBERSHIP_REQUIRED");
     }
 
-    private record Identity(Long userId, Instant expiresAt, Long roomId, Long membershipId) {
+    private record Identity(Long userId, String authSessionId, Instant expiresAt, Long roomId, Long membershipId) {
     }
 }

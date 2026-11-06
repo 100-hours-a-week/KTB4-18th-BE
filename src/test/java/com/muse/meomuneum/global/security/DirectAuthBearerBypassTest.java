@@ -12,7 +12,6 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 class DirectAuthBearerBypassTest {
     @Test
@@ -48,7 +47,7 @@ class DirectAuthBearerBypassTest {
                 {"POST", "/api/v1/auth/token/refresh/operations/id/session-recovery"}};
         var provider = mock(JwtTokenProvider.class);
         var filter = new JwtAuthenticationFilter(provider, new SecurityErrorResponseWriter(new ObjectMapper()),
-                mock(UserAuthenticationService.class));
+                mock(ActiveUserLookup.class));
         for (String[] route : allowed) {
             var request = new MockHttpServletRequest(route[0], route[1]);
             request.addHeader("Authorization", "Basic invalid");
@@ -76,7 +75,7 @@ class DirectAuthBearerBypassTest {
     @Test
     void protectedRequestsFailClosedWithoutActiveDbAuthority() throws Exception {
         var provider = mock(JwtTokenProvider.class);
-        var lookup = mock(UserAuthenticationService.class);
+        var lookup = mock(ActiveUserLookup.class);
         var claims = new TokenClaims(1L, java.util.List.of("USER"), java.time.Instant.now().plusSeconds(60),
                 "session", "token");
         when(provider.parseAccessToken("valid")).thenReturn(claims);

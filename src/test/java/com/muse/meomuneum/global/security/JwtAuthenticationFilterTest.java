@@ -35,7 +35,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.muse.meomuneum.auth.application.AuthFlowService;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -56,18 +55,18 @@ class JwtAuthenticationFilterTest {
     private FilterChain filterChain;
     private JwtAuthenticationFilter jwtAuthenticationFilter;
     private UserAuthenticationService userAuthenticationService;
-    private AuthFlowService authFlowService;
+    private AccessSessionAuthority sessionAuthority;
 
     @BeforeEach
     void setUp() {
         jwtTokenProvider = mock(JwtTokenProvider.class);
         filterChain = mock(FilterChain.class);
         userAuthenticationService = mock(UserAuthenticationService.class);
-        authFlowService = mock(AuthFlowService.class);
-        when(authFlowService.verifySession(1L, "550e8400-e29b-41d4-a716-446655440000"))
+        sessionAuthority = mock(AccessSessionAuthority.class);
+        when(sessionAuthority.verifySession(1L, "550e8400-e29b-41d4-a716-446655440000"))
                 .thenReturn(AccessSessionAuthority.Decision.ACTIVE);
         jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtTokenProvider,
-                new SecurityErrorResponseWriter(objectMapper), userAuthenticationService, authFlowService);
+                new SecurityErrorResponseWriter(objectMapper), userAuthenticationService, sessionAuthority);
     }
 
     @AfterEach

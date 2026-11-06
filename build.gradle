@@ -229,7 +229,6 @@ sourceSets {
 			exclude { element ->
 				!element.directory && element.path.startsWith('com/muse/meomuneum/chat/') &&
 						!element.path.startsWith('com/muse/meomuneum/chat/region/') &&
-                        element.path != 'com/muse/meomuneum/chat/connection/ChatSessionLogoutEvent.java' &&
 						!(element.path.startsWith('com/muse/meomuneum/chat/redis/') &&
 								!element.path.endsWith('/ChatRedisConfiguration.java'))
 			}
@@ -244,7 +243,7 @@ sourceSets {
 			include 'com/muse/apps/chat/**', 'com/muse/meomuneum/chat/**'
 			include 'com/muse/meomuneum/global/exception/**', 'com/muse/meomuneum/global/logging/**'
 			include 'com/muse/meomuneum/global/response/**', 'com/muse/meomuneum/global/web/**'
-			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims',
+			['JwtTokenProvider', 'TokenClaims', 'RefreshTokenClaims', 'JwtAuthenticationFilter',
 				'SecurityErrorResponseWriter', 'SecurityErrorCode', 'RequestOriginValidationFilter',
 				'AuthSessionIds', 'ActiveUserLookup', 'AuthRequestPath', 'AccessSessionAuthority', 'AccessSessionGuard', 'SessionPair', 'SessionDecision',
 				'InternalSessionProtocol', 'AuthSessionRevokedEvent', 'AuthRevocationProtocol'].each { name ->
