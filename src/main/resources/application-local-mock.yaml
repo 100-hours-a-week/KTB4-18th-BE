@@ -5,7 +5,7 @@ auth:
     user-id: ${AUTH_LOCAL_MOCK_USER_ID:}
 
 location-recommendation:
-  test-repeat-enabled: ${LOCATION_RECOMMENDATION_TEST_REPEAT_ENABLED:true}
+  test-repeat-enabled: ${LOCATION_RECOMMENDATION_TEST_REPEAT_ENABLED:false}
   ai:
     base-url: ${LOCATION_RECOMMENDATION_AI_BASE_URL:http://ai-server:8000}
     allowed-origins: ${LOCATION_RECOMMENDATION_AI_ALLOWED_ORIGINS:http://ai-server:8000}
