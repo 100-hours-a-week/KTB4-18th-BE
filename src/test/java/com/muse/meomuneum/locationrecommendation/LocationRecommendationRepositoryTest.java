@@ -2,6 +2,8 @@ package com.muse.meomuneum.locationrecommendation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.util.List;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.mock.env.MockEnvironment;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
@@ -269,6 +272,83 @@ class LocationRecommendationRepositoryTest {
         assertThat(next.response().reason()).isEqualTo("REGION_ISSUED_TODAY");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM location_recommendation_daily_issues "
                 + "WHERE user_id=? AND region_id=?", Integer.class, userId, region.regionId())).isEqualTo(1);
+    }
+
+    @Test
+    void localMockRepeatAllowsSameRegionOnEachMapAccessWithoutCooldownOrDailyIssue() {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles("local-mock");
+        MusicRecordRepository musicRecords = mock(MusicRecordRepository.class);
+        when(musicRecords.existsActiveRecordInRegion(userId, region.regionId())).thenReturn(true);
+        repository = new LocationRecommendationRepository(jdbc, new ObjectMapper(),
+                musicRecords, new DataSourceTransactionManager(dataSource), environment, true);
+        var context = repository.context(userId);
+        UUID firstRequestId = UUID.randomUUID();
+        var first = repository.admit(userId, firstRequestId,
+                request(context.scopeGeneration(), context.cancelEpoch()), region, true);
+        assertThat(first.invokeAi()).isTrue();
+        assertThat(repository.tryStartAiAttempt(userId, first.canonicalRequestId(), first.scopeGeneration(),
+                first.admittedCancelEpoch(), deadline())).isTrue();
+
+        TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
+        var firstReady = repository.complete(userId, first.canonicalRequestId(), first.scopeGeneration(),
+                first.admittedCancelEpoch(), List.of(track), deadline());
+        assertThat(firstReady.status()).isEqualTo("READY");
+        assertThat(repository.claim(userId, first.canonicalRequestId(), UUID.randomUUID(), first.scopeGeneration(),
+                first.admittedCancelEpoch()).displayAllowed()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM location_recommendation_daily_issues "
+                + "WHERE user_id=? AND region_id=?", Integer.class, userId, region.regionId())).isZero();
+
+        var nextContext = repository.context(userId);
+        var second = repository.admit(userId, UUID.randomUUID(),
+                request(nextContext.scopeGeneration(), nextContext.cancelEpoch()), region, true);
+        assertThat(second.invokeAi()).isTrue();
+        assertThat(second.canonicalRequestId()).isNotEqualTo(first.canonicalRequestId());
+        assertThat(repository.tryStartAiAttempt(userId, second.canonicalRequestId(), second.scopeGeneration(),
+                second.admittedCancelEpoch(), deadline())).isTrue();
+    }
+
+    @Test
+    void localRepeatFlagDoesNotBypassLimitsWhenProductionProfileIsActive() {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles("prod", "local-mock");
+        repository = new LocationRecommendationRepository(jdbc, new ObjectMapper(),
+                new MusicRecordRepository(jdbc), new DataSourceTransactionManager(dataSource),
+                environment, true);
+        var context = repository.context(userId);
+        var first = repository.admit(userId, UUID.randomUUID(),
+                request(context.scopeGeneration(), context.cancelEpoch()), region, true);
+        assertThat(repository.tryStartAiAttempt(userId, first.canonicalRequestId(), first.scopeGeneration(),
+                first.admittedCancelEpoch(), deadline())).isTrue();
+        TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
+        repository.complete(userId, first.canonicalRequestId(), first.scopeGeneration(), first.admittedCancelEpoch(),
+                List.of(track), deadline());
+
+        var next = repository.admit(userId, UUID.randomUUID(),
+                request(context.scopeGeneration(), context.cancelEpoch()), region, true);
+        assertThat(next.invokeAi()).isFalse();
+        assertThat(next.response().reason()).isEqualTo("REGION_ISSUED_TODAY");
+    }
+
+    @Test
+    void localMockProfileKeepsLimitsWhenRepeatFlagIsDisabled() {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles("local-mock");
+        repository = new LocationRecommendationRepository(jdbc, new ObjectMapper(),
+                new MusicRecordRepository(jdbc), new DataSourceTransactionManager(dataSource), environment, false);
+        var context = repository.context(userId);
+        var first = repository.admit(userId, UUID.randomUUID(),
+                request(context.scopeGeneration(), context.cancelEpoch()), region, true);
+        assertThat(repository.tryStartAiAttempt(userId, first.canonicalRequestId(), first.scopeGeneration(),
+                first.admittedCancelEpoch(), deadline())).isTrue();
+        TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
+        repository.complete(userId, first.canonicalRequestId(), first.scopeGeneration(), first.admittedCancelEpoch(),
+                List.of(track), deadline());
+
+        var next = repository.admit(userId, UUID.randomUUID(),
+                request(context.scopeGeneration(), context.cancelEpoch()), region, true);
+        assertThat(next.invokeAi()).isFalse();
+        assertThat(next.response().reason()).isEqualTo("REGION_ISSUED_TODAY");
     }
 
     @Test

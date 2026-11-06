@@ -153,6 +153,21 @@ class DirectAuthOverlayProjectionTest {
     void currentOperationProofPrecedenceAndApplicationFailurePrivacyAreExplicit() throws Exception {
         Map<String, Object> document = yaml();
         Map<String, Object> current = operation(document, "/flow/current-operation", "get");
+        Map<String, Object> currentResponses = map(current.get("responses"));
+        assertThat(currentResponses.keySet()).contains("200", "400", "401", "404", "409", "503");
+        Map<String, Object> current401 = map(currentResponses.get("401"));
+        Map<String, Object> current401Schema = map(map(map(current401.get("content")).get("application/json"))
+                .get("schema"));
+        assertThat(current401Schema.get("$ref")).isEqualTo("#/components/schemas/ErrorEnvelopeCurrentOperation401");
+        Map<String, Object> current409 = map(currentResponses.get("409"));
+        Map<String, Object> current409Schema = schema(document, "ErrorEnvelopeCurrentOperation409");
+        List<?> current409AllOf = (List<?>) current409Schema.get("allOf");
+        Map<String, Object> current409Body = map(current409AllOf.get(1));
+        assertThat(strings(map(map(current409Body.get("properties")).get("message")).get("enum")))
+                .contains("AUTH_FLOW_LEGACY_QUEUED", "AUTH_OPERATION_SUPERSEDED", "AUTH_LOGIN_SUPERSEDED",
+                        "AUTH_OPERATION_RECEIPT_EXPIRED");
+        assertThat((String) current409.get("description")).contains("AUTH_OPERATION_SUPERSEDED",
+                "AUTH_LOGIN_SUPERSEDED", "AUTH_OPERATION_RECEIPT_EXPIRED");
         Map<String, Object> proof = map(current.get("x-auth-proof-selection"));
         assertThat(strings(proof.get("precedence"))).anyMatch(
                 text -> text.contains("uniquely valid current direct flow-proof") && text.contains("binding cookie"));

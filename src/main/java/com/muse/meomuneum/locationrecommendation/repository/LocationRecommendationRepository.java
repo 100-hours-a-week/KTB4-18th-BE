@@ -8,6 +8,10 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -40,14 +44,25 @@ public class LocationRecommendationRepository {
     private final MusicRecordRepository musicRecords;
     private final PlatformTransactionManager transactionManager;
     private final TransactionTemplate transaction;
+    private final boolean testRepeatEnabled;
 
     public LocationRecommendationRepository(JdbcTemplate jdbc, ObjectMapper mapper,
             MusicRecordRepository musicRecords, PlatformTransactionManager transactionManager) {
+        this(jdbc, mapper, musicRecords, transactionManager, null, false);
+    }
+
+    @Autowired
+    public LocationRecommendationRepository(JdbcTemplate jdbc, ObjectMapper mapper,
+            MusicRecordRepository musicRecords, PlatformTransactionManager transactionManager,
+            Environment environment,
+            @Value("${location-recommendation.test-repeat-enabled:false}") boolean configuredTestRepeatEnabled) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.musicRecords = musicRecords;
         this.transactionManager = transactionManager;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.testRepeatEnabled = configuredTestRepeatEnabled && environment != null
+                && environment.acceptsProfiles(Profiles.of("local-mock & !prod"));
     }
 
     public Optional<RegionResponse> findActiveRegion(ResolvedRegionCode codes) {
@@ -105,7 +120,7 @@ public class LocationRecommendationRepository {
                         response(root, state, userId));
             }
 
-            if (musicRecords.existsActiveRecordInRegion(userId, region.regionId())) {
+            if (!testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, region.regionId())) {
                 Request skipped = insertTerminalRequest(userId, requestId, requestId, state, region.regionId(),
                         dbDate.kstDate(), LocationRecommendationStatus.SUPERSEDED, "RECORDED_REGION");
                 return outcome(skipped, state, userId);
@@ -121,7 +136,7 @@ public class LocationRecommendationRepository {
                     return new AdmissionOutcome(false, root.requestId(), root.admittedCancelEpoch(), root.generation(),
                             response(root, state, userId));
                 }
-                if (root.status() == LocationRecommendationStatus.READY && !isExpired(root)) {
+                if (!testRepeatEnabled && root.status() == LocationRecommendationStatus.READY && !isExpired(root)) {
                     Request alias = insertAlias(userId, requestId, requestId, root, state, region.regionId(),
                             dbDate.kstDate());
                     return new AdmissionOutcome(false, root.requestId(), root.admittedCancelEpoch(), root.generation(),
@@ -142,7 +157,9 @@ public class LocationRecommendationRepository {
                 return outcome(disabled, state, userId);
             }
 
-            Request issued = findIssuedRequest(userId, region.regionId(), dbDate.kstDate()).orElse(null);
+            Request issued = testRepeatEnabled
+                    ? null
+                    : findIssuedRequest(userId, region.regionId(), dbDate.kstDate()).orElse(null);
             if (issued != null) {
                 Request root = resolveRoot(issued);
                 if (root.status() == LocationRecommendationStatus.READY && !isExpired(root)
@@ -159,7 +176,7 @@ public class LocationRecommendationRepository {
                 return outcome(skipped, state, userId);
             }
 
-            if (state.cooldownActive()) {
+            if (!testRepeatEnabled && state.cooldownActive()) {
                 Request cooldown = insertTerminalRequest(userId, requestId, requestId, state, region.regionId(),
                         dbDate.kstDate(), LocationRecommendationStatus.SUPERSEDED, "COOLDOWN_ACTIVE");
                 return outcome(cooldown, state, userId);
@@ -203,7 +220,7 @@ public class LocationRecommendationRepository {
                 if (!ownsLiveLease(userId, root, state, generation, cancelEpoch)) {
                     return response(root, state, userId);
                 }
-                if (musicRecords.existsActiveRecordInRegion(userId, root.regionId())) {
+                if (!testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, root.regionId())) {
                     updateTerminalOwned(root, LocationRecommendationStatus.SUPERSEDED, "RECORDED_REGION", true);
                     releaseLease(userId, requestId);
                 } else if (tracks.isEmpty()) {
@@ -271,17 +288,19 @@ public class LocationRecommendationRepository {
             if (request == null || !ownsLiveLease(userId, request, state, generation, cancelEpoch)) {
                 return false;
             }
-            if (state.cooldownActive()) {
+            if (!testRepeatEnabled && state.cooldownActive()) {
                 updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "COOLDOWN_ACTIVE", true);
                 releaseLease(userId, requestId);
                 return false;
             }
+            String cooldownPredicate = testRepeatEnabled
+                    ? ""
+                    : " AND (last_ai_attempt_at IS NULL OR "
+                            + "last_ai_attempt_at<=DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 30 MINUTE))";
             int updated = jdbc.update("UPDATE location_recommendation_states SET last_ai_attempt_at=UTC_TIMESTAMP(6), "
                     + "updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND lease_request_uuid=? "
-                    + "AND scope_generation=? AND cancel_epoch=? AND lease_expires_at>UTC_TIMESTAMP(6) "
-                    + "AND (last_ai_attempt_at IS NULL OR last_ai_attempt_at<="
-                    + "DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 30 MINUTE))", userId, requestId.toString(),
-                    generation.toString(), cancelEpoch);
+                    + "AND scope_generation=? AND cancel_epoch=? AND lease_expires_at>UTC_TIMESTAMP(6)"
+                    + cooldownPredicate, userId, requestId.toString(), generation.toString(), cancelEpoch);
             if (updated != 1) {
                 throw integrityError();
             }
@@ -541,7 +560,7 @@ public class LocationRecommendationRepository {
             tracks = List.of();
             ttl = 0;
         } else if (status == LocationRecommendationStatus.READY
-                && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
+                && !testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
             jdbc.update("UPDATE location_recommendation_requests SET status='SUPERSEDED', "
                     + "error_reason='RECORDED_REGION', tracks=JSON_ARRAY(), display_claim_key=NULL, "
                     + "display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND request_id=? "
@@ -606,7 +625,7 @@ public class LocationRecommendationRepository {
         if (request.ttlMillis() <= 0) {
             return "EXPIRED";
         }
-        if (musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
+        if (!testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
             return "RECORDED_REGION";
         }
         return null;
@@ -616,14 +635,16 @@ public class LocationRecommendationRepository {
             long cancelEpoch, long deadlineNanos) {
         requireBeforeDeadline(deadlineNanos);
         String json = serialize(tracks);
-        try {
-            jdbc.update("INSERT INTO location_recommendation_daily_issues (user_id, region_id, issued_date, "
-                    + "canonical_request_id, created_at) VALUES (?, ?, DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), ?, "
-                    + "UTC_TIMESTAMP(6))",
-                    userId, request.regionId(), request.requestId().toString());
-        } catch (org.springframework.dao.DuplicateKeyException exception) {
-            updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "REGION_ISSUED_TODAY", true);
-            return;
+        if (!testRepeatEnabled) {
+            try {
+                jdbc.update("INSERT INTO location_recommendation_daily_issues (user_id, region_id, issued_date, "
+                        + "canonical_request_id, created_at) VALUES (?, ?, "
+                        + "DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), ?, UTC_TIMESTAMP(6))",
+                        userId, request.regionId(), request.requestId().toString());
+            } catch (org.springframework.dao.DuplicateKeyException exception) {
+                updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "REGION_ISSUED_TODAY", true);
+                return;
+            }
         }
         requireBeforeDeadline(deadlineNanos);
         int updated = jdbc.update("UPDATE location_recommendation_requests r SET status='READY', error_reason=NULL, "

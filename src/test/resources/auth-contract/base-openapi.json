@@ -1130,7 +1130,7 @@
       "get": {
         "operationId": "getCurrentAuthOperation",
         "summary": "Read current flow and direct authentication operation from MySQL",
-        "description": "Read-only reconciliation for a browser that cannot read sessionStorage metadata or has lost a current flow-proof cookie. Cookie header order is ignored. First validate all presented direct-v2 flow-proof cookies against the current MySQL flow key, generation, HMAC, and expiry. If exactly one distinct current flow validates, it is authoritative and data.flow.proofState is ACTIVE. If valid current flow-proof cookies resolve to multiple distinct flows, fail with generic 404 AUTH_FLOW_NOT_FOUND regardless of cookie order and do not attempt binding fallback; a binding cookie never overrides it, including a valid binding cookie for another flow; that unrelated binding cookie is ignored for selection. If no current flow proof validates, a browser-binding proof may be used only when its database-bound HMAC, active generation, and fixed expiry validate. When one or more direct flow-proof cookie names were presented, fallback must match their single distinct flow key; multiple distinct rejected flow keys or a different binding flow is ambiguous and returns generic 404 AUTH_FLOW_NOT_FOUND only during fallback, because no current flow proof validated. A unique valid current flow proof remains authoritative even if a different-flow binding cookie is also presented. When no flow-proof cookie was presented, exactly one valid binding flow may resolve the lookup. Successful binding fallback returns data.flow.proofState=REBOOTSTRAP_REQUIRED. Binding proof grants no session, token, login, or protected-API authority. This operation reads the flow and current-operation pointer from a consistent MySQL snapshot; it never bootstraps, changes state, updates expiry, repairs or expires cookies, or returns credentials/tokens. MySQL is authoritative; Hazelcast is not a fallback. The X-Auth-Flow-Id and X-Auth-Flow-Epoch request headers are optional. If sessionStorage is unreadable, omit both and use only browser-managed proof cookies; return the canonical flow and current-operation pointer or null without mutation or cookies. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; direct-v2 success never reports QUEUED and currentTicket is null.",
+        "description": "Read-only reconciliation for a browser that cannot read sessionStorage metadata or has lost a current flow-proof cookie. Cookie header order is ignored. First validate all presented direct-v2 flow-proof cookies against the current MySQL flow key, generation, HMAC, and expiry. If exactly one distinct current flow validates, it is authoritative and data.flow.proofState is ACTIVE. If valid current flow-proof cookies resolve to multiple distinct flows, fail with generic 404 AUTH_FLOW_NOT_FOUND regardless of cookie order and do not attempt binding fallback; a binding cookie never overrides it, including a valid binding cookie for another flow; that unrelated binding cookie is ignored for selection. If no current flow proof validates, a browser-binding proof may be used only when its database-bound HMAC, active generation, and fixed expiry validate. When one or more direct flow-proof cookie names were presented, fallback must match their single distinct flow key; multiple distinct rejected flow keys or a different binding flow is ambiguous and returns generic 404 AUTH_FLOW_NOT_FOUND only during fallback, because no current flow proof validated. A unique valid current flow proof remains authoritative even if a different-flow binding cookie is also presented. When no flow-proof cookie was presented, exactly one valid binding flow may resolve the lookup. Successful binding fallback returns data.flow.proofState=REBOOTSTRAP_REQUIRED. Binding proof grants no session, token, login, or protected-API authority. This operation reads the flow and current-operation pointer from a consistent MySQL snapshot; it never bootstraps, changes state, updates expiry, repairs or expires cookies, or returns credentials/tokens. MySQL is authoritative; Hazelcast is not a fallback. The X-Auth-Flow-Id and X-Auth-Flow-Epoch request headers are optional. If sessionStorage is unreadable, omit both and use only browser-managed proof cookies; return the canonical flow and current-operation pointer or null without mutation or cookies. A resolved QUEUED flow (including a legacy flow) returns 409 AUTH_FLOW_LEGACY_QUEUED without mutation or cookies; a missing, known no-result, or expired canonical REFRESH receipt returns operation null after validating the active session; direct-v2 success never reports QUEUED and currentTicket is null.",
         "parameters": [
           {
             "in": "header",
@@ -1153,7 +1153,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Canonical MySQL flow snapshot and current operation, if an unexpired receipt is available. A valid direct flow proof returns proofState ACTIVE; a valid matching binding fallback returns proofState REBOOTSTRAP_REQUIRED. No response sets or expires cookies.",
+            "description": "Canonical MySQL flow snapshot and current operation, if an unexpired receipt is available. A valid direct flow proof returns proofState ACTIVE; a valid matching binding fallback returns proofState REBOOTSTRAP_REQUIRED. A missing, known no-result, or expired canonical REFRESH receipt returns operation null after validating the active session. No response sets or expires cookies.",
             "headers": {
               "Cache-Control": {
                 "required": true,
@@ -1279,6 +1279,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorEnvelopeCurrentOperation409"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The authenticated flow has no active canonical session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelopeCurrentOperation401"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "Every response is non-cacheable, including protocol, not-found, and canonical-state errors.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
                 }
               }
             }
@@ -5676,7 +5696,36 @@
             "properties": {
               "message": {
                 "type": "string",
-                "const": "AUTH_FLOW_LEGACY_QUEUED"
+                "enum": [
+                  "AUTH_FLOW_LEGACY_QUEUED",
+                  "AUTH_OPERATION_SUPERSEDED",
+                  "AUTH_LOGIN_SUPERSEDED",
+                  "AUTH_OPERATION_RECEIPT_EXPIRED"
+                ]
+              },
+              "data": {
+                "type": "null"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ErrorEnvelopeCurrentOperation401": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EnvelopeBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "message",
+              "data"
+            ],
+            "properties": {
+              "message": {
+                "type": "string",
+                "const": "AUTH_SESSION_INVALID"
               },
               "data": {
                 "type": "null"
