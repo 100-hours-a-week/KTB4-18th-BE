@@ -61,6 +61,29 @@ set +a
 | `test` | `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD` | URL: `jdbc:mysql://localhost:3306/meomuneum_test`, 사용자: `meomuneum_test`; 비밀번호 필수 |
 | `prod` | `PROD_DB_URL`, `PROD_DB_USERNAME`, `PROD_DB_PASSWORD` | 모두 필수 |
 
+로그인 계약은 local·dev·prod에서 direct-v2를 사용하며 `AUTH_DIRECT_V2_ENABLED`와
+`AUTH_DIRECT_V2_REFRESH_VERIFIED`의 기본값은 `true`입니다. refresh token은 HttpOnly 쿠키로 전달되고,
+정상 갱신 응답에서 회전됩니다. 예외 복구인 `AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED`와
+`AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED`의 기본값은 `false`이며 일반 로그인·갱신에 필요하지 않습니다.
+테스트 프로필은 direct-v2를 비활성화합니다.
+
+local/dev/prod 간 인증 코드는 동일하지만 데이터와 비밀값은 분리해야 합니다. `dev`는 `DEV_DB_*`,
+`prod`는 `PROD_DB_*`를 사용합니다. 분리 실행하는 Core 앱은 dev에서 `DEV_DB_*`, prod에서
+`PROD_DB_*`(또는 명시적으로 분리한 `CORE_DB_*`)를 사용합니다. dev와 prod의 DB 주소·계정은 서로
+달라야 합니다. `DEV_AUTH_STATE_HAZELCAST_MEMBERS`와 `PROD_AUTH_STATE_HAZELCAST_MEMBERS`는 각 환경의
+서로 다른 3개 멤버를 가리키고, 클러스터 기본 이름은 각각 `meomuneum-auth-dev`와
+`meomuneum-auth-prod`입니다. 두 환경에 같은 Hazelcast 주소나 클러스터 이름을 설정하지 마세요.
+
+각 환경에는 서로 다른 `AUTH_JWT_SECRET`, `AUTH_STATE_HMAC_KEY`, `AUTH_STATE_REPLAY_ENCRYPTION_KEY`,
+`LOCATION_TOKEN_SECRET`을 주입해야 합니다. 이 변수명은 코드에서 같지만 값은 환경별 비밀값 저장소에서
+따로 관리합니다. `AUTH_COOKIE_SECURE=true`와 `AUTH_CORS_ALLOWED_ORIGINS`도 HTTPS 배포 도메인에 맞게
+환경별로 설정하세요. 로컬 HTTP에서만 쿠키 보안을 `false`로 둘 수 있습니다. Spring Boot는 `.env`를
+자동으로 읽지 않으므로 로컬 셸 또는 IntelliJ 실행 구성에 값을 넣어야 합니다.
+
+이 저장소에는 dev/prod 호스팅 플랫폼의 실제 비밀값·DB·Hazelcast 주소가 없으므로, 여기서 설정하는 것은
+프로필 계약과 로컬 예시입니다. 배포 환경에도 위 변수를 각각 주입해야 해당 환경에서 분리된 저장소로
+실행됩니다.
+
 현재 위치 판정에는 `LOCATION_TOKEN_SECRET`과 `LOCATION_KAKAO_REST_API_KEY`가 필요합니다.
 토큰 비밀값은 32바이트 이상이어야 하며 인증 JWT와 별도로 관리합니다. 역지오코딩 연결·응답 제한은
 `LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT`과 `LOCATION_REVERSE_GEOCODING_READ_TIMEOUT`으로

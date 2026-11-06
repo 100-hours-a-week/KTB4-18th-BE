@@ -50,11 +50,16 @@ server:
         path: /api/v1/auth
 
 auth:
+  direct-v2:
+    enabled: ${AUTH_DIRECT_V2_ENABLED:true}
+    refresh-verified: ${AUTH_DIRECT_V2_REFRESH_VERIFIED:true}
+    refresh-recovery-verified: ${AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED:false}
+    rebootstrap-verified: ${AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED:false}
   cookie:
     secure: ${AUTH_COOKIE_SECURE:true}
     same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
   cors:
-    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   jwt:
     issuer: ${AUTH_JWT_ISSUER:project-api}
     audience: ${AUTH_JWT_AUDIENCE:project-api}
@@ -65,9 +70,9 @@ auth:
     # AP-1 queue reservations and BCrypt semaphores are process-local; set this to the actual deployment count.
     backend-replica-count: ${AUTH_BACKEND_REPLICA_COUNT:}
     hazelcast:
-      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:false}
+      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:true}
       members: ${AUTH_STATE_HAZELCAST_MEMBERS:}
-      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth}
+      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-prod}
       invocation-timeout: ${AUTH_STATE_HAZELCAST_INVOCATION_TIMEOUT:1s}
     expected-hazelcast-members: ${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:1}
     hmac-key: ${AUTH_STATE_HMAC_KEY:}
