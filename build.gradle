@@ -442,3 +442,9 @@ tasks.register('chatRuntimeLifecycleTest', Test) {
     systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
     outputs.upToDateWhen { false }
 }
+
+// Explicit one-shot metadata administration. No Spring application or Flyway is started.
+tasks.register('musicCatalog', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.muse.meomuneum.music.catalog.MusicCatalogCommand'
+}
