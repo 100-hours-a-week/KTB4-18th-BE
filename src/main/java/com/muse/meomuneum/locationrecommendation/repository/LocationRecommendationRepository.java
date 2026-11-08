@@ -15,6 +15,7 @@ import org.springframework.core.env.Profiles;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionTimedOutException;
@@ -30,6 +31,8 @@ import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse;
 import com.muse.meomuneum.locationrecommendation.exception.LocationRecommendationException;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
+import com.muse.meomuneum.recommendation.dto.TrackData;
+import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -658,6 +661,38 @@ public class LocationRecommendationRepository {
                 generation.toString(), cancelEpoch);
         if (updated != 1 || System.nanoTime() - deadlineNanos >= 0) {
             throw new ReservationLostException();
+        }
+        archiveCompleted(request, tracks);
+        requireBeforeDeadline(deadlineNanos);
+    }
+
+    private void archiveCompleted(Request request, List<TrackResponse> tracks) {
+        // This joins the READY/daily-issue transaction, not the expiring popup's lifetime.
+        var keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            var statement = connection.prepareStatement("""
+                    INSERT INTO recommendation_sessions
+                    (user_id,region_id,trigger_type,input_type,conversation_key,status,created_at,completed_at,
+                     location_request_id)
+                    VALUES (?,?,'LOCATION','SYSTEM',?,'COMPLETED',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),?)
+                    """, new String[]{"id"});
+            statement.setLong(1, request.userId());
+            statement.setLong(2, request.regionId());
+            statement.setString(3, request.requestId().toString());
+            statement.setString(4, request.requestId().toString());
+            return statement;
+        }, keys);
+        if (keys.getKey() == null) {
+            throw integrityError();
+        }
+        long sessionId = keys.getKey().longValue();
+        var recommendations = new RecommendationRepository(jdbc);
+        int rank = 0;
+        for (TrackResponse track : tracks) {
+            long musicId = recommendations.saveMusic(new TrackData(
+                    "ITUNES", track.trackId(), track.title(), track.artist(), track.artworkUrl(),
+                    track.previewUrl(), track.storeUrl(), null));
+            recommendations.saveItem(sessionId, musicId, ++rank);
         }
     }
 
