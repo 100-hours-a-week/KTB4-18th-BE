@@ -1301,3 +1301,97 @@ marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt
 최종 통합 시험의 DB pause는 격리 MySQL 컨테이너에만 적용하고 즉시 해제했다. 기존 개발 환경은 유지한다.
 컨테이너에서 복구 job을 실행할 때는 기존 Chat 이미지의 ENTRYPOINT를 java로 override하고 classpath를 `/app/app.jar`로 지정한다.
 실제 ECS job/라우팅/종료 시간 설정은 클라우드 팀과 적용·검증해야 한다.
+
+
+## 지역 음악 신청 데이터 기반 (공동 재생 2단계)
+
+이 단계는 신청 자격 판정의 데이터 기반만 제공한다. 대기열·재생·신청 공개 API 및 FE는 후속이다.
+각 브라우저의 공식 YouTube 플레이어를 사용할 예정이며 오디오 추출·재송출은 하지 않는다.
+
+### 추천의 지역·곡 출처
+
+- `POST /api/v1/recommendations`의 선택 필드 `location_resolution_token`으로 위치 문맥을 제출한다.
+  현재 로그인 계정·sid로 발급된 서명·만료 유효 토큰과 활성 SIGUNGU/SIDO·도트를 검증한다.
+  임의 `region_id`나 다른 sid의 토큰을 신뢰하지 않는다. 토큰 자체는 DB·AI 요청에 저장/전달하지 않는다.
+- 필드 생략/null은 기존 TEXT/VOICE·게스트·지역 미상 흐름을 유지한다. 토큰을 제출하면 검증 실패를
+  400으로 반환하며 지역을 조용히 생략하지 않는다. FE가 토큰을 보내는 변경은 이번 BE 작업 밖이다.
+- 위치 추천이 canonical `READY`로 발급될 때 같은 트랜잭션 안에서 `recommendation_sessions`에
+  `trigger_type=LOCATION`, `input_type=SYSTEM`, `status=COMPLETED`, 사용자·지역을 저장하고 곡을
+  `music`/`recommendation_items`에 연결한다. 원 요청은 `(user_id, location_request_id)`로 식별한다.
+- 팝업의 10분 TTL·표시 취소·tracks 정리는 완료 추천의 삭제가 아니다. 영속 추천 출처는 남는다.
+  EMPTY/FAILED/발급 전 CANCELLED·오래된 generation 결과는 완료 추천으로 만들지 않는다.
+  발급 영수증·READY·추천/곡 저장 중 어느 하나가 실패하면 같은 트랜잭션이 롤백된다.
+- 과거 region_id=NULL 추천은 위치를 역산하지 않는다. AI 내부 API 계약은 변경하지 않는다.
+
+### 신청 자격과 개인정보 경계
+
+`music.catalog.RequestableMusicRepository.findSources(userId, regionId, musicId)`는 후속 신청 API에서
+재사용할 내부 판정이다. 별도 신청 가능 목록 테이블·공개 조회 API를 만들지 않는다.
+
+- 요청 계정과 SIGUNGU/상위 SIDO가 유효해야 한다.
+- 출처는 같은 지역의 유효 음악 기록 또는 본인의 해당 지역 COMPLETED 추천이다.
+- 기록은 본인 기록 또는 지도 공개 범위가 PUBLIC인 다른 활성 계정의 기록만 인정한다.
+  비공개/설정 미존재 타인 기록·삭제 기록·탈퇴 계정의 기록은 제외하는 보수적 기준이다.
+  출시 전 이 공개 범위 기준을 기획과 재확인한다.
+- 출처가 겹쳐도 music_id 1개와 두 출처 플래그로 판정한다. 메모·추천 prompt·소유자 정보는 반환하지 않는다.
+- 검수된 VERIFIED 음원, 일치하는 영상 ID(대소문자 구분), KR 지원, 유효 검증 기간이 모두 필요하다.
+- 기존 검색/선택곡의 `is_queueable`도 이 음원 검증 조건을 사용한다. 이는 음원 사용 가능성이지
+  지역/현재 참여의 신청 권한이 아니다. 후속 API는 참여·출처를 신청 시 다시 검사해야 한다.
+
+### 공식 음원 검수·등록 도구
+
+초기 실제 곡 목록은 비어 있다. 사용자가 검수 목록 없음에 따라 등록 도구와 합성 테스트 데이터를
+구현하도록 선택했으므로 실제 곡·공식 채널을 임의 추정해 seed하지 않았다.
+
+1. 기존 music_id의 곡과 공식 아티스트/배급사/Topic 채널 영상을 사람이 대조한다.
+   곡/버전 일치와 공식 채널 근거를 `evidence`, 검수자 식별을 `reviewer`에 기록한다.
+   API의 채널 ID 일치·embeddable만으로 공식 음원임을 자동 인증하지 않는다.
+2. 다음 단일 항목 JSON을 작성한다. 예시는 실행용 실곡이 아닌 자리표시자다.
+
+```json
+{
+  "music_id": 123,
+  "video_id": "VIDEO_ID_11",
+  "channel_id": "UC_CHANNEL_ID_22_CHARS",
+  "channel_kind": "ARTIST",
+  "evidence": "공식 채널 근거와 해당 곡/버전 확인 기록",
+  "reviewer": "검수자 식별",
+  "valid_days": 7,
+  "expected_version": 0
+}
+```
+
+3. 셸/secret manager에서 `CATALOG_DATABASE_URL`(jdbc:mysql), `CATALOG_DATABASE_USER`,
+   `CATALOG_DATABASE_PASSWORD`, `YOUTUBE_DATA_API_KEY`, `CATALOG_CONFIRM=write-reviewed-source`를 제공한다.
+   Gradle이 `.env`를 자동 로드하지 않는다. 기존 앱 DB 환경변수를 자동 재사용하지 않는다.
+4. `./gradlew musicCatalog --args='verify /absolute/path/review.json'`을 명시적으로 실행한다.
+   Spring·HTTP 서버·Flyway는 기동하지 않는다. 외부 검증 완료 후에만 짧은 DB 트랜잭션을 연다.
+   HTTP timeout/크기 제한·redirect 금지, private/삭제/누락/비임베드/연령제한/KR제한/live 영상 거부,
+   영상 길이·예상 채널 일치를 확인한다. 실패 시 VERIFIED로 기록하지 않으며 API key·원문 오류를 출력하지 않는다.
+5. 최초 등록은 expected_version=0, 갱신은 현재 version을 사용한다. 버전 충돌은 실패하며 다시 검토한다.
+   단일 트랜잭션으로 `music_playback_sources` 검수 정보를 저장하고 `music.youtube_video_id`를 맞춘다.
+   검증 유효기간은 운영자가 1~30일로 명시한다. 만료 후 갱신 전에는 사용 불가다.
+6. 재생 실패/삭제 신고 등으로 중지할 때 `{"music_id":123,"expected_version":1}` 파일과
+   `./gradlew musicCatalog --args='disable /absolute/path/disable.json'`을 사용한다.
+   disable은 YouTube API key가 필요 없고 기존 source를 UNAVAILABLE로 변경한다. 재개는 재검수·verify를 거친다.
+
+명령은 성공 시 exit 0, 실패 시 비밀값을 제외한 일반 오류와 nonzero를 반환한다.
+네트워크 실패로 기존 검증이 연장되지는 않는다. 이미 등록된 검증은 명시 중지 또는 만료까지 남으므로
+재생 불가가 확인되면 disable을 별도로 실행한다. 임베드 메타데이터 통과는 개별 브라우저 재생 보장이 아니며
+광고·브라우저 자동재생·실제 지역 재생 오류는 후속 플레이어에서 처리한다.
+
+외부 근거: [YouTube videos.list](https://developers.google.com/youtube/v3/docs/videos/list),
+[영상 메타데이터](https://developers.google.com/youtube/data/reference/rest/v3/videos).
+
+### 배포·검증 경계
+
+- 새 `add_chat_music_catalog_foundation` Migration을 먼저 적용한 다음 새 Core를 배포한다.
+  신규 repository는 새 테이블을 조회하므로 DDL 선행이 필요하다. 구형 BE는 VERIFIED 의미를 알지 못하므로
+  음원 신청 기능 활성화 전 모든 소비자가 새 판정에 맞는지 확인한다.
+- 기존 schema·곡·추천은 보존하고 오래된 영상 ID를 일괄 VERIFIED 처리하지 않는다.
+  3단계의 queue/playback/명령/outbox DDL은 추가하지 않았다.
+  추천·기록 테이블의 인덱스 추가에 따른 운영 DDL 시간·잠금·여유 공간은 실제 데이터 규모에서 배포 전 확인한다.
+- rollback은 앱을 검증된 호환 버전으로 되돌리고 검수 테이블·출처를 보존한다. DDL 자동 역삭제는 하지 않는다.
+- `./gradlew test --tests '*MusicCatalogMySqlTest' --tests '*YouTubeVideoVerifierTest' --no-daemon`은
+  실제 Testcontainers MySQL(필수)과 로컬 HTTP 대역을 사용한다. 초기 실곡·실제 YouTube key·운영 DB·배포·
+  물리기기 재생 검증은 수행하지 않는다. 기존 추천·음악·위치 회귀 및 정적 검사·앱별 빌드도 함께 확인한다.
