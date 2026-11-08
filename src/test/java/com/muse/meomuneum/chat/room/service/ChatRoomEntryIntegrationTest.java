@@ -3,6 +3,7 @@ package com.muse.meomuneum.chat.room.service;
 import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -43,7 +44,8 @@ import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "chat.message-cleanup.enabled=false", "recommendation.ai.base-url=http://localhost:8000",
+        "chat.message-cleanup.enabled=false", "auth.cors.allowed-origins=http://localhost:5174",
+        "recommendation.ai.base-url=http://localhost:8000",
         "speech.transcription.ai.base-url=http://localhost:8000",
         "location.reverse-geocoding.base-url=http://localhost:8000"})
 @ActiveProfiles("test")
@@ -136,6 +138,18 @@ class ChatRoomEntryIntegrationTest {
             chatRoomRepository.findByRegion_Id(region.getId()).ifPresent(chatRoomRepository::delete);
             regionRepository.delete(region);
         }
+    }
+
+    @Test
+    void websocketHandshakeRejectsUnlistedOriginBeforeStompAuthentication() {
+        var failure = assertThrows(ExecutionException.class, () -> java.net.http.HttpClient.newHttpClient()
+                .newWebSocketBuilder().header("Origin", "http://untrusted.example.test")
+                .subprotocols("v12.stomp")
+                .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), new SocketProbe())
+                .get(5, TimeUnit.SECONDS));
+        assertTrue(failure.getCause() instanceof java.net.http.WebSocketHandshakeException);
+        var handshake = (java.net.http.WebSocketHandshakeException) failure.getCause();
+        assertEquals(403, handshake.getResponse().statusCode());
     }
 
     @Test
