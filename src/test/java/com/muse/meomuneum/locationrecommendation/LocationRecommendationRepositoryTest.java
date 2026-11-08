@@ -151,7 +151,7 @@ class LocationRecommendationRepositoryTest {
         assertThat(repository.tryStartAiAttempt(userId, dispatchedId, admission.scopeGeneration(),
                 admission.admittedCancelEpoch(), deadline())).isTrue();
         var empty = repository.complete(userId, dispatchedId, admission.scopeGeneration(),
-                admission.admittedCancelEpoch(), List.of(), deadline());
+                admission.admittedCancelEpoch(), List.of(), null, deadline());
         assertThat(empty.status()).isEqualTo("EMPTY");
 
         RegionResponse anotherRegion = otherRegion();
@@ -254,15 +254,22 @@ class LocationRecommendationRepositoryTest {
         var admission = repository.admit(userId, requestId, request(context.scopeGeneration(), context.cancelEpoch()),
                 region, true);
         assertThat(admission.invokeAi()).isTrue();
+        String message = "산책에 어울리는 곡이에요.";
         TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
         var ready = repository.complete(userId, admission.canonicalRequestId(), admission.scopeGeneration(),
-                admission.admittedCancelEpoch(), List.of(track), System.nanoTime() + Duration.ofSeconds(20).toNanos());
+                admission.admittedCancelEpoch(), List.of(track), message,
+                System.nanoTime() + Duration.ofSeconds(20).toNanos());
         assertThat(ready.status()).isEqualTo("READY");
+        assertThat(ready.recommendationMessage()).isEqualTo(message);
+        assertThat(repository.get(userId, requestId).recommendationMessage()).isEqualTo(message);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM location_recommendation_daily_issues "
                 + "WHERE user_id=? AND region_id=? AND issued_date=DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR)",
                 Integer.class, userId, region.regionId())).isEqualTo(1);
 
         repository.cancel(userId, UUID.randomUUID(), requestId, context.scopeGeneration(), 0);
+        assertThat(repository.get(userId, requestId).recommendationMessage()).isNull();
+        assertThat(jdbc.queryForObject("SELECT recommendation_message FROM location_recommendation_requests "
+                + "WHERE user_id=? AND request_id=?", String.class, userId, requestId.toString())).isNull();
         var updatedContext = repository.context(userId);
         var next = repository.admit(userId, UUID.randomUUID(), request(updatedContext.scopeGeneration(),
                 updatedContext.cancelEpoch()), region, true);
@@ -292,7 +299,7 @@ class LocationRecommendationRepositoryTest {
 
         TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
         var firstReady = repository.complete(userId, first.canonicalRequestId(), first.scopeGeneration(),
-                first.admittedCancelEpoch(), List.of(track), deadline());
+                first.admittedCancelEpoch(), List.of(track), null, deadline());
         assertThat(firstReady.status()).isEqualTo("READY");
         assertThat(repository.claim(userId, first.canonicalRequestId(), UUID.randomUUID(), first.scopeGeneration(),
                 first.admittedCancelEpoch()).displayAllowed()).isTrue();
@@ -322,7 +329,7 @@ class LocationRecommendationRepositoryTest {
                 first.admittedCancelEpoch(), deadline())).isTrue();
         TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
         repository.complete(userId, first.canonicalRequestId(), first.scopeGeneration(), first.admittedCancelEpoch(),
-                List.of(track), deadline());
+                List.of(track), null, deadline());
 
         var next = repository.admit(userId, UUID.randomUUID(),
                 request(context.scopeGeneration(), context.cancelEpoch()), region, true);
@@ -343,7 +350,7 @@ class LocationRecommendationRepositoryTest {
                 first.admittedCancelEpoch(), deadline())).isTrue();
         TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
         repository.complete(userId, first.canonicalRequestId(), first.scopeGeneration(), first.admittedCancelEpoch(),
-                List.of(track), deadline());
+                List.of(track), null, deadline());
 
         var next = repository.admit(userId, UUID.randomUUID(),
                 request(context.scopeGeneration(), context.cancelEpoch()), region, true);
@@ -360,9 +367,11 @@ class LocationRecommendationRepositoryTest {
         jdbc.update("UPDATE location_recommendation_requests SET scope_date=DATE_SUB("
                 + "DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), INTERVAL 1 DAY) "
                 + "WHERE user_id=? AND request_id=?", userId, requestId.toString());
+        String message = "산책에 어울리는 곡이에요.";
         TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
         var ready = repository.complete(userId, admission.canonicalRequestId(), admission.scopeGeneration(),
-                admission.admittedCancelEpoch(), List.of(track), System.nanoTime() + Duration.ofSeconds(20).toNanos());
+                admission.admittedCancelEpoch(), List.of(track), message,
+                System.nanoTime() + Duration.ofSeconds(20).toNanos());
 
         assertThat(ready.status()).isEqualTo("READY");
         var replay = repository.admit(userId, requestId, request(context.scopeGeneration(), context.cancelEpoch()),
@@ -370,12 +379,23 @@ class LocationRecommendationRepositoryTest {
         assertThat(replay.invokeAi()).isFalse();
         assertThat(replay.canonicalRequestId()).isEqualTo(requestId);
         assertThat(replay.response().status()).isEqualTo("READY");
+        assertThat(replay.response().recommendationMessage()).isEqualTo(message);
 
         var nextAccess = repository.admit(userId, UUID.randomUUID(),
                 request(context.scopeGeneration(), context.cancelEpoch()), region, true);
         assertThat(nextAccess.invokeAi()).isFalse();
         assertThat(nextAccess.response().status()).isEqualTo("SUPERSEDED");
         assertThat(nextAccess.response().reason()).isEqualTo("REGION_ISSUED_TODAY");
+
+        jdbc.update("UPDATE location_recommendation_requests SET expires_at=DATE_SUB(UTC_TIMESTAMP(6), "
+                + "INTERVAL 1 SECOND) WHERE user_id=? AND request_id=?", userId, requestId.toString());
+        var expired = repository.get(userId, requestId);
+        assertThat(expired.status()).isEqualTo("EXPIRED");
+        assertThat(expired.recommendationMessage()).isNull();
+
+        repository.cleanupExpired();
+        assertThat(jdbc.queryForObject("SELECT recommendation_message FROM location_recommendation_requests "
+                + "WHERE user_id=? AND request_id=?", String.class, userId, requestId.toString())).isNull();
     }
 
     @Test
@@ -395,10 +415,10 @@ class LocationRecommendationRepositoryTest {
         TrackResponse track = new TrackResponse("42", "Song", "Artist", null, null, null);
 
         var firstReady = repository.complete(userId, firstAdmission.canonicalRequestId(),
-                firstAdmission.scopeGeneration(), firstAdmission.admittedCancelEpoch(), List.of(track),
+                firstAdmission.scopeGeneration(), firstAdmission.admittedCancelEpoch(), List.of(track), null,
                 System.nanoTime() + Duration.ofSeconds(20).toNanos());
         var secondReady = repository.complete(otherUserId, secondAdmission.canonicalRequestId(),
-                secondAdmission.scopeGeneration(), secondAdmission.admittedCancelEpoch(), List.of(track),
+                secondAdmission.scopeGeneration(), secondAdmission.admittedCancelEpoch(), List.of(track), null,
                 System.nanoTime() + Duration.ofSeconds(20).toNanos());
 
         assertThat(firstReady.status()).isEqualTo("READY");
@@ -415,6 +435,7 @@ class LocationRecommendationRepositoryTest {
                 region, true);
         repository.complete(userId, admission.canonicalRequestId(), admission.scopeGeneration(),
                 admission.admittedCancelEpoch(), List.of(new TrackResponse("42", "Song", "Artist", null, null, null)),
+                null,
                 System.nanoTime() + Duration.ofSeconds(20).toNanos());
         UUID claimKey = UUID.randomUUID();
 
@@ -446,7 +467,7 @@ class LocationRecommendationRepositoryTest {
                 + "INTERVAL 1 SECOND) WHERE user_id=? AND lease_request_uuid=?", userId, requestId.toString());
 
         repository.complete(userId, requestId, admission.scopeGeneration(), admission.admittedCancelEpoch(),
-                List.of(new TrackResponse("42", "Song", "Artist", null, null, null)),
+                List.of(new TrackResponse("42", "Song", "Artist", null, null, null)), null,
                 System.nanoTime() + Duration.ofSeconds(20).toNanos());
 
         assertThat(repository.get(userId, requestId).status()).isEqualTo("EXPIRED");
@@ -476,7 +497,7 @@ class LocationRecommendationRepositoryTest {
         long expiredDeadline = System.nanoTime() - 1;
 
         assertThatThrownBy(() -> repository.complete(userId, requestId, generation, 0,
-                List.of(new TrackResponse("42", "Song", "Artist", null, null, null)), expiredDeadline))
+                List.of(new TrackResponse("42", "Song", "Artist", null, null, null)), null, expiredDeadline))
                 .isInstanceOf(LocationRecommendationException.class)
                 .satisfies(exception -> assertThat(((LocationRecommendationException) exception).reason())
                         .isEqualTo("TIMEOUT"));

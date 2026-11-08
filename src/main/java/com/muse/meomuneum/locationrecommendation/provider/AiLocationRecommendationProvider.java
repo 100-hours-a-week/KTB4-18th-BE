@@ -35,6 +35,7 @@ import tools.jackson.databind.ObjectMapper;
 public class AiLocationRecommendationProvider {
     private static final int MAX_BODY_BYTES = 262_144;
     private static final int MAX_TRACKS = 5;
+    private static final int MAX_MESSAGE_LENGTH = 80;
     private static final Set<String> TRACK_FIELDS = Set.of("track_id", "title", "artist", "preview_url",
             "artwork_url", "store_url");
     private static final Semaphore CONCURRENCY = new Semaphore(16);
@@ -69,12 +70,12 @@ public class AiLocationRecommendationProvider {
             if (!beforeSend.getAsBoolean()) {
                 CONCURRENCY.release();
                 released = true;
-                return new Call(CompletableFuture.completedFuture(List.of()), () -> {
+                return new Call(CompletableFuture.completedFuture(new Result(List.of(), null)), () -> {
                 }, false);
             }
             CompletableFuture<HttpResponse<byte[]>> exchange = client.sendAsync(request,
                     responseInfo -> new LimitedBodySubscriber(MAX_BODY_BYTES, responseInfo.statusCode()));
-            CompletableFuture<List<TrackResponse>> result = exchange.thenApply(this::parseResponse);
+            CompletableFuture<Result> result = exchange.thenApply(this::parseResponse);
             result.orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS);
             result.whenComplete((ignored, failure) -> {
                 CONCURRENCY.release();
@@ -98,7 +99,7 @@ public class AiLocationRecommendationProvider {
         return settings.aiTimeout();
     }
 
-    private List<TrackResponse> parseResponse(HttpResponse<byte[]> response) {
+    private Result parseResponse(HttpResponse<byte[]> response) {
         int status = response.statusCode();
         if (status == 422) {
             throw new AiProviderException(502, "INVALID_RESPONSE", "recommendation response was invalid");
@@ -134,7 +135,12 @@ public class AiLocationRecommendationProvider {
             for (JsonNode track : tracks) {
                 result.add(parseTrack(track));
             }
-            return List.copyOf(result);
+            String recommendationMessage = message == null ? "" : message.stringValue().strip();
+            if (recommendationMessage.isEmpty()
+                    || recommendationMessage.codePointCount(0, recommendationMessage.length()) > MAX_MESSAGE_LENGTH) {
+                recommendationMessage = null;
+            }
+            return new Result(List.copyOf(result), recommendationMessage);
         } catch (JacksonException exception) {
             throw invalidResponse();
         }
@@ -226,8 +232,11 @@ public class AiLocationRecommendationProvider {
         return new AiProviderException(502, "INVALID_RESPONSE", "recommendation response was invalid");
     }
 
-    public record Call(CompletableFuture<List<TrackResponse>> result, Runnable cancel, boolean dispatched) {
-        public Call(CompletableFuture<List<TrackResponse>> result, Runnable cancel) {
+    public record Result(List<TrackResponse> tracks, String message) {
+    }
+
+    public record Call(CompletableFuture<Result> result, Runnable cancel, boolean dispatched) {
+        public Call(CompletableFuture<Result> result, Runnable cancel) {
             this(result, cancel, true);
         }
     }

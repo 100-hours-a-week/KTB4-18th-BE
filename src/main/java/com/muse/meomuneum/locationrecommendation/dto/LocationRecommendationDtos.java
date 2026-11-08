@@ -34,7 +34,8 @@ public final class LocationRecommendationDtos {
     }
 
     public record RecommendationResponse(UUID requestId, String status, String reason, RegionResponse region,
-            List<TrackResponse> tracks, UUID scopeGeneration, long cancelEpoch, long remainingTtlMs) {
+            List<TrackResponse> tracks, String recommendationMessage, UUID scopeGeneration, long cancelEpoch,
+            long remainingTtlMs) {
         public RecommendationResponse {
             tracks = List.copyOf(tracks);
         }

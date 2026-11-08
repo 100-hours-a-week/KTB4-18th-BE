@@ -54,7 +54,7 @@ class AiLocationRecommendationProviderTest {
                     "store_url":"https://example.test/store"}]}
                     """);
         });
-        var tracks = provider().recommend(REQUEST_ID, 37.5744, 127.0395, Duration.ofSeconds(2), () -> true)
+        var result = provider().recommend(REQUEST_ID, 37.5744, 127.0395, Duration.ofSeconds(2), () -> true)
                 .result().get(2, TimeUnit.SECONDS);
 
         var request = new ObjectMapper().readTree(requestBody.get());
@@ -64,20 +64,34 @@ class AiLocationRecommendationProviderTest {
         assertThat(request.get("longitude").doubleValue()).isEqualTo(127.0395);
         assertThat(requestIdHeader.get()).isNull();
         assertThat(contentType.get()).isEqualTo("application/json");
-        assertThat(tracks).containsExactly(new TrackResponse("42", "Song", "Artist", null,
+        assertThat(result.message()).isNull();
+        assertThat(result.tracks()).containsExactly(new TrackResponse("42", "Song", "Artist", null,
                 "https://example.test/art.jpg", "https://example.test/store"));
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"", "Internal AI message"})
-    void discardsOptionalMessageAndReturnsOnlyTracks(String message) throws Exception {
+    @ValueSource(strings = {"", "   ", "  산책에 어울리는 곡이에요.  "})
+    void returnsNormalizedMessageWithTracks(String message) throws Exception {
         server = server(exchange -> respond(exchange, 200,
                 "{\"message\":\"" + message + "\",\"tracks\":[" + validTrack() + "]}"));
 
-        var tracks = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+        var result = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                 .result().get(2, TimeUnit.SECONDS);
 
-        assertThat(tracks).containsExactly(new TrackResponse("42", "Song", "Artist", null, null, null));
+        assertThat(result.tracks()).containsExactly(new TrackResponse("42", "Song", "Artist", null, null, null));
+        assertThat(result.message()).isEqualTo(message.isBlank() ? null : message.strip());
+    }
+
+    @Test
+    void preservesTracksWhenMessageExceedsTheAiLengthLimit() throws Exception {
+        server = server(exchange -> respond(exchange, 200,
+                "{\"message\":\"" + "🎵".repeat(81) + "\",\"tracks\":[" + validTrack() + "]}"));
+
+        var result = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+                .result().get(2, TimeUnit.SECONDS);
+
+        assertThat(result.message()).isNull();
+        assertThat(result.tracks()).hasSize(1);
     }
 
     @ParameterizedTest
@@ -113,7 +127,7 @@ class AiLocationRecommendationProviderTest {
         var call = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> false);
 
         assertThat(call.dispatched()).isFalse();
-        assertThat(call.result().get(1, TimeUnit.SECONDS)).isEmpty();
+        assertThat(call.result().get(1, TimeUnit.SECONDS).tracks()).isEmpty();
         assertThat(received.get()).isZero();
     }
 
@@ -121,7 +135,7 @@ class AiLocationRecommendationProviderTest {
     void emptyTracksAreValidAndMoreThanFiveTracksAreRejected() throws Exception {
         server = server(exchange -> respond(exchange, 200, "{\"tracks\":[]}"));
         assertThat(provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
-                .result().get(2, TimeUnit.SECONDS)).isEmpty();
+                .result().get(2, TimeUnit.SECONDS).tracks()).isEmpty();
         server.stop(0);
         server = server(exchange -> respond(exchange, 200,
                 "{\"tracks\":[" + validTrack() + "," + validTrack() + "," + validTrack() + "," + validTrack()
