@@ -10,6 +10,9 @@ auth:
     refresh-verified: ${AUTH_DIRECT_V2_REFRESH_VERIFIED:true}
     refresh-recovery-verified: ${AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED:false}
     rebootstrap-verified: ${AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED:false}
+    safety-mode: "${AUTH_DIRECT_V2_SAFETY_MODE:OFF}"
+    backend-instances: "${AUTH_DIRECT_V2_BACKEND_INSTANCES:}"
+    external-restore-epoch: "${AUTH_DIRECT_V2_EXTERNAL_RESTORE_EPOCH:}"
   mutation-gate-open: ${AUTH_MUTATION_GATE_OPEN:true}
   cors:
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
