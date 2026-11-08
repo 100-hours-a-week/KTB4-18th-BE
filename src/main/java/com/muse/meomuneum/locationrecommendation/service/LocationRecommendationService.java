@@ -104,8 +104,8 @@ public class LocationRecommendationService {
                 throw timeout();
             }
             Duration aiTimeout = Duration.ofNanos(aiNanos);
-            AiLocationRecommendationProvider.Call call = aiProvider.recommend(request.latitude(),
-                    request.longitude(), aiTimeout, () -> repository.tryStartAiAttempt(userId,
+            AiLocationRecommendationProvider.Call call = aiProvider.recommend(admission.canonicalRequestId(),
+                    request.latitude(), request.longitude(), aiTimeout, () -> repository.tryStartAiAttempt(userId,
                             admission.canonicalRequestId(), admission.scopeGeneration(),
                             admission.admittedCancelEpoch(), operationDeadline));
             operation.attach(call);

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,8 @@ import com.muse.meomuneum.locationrecommendation.provider.MockLocationRecommenda
 import tools.jackson.databind.ObjectMapper;
 
 class MockLocationRecommendationProviderTest {
+    private static final UUID REQUEST_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+
     @Test
     void returnsExactlyFiveTracksForAnApprovedLocalMockAttempt() throws Exception {
         var settings = new LocationRecommendationSettings(
@@ -24,7 +27,7 @@ class MockLocationRecommendationProviderTest {
             MockLocationRecommendationProvider provider = new MockLocationRecommendationProvider(new ObjectMapper(),
                     HttpClient.newBuilder().executor(executor).build(), settings);
 
-            var call = provider.recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true);
+            var call = provider.recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true);
 
             assertThat(call.dispatched()).isTrue();
             assertThat(call.result().get()).hasSize(5).allSatisfy(track -> {
@@ -45,7 +48,7 @@ class MockLocationRecommendationProviderTest {
             MockLocationRecommendationProvider provider = new MockLocationRecommendationProvider(new ObjectMapper(),
                     HttpClient.newBuilder().executor(executor).build(), settings);
 
-            var call = provider.recommend(37.5, 127.0, Duration.ofSeconds(2), () -> false);
+            var call = provider.recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> false);
 
             assertThat(call.dispatched()).isFalse();
             assertThat(call.result().get()).isEmpty();

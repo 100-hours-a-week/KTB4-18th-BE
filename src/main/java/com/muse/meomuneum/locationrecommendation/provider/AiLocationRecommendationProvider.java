@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
 import java.util.concurrent.Semaphore;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.muse.meomuneum.locationrecommendation.config.LocationRecommendationSettings;
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse;
 
@@ -51,13 +53,14 @@ public class AiLocationRecommendationProvider {
         this.settings = settings;
     }
 
-    public Call recommend(double latitude, double longitude, Duration timeout, BooleanSupplier beforeSend) {
+    public Call recommend(UUID requestId, double latitude, double longitude, Duration timeout,
+            BooleanSupplier beforeSend) {
         if (!CONCURRENCY.tryAcquire()) {
             throw new AiProviderException(503, "UPSTREAM_UNAVAILABLE", "recommendation service is busy");
         }
         boolean released = false;
         try {
-            byte[] body = mapper.writeValueAsBytes(new AiLocationRequest(latitude, longitude));
+            byte[] body = mapper.writeValueAsBytes(new AiLocationRequest(requestId, latitude, longitude));
             HttpRequest request = HttpRequest.newBuilder(settings.endpoint())
                     .timeout(timeout)
                     .header("Content-Type", "application/json")
@@ -118,8 +121,13 @@ public class AiLocationRecommendationProvider {
         try {
             JsonNode root = mapper.readTree(response.body());
             JsonNode tracks = root == null ? null : root.get("tracks");
-            if (root == null || !root.isObject() || root.size() != 1 || tracks == null || !tracks.isArray()
+            if (root == null || !root.isObject() || tracks == null || !tracks.isArray()
                     || tracks.size() > MAX_TRACKS) {
+                throw invalidResponse();
+            }
+            JsonNode message = root.get("message");
+            int expectedFieldCount = message == null ? 1 : 2;
+            if (root.size() != expectedFieldCount || (message != null && !message.isString())) {
                 throw invalidResponse();
             }
             List<TrackResponse> result = new ArrayList<>(tracks.size());
@@ -256,7 +264,7 @@ public class AiLocationRecommendationProvider {
         }
     }
 
-    private record AiLocationRequest(double latitude, double longitude) {
+    private record AiLocationRequest(@JsonProperty("request_id") UUID requestId, double latitude, double longitude) {
     }
 
     private static final class LimitedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {

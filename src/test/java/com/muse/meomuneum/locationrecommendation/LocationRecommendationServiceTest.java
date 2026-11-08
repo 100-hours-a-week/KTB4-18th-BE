@@ -87,18 +87,19 @@ class LocationRecommendationServiceTest {
     }
 
     @Test
-    void sendsTheRepresentativeCoordinatesAndPersistsOnlyValidatedTracks() throws Exception {
+    void sendsTheCanonicalRequestIdAndCoordinatesAndPersistsOnlyValidatedTracks() throws Exception {
+        UUID canonicalRequestId = UUID.fromString("33333333-3333-4333-8333-333333333333");
         TrackResponse track = new TrackResponse("1450779337", "Ohio", "HYUKOH", null, null, null);
         when(repository.admit(eq(7L), eq(REQUEST_ID), eq(request), eq(REGION), eq(true), anyLong()))
-                .thenReturn(new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null));
-        when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+                .thenReturn(new AdmissionOutcome(true, canonicalRequestId, 4, GENERATION, null));
+        when(repository.stillOwnsLease(7L, canonicalRequestId, GENERATION, 4)).thenReturn(true);
+        when(provider.recommend(eq(canonicalRequestId), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenReturn(new AiLocationRecommendationProvider.Call(CompletableFuture.completedFuture(List.of(track)),
                         () -> {
                         }));
-        RecommendationResponse ready = new RecommendationResponse(REQUEST_ID, "READY", null, REGION,
+        RecommendationResponse ready = new RecommendationResponse(canonicalRequestId, "READY", null, REGION,
                 List.of(track), GENERATION, 4, 600_000);
-        when(repository.complete(eq(7L), eq(REQUEST_ID), eq(GENERATION), eq(4L), eq(List.of(track)), anyLong()))
+        when(repository.complete(eq(7L), eq(canonicalRequestId), eq(GENERATION), eq(4L), eq(List.of(track)), anyLong()))
                 .thenReturn(ready);
 
         RecommendationResponse response = service.recommend(7L, REQUEST_ID, request);
@@ -106,8 +107,9 @@ class LocationRecommendationServiceTest {
         assertThat(response.status()).isEqualTo("READY");
         assertThat(response.tracks()).containsExactly(track);
         verify(resolver).resolve(37.5744, 127.0395);
-        verify(provider).recommend(eq(37.5744), eq(127.0395), any(Duration.class), any());
-        verify(repository).complete(eq(7L), eq(REQUEST_ID), eq(GENERATION), eq(4L), eq(List.of(track)), anyLong());
+        verify(provider).recommend(eq(canonicalRequestId), eq(37.5744), eq(127.0395), any(Duration.class), any());
+        verify(repository).complete(eq(7L), eq(canonicalRequestId), eq(GENERATION), eq(4L), eq(List.of(track)),
+                anyLong());
     }
 
     @Test
@@ -119,7 +121,8 @@ class LocationRecommendationServiceTest {
                 .satisfies(exception -> assertThat(((LocationRecommendationException) exception).reason())
                         .isEqualTo("LOCATION_CONTEXT_UNAVAILABLE"));
 
-        verify(provider, never()).recommend(any(Double.class), any(Double.class), any(Duration.class), any());
+        verify(provider, never()).recommend(any(UUID.class), any(Double.class), any(Double.class), any(Duration.class),
+                any());
         verify(repository, never()).admit(anyLong(), any(), any(), any(), eq(true), anyLong());
     }
 
@@ -131,7 +134,7 @@ class LocationRecommendationServiceTest {
         when(repository.admit(eq(7L), eq(REQUEST_ID), eq(request), eq(REGION), eq(true), anyLong()))
                 .thenReturn(new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null));
         when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenAnswer(invocation -> {
                     started.countDown();
                     return new AiLocationRecommendationProvider.Call(pending, () -> {
@@ -188,7 +191,8 @@ class LocationRecommendationServiceTest {
         RecommendationResponse response = service.recommend(7L, REQUEST_ID, request);
 
         assertThat(response).isEqualTo(terminal);
-        verify(provider, never()).recommend(any(Double.class), any(Double.class), any(Duration.class), any());
+        verify(provider, never()).recommend(any(UUID.class), any(Double.class), any(Double.class), any(Duration.class),
+                any());
     }
 
     @Test
@@ -196,7 +200,7 @@ class LocationRecommendationServiceTest {
         when(repository.admit(eq(7L), eq(REQUEST_ID), eq(request), eq(REGION), eq(true), anyLong()))
                 .thenReturn(new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null));
         when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenReturn(new AiLocationRecommendationProvider.Call(CompletableFuture.failedFuture(
                         new AiLocationRecommendationProvider.AiProviderException(503, "UPSTREAM_UNAVAILABLE",
                                 "recommendation service is unavailable")),
@@ -218,7 +222,7 @@ class LocationRecommendationServiceTest {
         when(repository.admit(eq(7L), eq(REQUEST_ID), eq(request), eq(REGION), eq(true), anyLong()))
                 .thenReturn(new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null));
         when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenReturn(new AiLocationRecommendationProvider.Call(CompletableFuture.failedFuture(
                         new AiLocationRecommendationProvider.ResponseBodyTooLargeException(200)),
                         () -> {
@@ -239,7 +243,7 @@ class LocationRecommendationServiceTest {
         when(repository.admit(eq(7L), eq(REQUEST_ID), eq(request), eq(REGION), eq(true), anyLong()))
                 .thenReturn(new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null));
         when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenReturn(new AiLocationRecommendationProvider.Call(CompletableFuture.completedFuture(List.of(track)),
                         () -> {
                         }));
@@ -287,7 +291,8 @@ class LocationRecommendationServiceTest {
                 });
         assertThat(resolverStarted.await(1, TimeUnit.SECONDS)).isTrue();
         verify(repository, never()).admit(anyLong(), any(), any(), any(), eq(true), anyLong());
-        verify(provider, never()).recommend(any(Double.class), any(Double.class), any(Duration.class), any());
+        verify(provider, never()).recommend(any(UUID.class), any(Double.class), any(Double.class), any(Duration.class),
+                any());
         releaseResolver.countDown();
     }
 
@@ -299,7 +304,7 @@ class LocationRecommendationServiceTest {
         when(repository.admit(eq(7L), eq(REQUEST_ID), eq(request), eq(REGION), eq(true), anyLong()))
                 .thenReturn(new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null));
         when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenAnswer(invocation -> {
                     requestThread.set(Thread.currentThread());
                     started.countDown();
@@ -343,7 +348,7 @@ class LocationRecommendationServiceTest {
         CompletableFuture<List<TrackResponse>> userEightPending = new CompletableFuture<>();
         AtomicBoolean userSevenCancelled = new AtomicBoolean();
         AtomicBoolean userEightCancelled = new AtomicBoolean();
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenAnswer(invocation -> {
                     bothStarted.countDown();
                     return new AiLocationRecommendationProvider.Call(userSevenPending, () -> {
@@ -351,7 +356,7 @@ class LocationRecommendationServiceTest {
                         userSevenPending.cancel(true);
                     });
                 });
-        when(provider.recommend(eq(37.6), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.6), eq(127.0395), any(Duration.class), any()))
                 .thenAnswer(invocation -> {
                     bothStarted.countDown();
                     return new AiLocationRecommendationProvider.Call(userEightPending, () -> {
@@ -410,7 +415,7 @@ class LocationRecommendationServiceTest {
                     return new AdmissionOutcome(true, REQUEST_ID, 4, GENERATION, null);
                 });
         when(repository.stillOwnsLease(7L, REQUEST_ID, GENERATION, 4)).thenReturn(true);
-        when(provider.recommend(eq(37.5744), eq(127.0395), any(Duration.class), any()))
+        when(provider.recommend(eq(REQUEST_ID), eq(37.5744), eq(127.0395), any(Duration.class), any()))
                 .thenReturn(new AiLocationRecommendationProvider.Call(CompletableFuture.failedFuture(
                         new AiLocationRecommendationProvider.AiProviderException(503, "UPSTREAM_UNAVAILABLE",
                                 "recommendation service is unavailable")),
