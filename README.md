@@ -1301,3 +1301,41 @@ marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt
 최종 통합 시험의 DB pause는 격리 MySQL 컨테이너에만 적용하고 즉시 해제했다. 기존 개발 환경은 유지한다.
 컨테이너에서 복구 job을 실행할 때는 기존 Chat 이미지의 ENTRYPOINT를 java로 override하고 classpath를 `/app/app.jar`로 지정한다.
 실제 ECS job/라우팅/종료 시간 설정은 클라우드 팀과 적용·검증해야 한다.
+
+
+## 통합 테스트 회귀 재현 환경 (2026-11-08)
+
+채팅·프로필·위치 추천의 기존 실패20건은 제품 코드 변경 전에도 재현됐다.
+이번 수정은 테스트 계약을 정렬하며 운영 CORS·인증·CSRF·추천 정책을 변경하지 않는다.
+
+- `ChatRoomEntryIntegrationTest`와 `UserProfilePatchIntegrationTest`는 브라우저 요청 Origin을
+  `http://localhost:5174`로 보내므로 테스트 클래스에 해당 허용 Origin을 명시한다.
+  공통 test 프로필의 기본5173을 무조건 넓히지 않는다. 비허용 Origin의 실제 WS handshake403과
+  프로필 PATCH403·DB값 보존을 별도 검증해 거부 정책을 유지한다.
+- 활성 제재 테스트는 앱의 Clock으로 이미 시작된 제재를 구성한다. DB `UTC_TIMESTAMP` 삽입 직후
+  앱 시각이 반드시 그 이후라고 가정하지 않는다. 입장·연결·구독에서 정확한 CHAT_BANNED를 검증한다.
+- 프로필 테스트의 인증 객체는 DB 프로필 변경 의미를 검증하기 위한 fixture다.
+  실제 Bearer·세션 폐기 검증은 기존 보안 테스트가 담당한다.
+- 위치 추천의 유효 READY 결과는 같은 계정·지역·scope에서 재사용한다. 이는 신규 일발급·AI호출이 아니다.
+  local-mock 반복 옵션이 꺼져 있거나 prod가 함께 활성화되면 재사용 후에도 일발급1회·쿨다운을 유지한다.
+  READY 만료 후에는 `SUPERSEDED / REGION_ISSUED_TODAY`로 추가 발급을 막는다.
+  기존 기대값2건은 재사용을 즉시 일발급 거절로 오인했으므로, 원요청·곡 일치와 만료 이후 제한·
+  마지막 AI시도 시각 불변을 함께 검사하도록 보완했다.
+
+검증에는 Docker와 격리된 MySQL9.7이 필요하다. 기존/운영 DB를 사용하지 않는다.
+`TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`를 테스트 전용 DB로 지정한다.
+직접 인증 MySQL 테스트는 별도로 `AUTH_TEST_MYSQL_ENDPOINT`, `AUTH_TEST_MYSQL_PASSWORD`를 요구하며,
+임시 schema를 만들고 정리할 수 있는 격리 DB의 root 계정을 사용한다. 실제 자격정보를 기록하지 않는다.
+
+```sh
+./gradlew test --tests '*ChatRoomEntryIntegrationTest' --tests '*UserProfilePatchIntegrationTest' --tests '*LocationRecommendationRepositoryTest' --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest test bootJar coreBootJar chatBootJar --continue --no-daemon
+```
+
+대상 테스트는 수정 후54건 중52통과·조건부2제외·실패0이었다. 조건부 FE 검증 제외를 실기기 성공으로
+표시하지 않는다. 전체 결과·재현 로그와 소스 fingerprint는 로컬
+`build/backend-integration-fix-verification/`에 보존하며, `build/`는 Git 미추적이므로 PR/CI 증빙은 별도 첨부한다.
+공동 재생 기능 브랜치의 병합·rebase, 운영 배포·DB 변경과 물리기기 검증은 이번 수정 범위 밖이다.
+
+최종 전체 검증은 892건 중 869통과·23조건부제외·실패0이며, 기존 실패20건이 모두 통과했다.
+Spotless·Checkstyle main/core/chat/test 및 기존/Core/Chat JAR 빌드도 통과했다.
