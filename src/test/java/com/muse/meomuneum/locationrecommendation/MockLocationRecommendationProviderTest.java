@@ -30,7 +30,7 @@ class MockLocationRecommendationProviderTest {
             var call = provider.recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true);
 
             assertThat(call.dispatched()).isTrue();
-            assertThat(call.result().get()).hasSize(5).allSatisfy(track -> {
+            assertThat(call.result().get().tracks()).hasSize(5).allSatisfy(track -> {
                 assertThat(track.trackId()).isNotBlank();
                 assertThat(track.previewUrl()).startsWith("https://audio-ssl.itunes.apple.com/");
                 assertThat(track.artworkUrl()).startsWith("https://");
@@ -51,7 +51,7 @@ class MockLocationRecommendationProviderTest {
             var call = provider.recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> false);
 
             assertThat(call.dispatched()).isFalse();
-            assertThat(call.result().get()).isEmpty();
+            assertThat(call.result().get().tracks()).isEmpty();
         }
     }
 }

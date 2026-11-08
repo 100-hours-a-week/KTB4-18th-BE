@@ -2,7 +2,6 @@ package com.muse.meomuneum.locationrecommendation.service;
 
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -112,7 +111,7 @@ public class LocationRecommendationService {
             if (!call.dispatched()) {
                 return repository.get(userId, admission.canonicalRequestId());
             }
-            List<com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse> tracks;
+            AiLocationRecommendationProvider.Result result;
             try {
                 long waitNanos = Math.min(aiNanos, remainingAiNanos(operationDeadline));
                 if (waitNanos <= 0) {
@@ -120,7 +119,7 @@ public class LocationRecommendationService {
                     bestEffortFail(userId, admission, "TIMEOUT", hardDeadline);
                     throw timeout();
                 }
-                tracks = call.result().get(waitNanos, TimeUnit.NANOSECONDS);
+                result = call.result().get(waitNanos, TimeUnit.NANOSECONDS);
             } catch (InterruptedException exception) {
                 operation.cancel();
                 Thread.currentThread().interrupt();
@@ -151,7 +150,7 @@ public class LocationRecommendationService {
                 throw timeout();
             }
             return repository.complete(userId, admission.canonicalRequestId(), admission.scopeGeneration(),
-                    admission.admittedCancelEpoch(), tracks, operationDeadline);
+                    admission.admittedCancelEpoch(), result.tracks(), result.message(), operationDeadline);
         } catch (AiLocationRecommendationProvider.AiProviderException exception) {
             bestEffortFail(userId, admission, exception.reason(), hardDeadline);
             throw new LocationRecommendationException(exception.status(), exception.reason(), publicMessage(exception));

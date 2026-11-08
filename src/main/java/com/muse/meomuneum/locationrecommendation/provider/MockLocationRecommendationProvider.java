@@ -29,7 +29,7 @@ public class MockLocationRecommendationProvider extends AiLocationRecommendation
     public Call recommend(UUID requestId, double latitude, double longitude, Duration timeout,
             BooleanSupplier beforeSend) {
         if (!beforeSend.getAsBoolean()) {
-            return new Call(CompletableFuture.completedFuture(List.of()), () -> {
+            return new Call(CompletableFuture.completedFuture(new Result(List.of(), null)), () -> {
             }, false);
         }
         List<TrackResponse> tracks = List.of(
@@ -53,7 +53,7 @@ public class MockLocationRecommendationProvider extends AiLocationRecommendation
                         "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/0d/dd/b9/0dddb93f-03de-b4a8-3b8e-3ac90e6d4387/mzaf_6348659234099955109.plus.aac.p.m4a",
                         "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/f2/a0/02/f2a00270-a846-b0aa-65b3-91bc94442e10/823375310600_Cover.jpg/100x100bb.jpg",
                         "https://music.apple.com/us/album/sun-kiss/6795782851?i=6795782855&uo=4"));
-        return new Call(CompletableFuture.completedFuture(tracks), () -> {
+        return new Call(CompletableFuture.completedFuture(new Result(tracks, null)), () -> {
         }, true);
     }
 }
