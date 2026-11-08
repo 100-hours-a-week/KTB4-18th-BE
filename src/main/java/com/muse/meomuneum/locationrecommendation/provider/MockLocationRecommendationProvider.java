@@ -3,6 +3,7 @@ package com.muse.meomuneum.locationrecommendation.provider;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 
@@ -25,7 +26,8 @@ public class MockLocationRecommendationProvider extends AiLocationRecommendation
     }
 
     @Override
-    public Call recommend(double latitude, double longitude, Duration timeout, BooleanSupplier beforeSend) {
+    public Call recommend(UUID requestId, double latitude, double longitude, Duration timeout,
+            BooleanSupplier beforeSend) {
         if (!beforeSend.getAsBoolean()) {
             return new Call(CompletableFuture.completedFuture(List.of()), () -> {
             }, false);
