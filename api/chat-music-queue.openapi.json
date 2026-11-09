@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Regional chat music queue API",
-    "version": "1.0.0",
-    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README."
+    "version": "1.1.0",
+    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards."
   },
   "paths": {
     "/api/v1/chat-rooms/{room_id}/requestable-music": {
@@ -529,6 +529,33 @@
               "server_time": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "current_queue_item_id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "nullable": true
+              },
+              "estimated_position_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "source_video_id": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 11
+              },
+              "duration_millis": {
+                "type": "integer",
+                "nullable": true,
+                "minimum": 1,
+                "maximum": 9999999999
+              },
+              "due_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
               }
             }
           }
@@ -575,7 +602,9 @@
               "status": {
                 "type": "string",
                 "enum": [
-                  "WAITING"
+                  "WAITING",
+                  "PLAYING",
+                  "CANCELED"
                 ]
               },
               "version": {
@@ -583,6 +612,10 @@
                 "format": "int64",
                 "minimum": 1,
                 "maximum": 9007199254740991
+              },
+              "playback": {
+                "$ref": "#/components/schemas/PlaybackSnapshot",
+                "description": "Present when playback feature enabled; initial request may start immediately."
               }
             }
           }
@@ -606,6 +639,85 @@
                 "type": "string"
               }
             }
+          }
+        }
+      },
+      "PlaybackSnapshot": {
+        "type": "object",
+        "required": [
+          "state",
+          "version",
+          "current_queue_item_id",
+          "position_seconds",
+          "estimated_position_seconds",
+          "state_changed_at",
+          "server_time",
+          "source_video_id",
+          "duration_millis",
+          "due_at",
+          "current"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "IDLE",
+              "PLAYING",
+              "PAUSED"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "current_queue_item_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "nullable": true
+          },
+          "position_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "estimated_position_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "state_changed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_video_id": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 11
+          },
+          "duration_millis": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 9999999999
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "current": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueueItem"
+              }
+            ]
           }
         }
       }

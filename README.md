@@ -1569,14 +1569,14 @@ Spotless·Checkstyle main/core/chat/test와 기존/Core/Chat JAR 모두 통과�
 | `DELETE /queue-items/{queue_item_id}` | `expected_version`, `Idempotency-Key` UUID | 204, 본문 없음 |
 
 - 네 API 모두 현재 JWT와 `membership_id`, `view_session_id`가 필요하다. 계정·sid·방·현재 CONNECTED view·epoch·소유 Task lease·정지/탈퇴·활성 지역/방을 확인한다. 다른 Task가 소유한 연결의 REST 요청도 기존 참여 원장 트랜잭션에서 처리한다. GRACE/예약/퇴장 상태는 조작·조회할 수 없으며 UUID 재시도도 권한을 다시 검사한다. 위치는 입장 시 검증된 지역 참여와 기존 지역 이탈 종료 정책을 사용하며 음악 API에서 GPS를 새로 요구하지 않는다.
-- 신청 가능 곡은 해당 지역의 공개 기록 또는 본인 기록(`RECORDED`), 본인이 완료한 해당 지역 추천(`RECOMMENDED`)의 합집합이다. 출처 두 개여도 `music_id` 하나를 반환한다. 다른 계정의 비공개 기록·추천, 삭제된 기록/계정, 미검수·만료·사용 불가/영상 ID 불일치는 제외한다. `sources`에는 허용된 출처명만 담으며 타인의 기록·추천 세션 ID는 반환하지 않는다. 실제 신청 시 같은 조건을 다시 조회하고, 검수 도구와 같은 music 행 잠금으로 소스 교체를 직렬화한다. 뒤늦은 출처 변경은 이미 신청된 곡을 취소하지 않으며 재생 직전 확인은 5단계에서 연결한다.
+- 신청 가능 곡은 해당 지역의 공개 기록 또는 본인 기록(`RECORDED`), 본인이 완료한 해당 지역 추천(`RECOMMENDED`)의 합집합이다. 출처 두 개여도 `music_id` 하나를 반환한다. 다른 계정의 비공개 기록·추천, 삭제된 기록/계정, 미검수·만료·사용 불가/영상 ID 불일치는 제외한다. `sources`에는 허용된 출처명만 담으며 타인의 기록·추천 세션 ID는 반환하지 않는다. 실제 신청 시 같은 조건을 다시 조회하고, 검수 도구와 같은 music 행 잠금으로 소스 교체를 직렬화한다. 뒤늦은 출처 변경은 이미 신청된 곡을 취소하지 않으며 재생 직전 소스 확인은 아래5단계에서 연결한다.
 - 후보는 music_id 오름차순 keyset으로 페이지를 넘기고 각 페이지에서 자격을 다시 평가한다(검색 결과 전체 고정 snapshot은 아님). 대기열은 sequence_no 오름차순이며 현재 곡은 별도로 반환한다. 커서는 계정·sid·방·membership·view·검색어·페이지 크기에 묶인 HMAC 서명과 5분 기한을 가진다. 큐 버전이 바뀌면 다음 페이지는 409 `QUEUE_CHANGED`로 처음부터 재조회한다. 커서 변조/다른 문맥은400, 만료는410이다.
 - 모든 활성 참여자는 다른 사람이 신청한 WAITING 곡도 취소할 수 있다. PLAYING/종료/다른 방 항목은409 `QUEUE_ITEM_NOT_WAITING`, 오래된 취소 버전은409 `VERSION_CONFLICT`다. 동일 곡의 별도 신청은 허용한다. 취소한 순번은 재사용하지 않는다.
 - 기본 WAITING 상한은 방당100곡, 신규 성공 명령 간격은 계정 전체1초다. 상한409 `QUEUE_FULL`, 속도429 `COMMAND_RATE_LIMITED`와 `Retry-After`를 반환한다. 제한은 DB 계정·방 잠금과 영수증으로 Task·탭을 넘어 적용한다. 페이지당20곡·검색어100자 및 기존2초 참여 트랜잭션 예산으로 조회를 제한한다. 별도 전체 검색 RPS 제한이나 검색 전문 인덱스는 추가하지 않았다.
 - 같은 `(environment,user_id,room_id,UUID)`와 원래 sid/member/view/명령/대상/expected_version이면 원래 HTTP 결과를 반환하고 큐·순번·버전·Outbox를 늘리지 않는다. 다른 원 요청이면409 `COMMAND_ID_CONFLICT`다. 새 성공 변경에만 aggregate version·room_seq를 각각 한 번 증가시키고 큐·상태·24시간 완료 영수증·24시간 PENDING `QUEUE_UPDATED` Outbox를 같은 트랜잭션에 기록한다. 저장/commit 인증 실패는 전부 롤백한다. 실패한 명령의 영수증은 저장하지 않는다.
 - 24시간이 지난 성공 UUID는410 `COMMAND_EXPIRED`이며 같은 UUID로 다시 신청하지 않는다. **만료 영수증도 삭제하지 않는 tombstone**이다. 늦은 UUID 재등장 방지 계약이 마련되기 전에는 purge하지 않는다. `CHAT_MUSIC_KEYS`는 메시지 키와 분리한 `id:base64` 1~8개(각32바이트 이상)이고 첫 키가 신규 서명을 한다. 모든 Task에 신/구 키를 먼저 배포하고 새 키를 첫째로 승격한다. tombstone을 포함해 남아 있는 모든 영수증 키를 보존해야 하며 빠진 키는 기동을 차단한다. 키 유실/삭제 후 임의 재신청으로 우회하지 않는다.
 - 기동 기본값 `CHAT_MUSIC_QUEUE_ENABLED=false`. 활성화에는 기존 distributed participation/Core 인증과 `CHAT_MUSIC_KEYS`가 필요하다. `CHAT_MUSIC_QUEUE_CAPACITY` 기본100(1~1000), `CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS` 기본1000(0~60000, 0은 제한 해제·격리 테스트용)이다. 운영 환경 값·비밀·DB 권한은 이번 작업에서 변경하지 않았다. 3단계 DDL 선행 적용과 Chat의 기존 행 잠금/CRUD 권한이 필요하며 새 migration은 없다.
-- 최초 신청도 이번에는 WAITING/IDLE을 유지한다. 첫 곡 자동 재생·재생/일시정지/건너뛰기·전원 퇴장 정리는5/9단계, 실제 Outbox 발행·여러 Task로 상태 전파는6단계, YouTube UI·브라우저 자동재생은8단계다. 청취 opt-in이나 방 전체 음량 설정 API는 추가하지 않는다.
+- 4단계 단독 활성화는 최초 신청을 WAITING/IDLE로 유지하며 아래5단계 활성화 시 자동 재생한다. 재생 제어·정상 전원 퇴장 정리는 아래5단계, 장애·재연결 복구는9단계이며, 실제 Outbox 발행·여러 Task로 상태 전파는6단계, YouTube UI·브라우저 자동재생은8단계다. 청취 opt-in이나 방 전체 음량 설정 API는 추가하지 않는다.
 
 계약은 `api/chat-music-queue.openapi.json`, 격리 검증은 `python3 scripts/verify-backend.py`를 사용한다.
 MySQL 테스트는 합성 곡/검수·현재 CONNECTED 원장을 사용하며 외부 YouTube/실제 로그인 브라우저·1000연결 부하·운영 배포 완료를 뜻하지 않는다.
@@ -1586,3 +1586,78 @@ MySQL 테스트는 합성 곡/검수·현재 CONNECTED 원장을 사용하며 �
 Spotless·Checkstyle main/core/chat/test 및 최종 일반/Core/Chat 세 JAR 빌드 통과, 세 manifest의 소스 SHA256 일치 확인.
 `build/chat-music-queue-verification/summary.json`·`full-test`·`startup-check`에 증빙을 보존한다.
 OpenAPI JSON 파싱·로컬 참조67개를 확인했으며 전체 OpenAPI 메타스키마 검증으로 표시하지 않는다.
+
+### 지역 채팅 공통 재생 제어·자동 다음 곡 (공동 재생 5단계)
+
+`feature/chat-music-playback`은 4단계 API에 최초 신청 자동 재생과 서버 기준 재생 상태 전이를 연결한다.
+브라우저 플레이어와 실제 이벤트 발행은 각각8·6단계다. PLAY는 방 전체의 재생 명령이며 개인의 함께 듣기 opt-in이 아니다.
+
+`POST /api/v1/chat-rooms/{room_id}/playback/commands`는 기존 JWT와 `membership_id`, `view_session_id`,
+`Idempotency-Key`를 사용한다. JSON은 아래 세 필드만 허용하며 중복 필드·추가 필드·소수 ID·이어 붙인 JSON은400이다.
+
+```json
+{"action":"PAUSE","queue_item_id":123,"expected_version":4}
+```
+
+| action | 적용 조건·결과 |
+| --- | --- |
+| PLAY | IDLE에서 `queue_item_id:null`과 현재 버전으로 FIFO 첫 곡 시작. 빈 큐409 `QUEUE_EMPTY`. 이미 PLAYING인 같은 현재 곡은 no-op. PAUSED에는 RESUME 사용 |
+| PAUSE | 현재 PLAYING 곡의 서버 위치를 저장하고 PAUSED로 전환. 이미 PAUSED면 no-op. 서버 종료 시각이 지난 곡은409 `TRACK_FINISHED` |
+| RESUME | PAUSED의 저장 위치에서 PLAYING으로 재개하고 남은 길이로 종료 시각 계산. 이미 PLAYING이면 no-op. 재개 전 고정 영상의 검수 유효성 재확인, 불가하면409 `MUSIC_UNAVAILABLE` |
+| SKIP | 현재 곡을 SKIPPED로 종료하고 다음 곡을 위치0/PLAYING으로 시작. PAUSED에서의 건너뛰기도 다음 곡을 재생한다. 이미 서버 종료 시각을 넘었으면 현재 곡은 PLAYED로 기록 |
+
+- 200 응답은 `{message,data}`이며 data는 `state`, `version`, `current_queue_item_id`, `current`,
+  `position_seconds`, `estimated_position_seconds`, `state_changed_at`, `server_time`, `source_video_id`,
+  `duration_millis`, `due_at`를 포함한다. UTC ISO8601 시각을 사용한다. `position_seconds`는 기준 시각의 저장 위치이고
+  PLAYING의 예상 현재 위치는 `min(길이, 저장 위치 + server_time - state_changed_at)`이다. PAUSED에서는 동결한다.
+  `estimated_position_seconds`에 경과 시간을 다시 더하지 않는다. IDLE은 current/영상/길이/종료 시각이 null, 위치0이다.
+- 모든 활성 참여자가 신청자와 무관하게 제어한다. 현재 sid/member/view/CONNECTED/epoch/Task lease·Core 권한을
+  4단계와 같은 참여 트랜잭션으로 검사한다. `expected_version`과 현재 곡 ID가 하나라도 달라지면409 `VERSION_CONFLICT`다.
+  늦은 SKIP/종료 처리가 이미 시작된 다음 곡까지 넘기지 않는다. 상태에 맞지 않는 명령은409 `INVALID_PLAYBACK_STATE`다.
+- 대기열과 재생 명령은 UUID/HMAC·만료 tombstone·계정 속도 제한을 공유한다. ADD에 사용한 UUID를 PAUSE 등에 재사용하면409다.
+  현재 권한 검사 후 원래 성공 응답을 재현하며 이전 응답 snapshot이 최신 상태라는 뜻은 아니다. no-op도200 완료 영수증을
+  저장하고 속도 제한에 포함하지만 버전·이벤트는 늘리지 않는다. 볼륨·개인 음소거·seek·브라우저 ENDED API는 없다.
+- PLAYING 중 ADD는 현재 기준 시각을 바꾸지 않고, PAUSED 중 ADD는 일시정지를 유지한다. IDLE에서 첫 신청은 같은 ADD
+  트랜잭션 안에서 시작한다. 따라서201의 `status`는 WAITING 외에 PLAYING 또는 시작 직전 사용 불가가 된 CANCELED일 수 있고,
+  `data.playback`에 결과 snapshot을 추가한다. `GET /queue-items`도 고정된 현재 영상과 공통 재생 필드를 반환한다.
+  4단계 API의 경로·필수 입력과 기존 영수증 결과는 유지한다. 실제 UI는 이 status 확장과 추가 필드를 반영해8단계에서 연동한다.
+- 재생 직전 공식 검수 영상·KR·유효 기한·ID 일치·길이를 DB에서 다시 확인한다. 이미 승인된 신청의 기록 공개 범위나
+  신청자의 현재 참여 여부는 다시 요구하지 않는다. 해당 소스를 사용할 수 없는 WAITING 곡은 CANCELED로 정리하고 다음 곡을
+  찾는다. 한 트랜잭션에서 최대20곡만 검사하며, 전부 불가하면 IDLE로 남은 큐를 다음 worker 순회에서 이어 처리한다.
+- 시작 시 영상 ID·길이·종료 시각을 playback_states에 고정한다. 카탈로그 수정으로 재생 중인 곡의 영상/길이가 바뀌지 않는다.
+  RESUME은 같은 고정 영상이 여전히 유효한지 확인하며 길이는 원래 값으로 유지한다. 서버 위치 저장 범위를 넘는 길이는
+  시작하지 않는다(최대9,999,999,999ms). 클라이언트 종료 통보로 공통 곡을 끝내거나 시각/위치를 덮어쓸 수 없다.
+- 전용 단일 scheduler가250ms 간격으로 만료/IDLE 대기 방을 최대20개씩 keyset 순회한다. 일반 Spring scheduler의
+  heartbeat를 막지 않는다. 모든 Task가 순회해도 control→Task→room runtime→playback→queue/music 순서의 DB 잠금과
+  현재 종료 시각 재확인으로 같은 곡을 한 번만 종료한다. 원래 현재 곡은 PLAYED, 다음 곡은 처리 시점부터 새 PLAYING이다.
+  지연 동안 대기곡을 여러 개 소급 종료하지 않는다. 방 잠금·DB 장애 시 다음 순회에서 다시 시도하고 메모리 타이머를 신뢰하지 않는다.
+- 정상 마지막 탭 퇴장/참여 종료와 만료 정리에는 같은 참여 TX의 hook이 현재 곡과 WAITING 전체를 CANCELED로 만들고
+  IDLE로 전환한다. 다른 탭/참여자가 남아 있으면 유지한다. 유효한30초 RESERVED/GRACE는 기존 참여 정책대로 보존하며,
+  유예가 끝난 뒤 기존 sweep이 참여를 종료하면 큐도 정리한다. 잠깐의 lease 상실만으로 새 유예를 만들거나 다음 곡을 시작하지 않는다.
+  Core의 세션 폐기 판정·기존 참여 종료 경로를 재사용하며 매250ms마다 모든 계정에 새 Core RPC를 보내지 않는다.
+  전역 장애·epoch 복구·입장/재연결 클라이언트 처리는9단계에서 추가 검증한다.
+- 한 실제 변경에서 aggregate version은 한 번만 증가한다. 큐가 바뀌면 QUEUE_UPDATED, 재생이 바뀌면 PLAYBACK_UPDATED를
+  같은 버전·room_seq로 저장한다. 마지막 퇴장의 presence 변경과도 room_seq를 중복 증가시키지 않는다. Outbox에는 변경 이유와
+  공통 재생 snapshot을 저장하며 큐 전체를 싣지 않는다. 큐 변경은 최신 목록 조회의 힌트다. 전파·claim·발행은6단계다.
+
+설정·DDL·전환:
+
+- `CHAT_MUSIC_PLAYBACK_ENABLED=false`가 기본값이다. 활성화에는 `CHAT_MUSIC_QUEUE_ENABLED=true`와 기존 참여/Core 인증,
+  별도 HMAC 키가 필요하다. 큐 서비스 없이 재생만 켜면 기동을 차단한다. 실제 운영 값은 변경하지 않았다.
+- 새 `V20261109132852__add_chat_music_playback_timing.sql`을 기존 단일 migrator가 먼저 적용한다. 고정 영상·길이·due_at과
+  종료 조회 인덱스만 추가하며 기존 IDLE/버전/순번/시각을 보존한다. 두 로컬 선택 migration 목록에도 포함했다.
+  MySQL DDL의 metadata lock·인덱스 공간·시간과 기존 ACTIVE에 고정 소스 누락이 없는지 확인해야 한다. 누락된 ACTIVE는
+  기동 검사가 차단하며 임의 재생 시각/영상으로 복원하지 않는다. 운영 DB 적용을 수행한 것은 아니다.
+- 모든 Task에 동일 코드/키/플래그를 맞춘 뒤 제어된 활성화로 전환한다. 재생 켠 Task와 구형 카탈로그 조회 Task를 섞어 운영하지 않는다.
+  롤백은 음악 진입·worker를 중단하고 공통 상태를 점검한 뒤 기능 플래그/앱을 되돌린다. 추가 컬럼을 즉시 DROP하거나 큐·영수증을
+  삭제하지 않는다. PAUSED는 입장/worker 재시작만으로 PLAYING으로 바꾸지 않는다.
+- 계약: `api/chat-music-playback.openapi.json` 및4단계 OpenAPI1.1.0. 브라우저의 자동재생 허용, 오디오 도달 지연,
+  실제 다중 Chat 프로세스/1000연결 부하·SLO·운영 배포는 이번 서버 상태 전이 검증과 구분한다.
+
+5단계 검증 결과(2026-11-09): 전체956개 중933통과·23조건부제외·실패0.
+그 뒤 비활성 hook의 조회 생략 분기를 보완해 최종 음악44개·기존 참여 전용49개(MySQL·Redis)를 재실행했고 전부 통과했다.
+신규18개는 MySQL 재생14·HTTP3·기동설정1이며 migration upgrade·기존 IDLE 데이터 보존·validate·재실행도 확인했다.
+Spotless·Checkstyle main/core/chat/test 및 일반/Core/Chat 세 JAR 통과, 최종 세 manifest의 소스 SHA256 일치 확인.
+증빙 `build/chat-music-playback-verification/summary.json`, `full-test`, `final-music`, `final-participation`, 실행 로그.
+두 OpenAPI 파일의 JSON 파싱과 내부/파일 간 참조82개를 확인했으며 전체 메타스키마 검증으로 표시하지 않는다.
+두 참여 서비스의 동시성 테스트는 한 JVM에서 수행했고 실제 두 Chat 프로세스·YouTube/브라우저·운영 배포 검증은 아니다.
