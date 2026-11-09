@@ -1555,3 +1555,34 @@ Outbox worker·Redis 전파·FE·자동 종료 타이머를 활성화하지 않�
 3단계 최종 검증은 신규 저장 구조7건을 포함한 전체919건 중896통과·23조건부제외·실패0이었다.
 Spotless·Checkstyle main/core/chat/test와 기존/Core/Chat JAR 모두 통과했다. 증빙은 로컬
 `build/chat-music-state-verification/summary.json`·`final-full/`에 보존한다. 운영 DB 적용·배포 검증 결과는 아니다.
+
+### 지역 채팅 음악 신청·대기열 API (공동 재생 4단계)
+
+`feature/chat-music-queue`는 2단계 검수 카탈로그와 3단계 저장 구조 위에 다음 API를 추가한다.
+공개 경로는 기존 Chat 라우팅 안에 있으며 응답은 `{message,data}`이다.
+
+| 메서드·경로 (`/api/v1/chat-rooms/{room_id}` 기준) | 입력 | 결과 |
+| --- | --- | --- |
+| `GET /requestable-music` | `query`(제목·가수 부분 검색, 최대100자), `size`(1~20, 기본20), `cursor` | `data.items`, `next_cursor`. 항목은 `music_id`, `title`, `artist_name`, `album_cover_url`, `youtube_video_id`, `duration_millis`, `sources` |
+| `POST /queue-items` | JSON `{"music_id":123}`, `Idempotency-Key` UUID | 201, `data.queue_item_id`, `music_id`, `sequence_no`, `status=WAITING`, `version` |
+| `GET /queue-items` | `size`, `cursor` | 현재 항목 `current`(없으면 null), WAITING `items`, `next_cursor`, `version`, `state`, `position_seconds`, `state_changed_at`, `server_time` |
+| `DELETE /queue-items/{queue_item_id}` | `expected_version`, `Idempotency-Key` UUID | 204, 본문 없음 |
+
+- 네 API 모두 현재 JWT와 `membership_id`, `view_session_id`가 필요하다. 계정·sid·방·현재 CONNECTED view·epoch·소유 Task lease·정지/탈퇴·활성 지역/방을 확인한다. 다른 Task가 소유한 연결의 REST 요청도 기존 참여 원장 트랜잭션에서 처리한다. GRACE/예약/퇴장 상태는 조작·조회할 수 없으며 UUID 재시도도 권한을 다시 검사한다. 위치는 입장 시 검증된 지역 참여와 기존 지역 이탈 종료 정책을 사용하며 음악 API에서 GPS를 새로 요구하지 않는다.
+- 신청 가능 곡은 해당 지역의 공개 기록 또는 본인 기록(`RECORDED`), 본인이 완료한 해당 지역 추천(`RECOMMENDED`)의 합집합이다. 출처 두 개여도 `music_id` 하나를 반환한다. 다른 계정의 비공개 기록·추천, 삭제된 기록/계정, 미검수·만료·사용 불가/영상 ID 불일치는 제외한다. `sources`에는 허용된 출처명만 담으며 타인의 기록·추천 세션 ID는 반환하지 않는다. 실제 신청 시 같은 조건을 다시 조회하고, 검수 도구와 같은 music 행 잠금으로 소스 교체를 직렬화한다. 뒤늦은 출처 변경은 이미 신청된 곡을 취소하지 않으며 재생 직전 확인은 5단계에서 연결한다.
+- 후보는 music_id 오름차순 keyset으로 페이지를 넘기고 각 페이지에서 자격을 다시 평가한다(검색 결과 전체 고정 snapshot은 아님). 대기열은 sequence_no 오름차순이며 현재 곡은 별도로 반환한다. 커서는 계정·sid·방·membership·view·검색어·페이지 크기에 묶인 HMAC 서명과 5분 기한을 가진다. 큐 버전이 바뀌면 다음 페이지는 409 `QUEUE_CHANGED`로 처음부터 재조회한다. 커서 변조/다른 문맥은400, 만료는410이다.
+- 모든 활성 참여자는 다른 사람이 신청한 WAITING 곡도 취소할 수 있다. PLAYING/종료/다른 방 항목은409 `QUEUE_ITEM_NOT_WAITING`, 오래된 취소 버전은409 `VERSION_CONFLICT`다. 동일 곡의 별도 신청은 허용한다. 취소한 순번은 재사용하지 않는다.
+- 기본 WAITING 상한은 방당100곡, 신규 성공 명령 간격은 계정 전체1초다. 상한409 `QUEUE_FULL`, 속도429 `COMMAND_RATE_LIMITED`와 `Retry-After`를 반환한다. 제한은 DB 계정·방 잠금과 영수증으로 Task·탭을 넘어 적용한다. 페이지당20곡·검색어100자 및 기존2초 참여 트랜잭션 예산으로 조회를 제한한다. 별도 전체 검색 RPS 제한이나 검색 전문 인덱스는 추가하지 않았다.
+- 같은 `(environment,user_id,room_id,UUID)`와 원래 sid/member/view/명령/대상/expected_version이면 원래 HTTP 결과를 반환하고 큐·순번·버전·Outbox를 늘리지 않는다. 다른 원 요청이면409 `COMMAND_ID_CONFLICT`다. 새 성공 변경에만 aggregate version·room_seq를 각각 한 번 증가시키고 큐·상태·24시간 완료 영수증·24시간 PENDING `QUEUE_UPDATED` Outbox를 같은 트랜잭션에 기록한다. 저장/commit 인증 실패는 전부 롤백한다. 실패한 명령의 영수증은 저장하지 않는다.
+- 24시간이 지난 성공 UUID는410 `COMMAND_EXPIRED`이며 같은 UUID로 다시 신청하지 않는다. **만료 영수증도 삭제하지 않는 tombstone**이다. 늦은 UUID 재등장 방지 계약이 마련되기 전에는 purge하지 않는다. `CHAT_MUSIC_KEYS`는 메시지 키와 분리한 `id:base64` 1~8개(각32바이트 이상)이고 첫 키가 신규 서명을 한다. 모든 Task에 신/구 키를 먼저 배포하고 새 키를 첫째로 승격한다. tombstone을 포함해 남아 있는 모든 영수증 키를 보존해야 하며 빠진 키는 기동을 차단한다. 키 유실/삭제 후 임의 재신청으로 우회하지 않는다.
+- 기동 기본값 `CHAT_MUSIC_QUEUE_ENABLED=false`. 활성화에는 기존 distributed participation/Core 인증과 `CHAT_MUSIC_KEYS`가 필요하다. `CHAT_MUSIC_QUEUE_CAPACITY` 기본100(1~1000), `CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS` 기본1000(0~60000, 0은 제한 해제·격리 테스트용)이다. 운영 환경 값·비밀·DB 권한은 이번 작업에서 변경하지 않았다. 3단계 DDL 선행 적용과 Chat의 기존 행 잠금/CRUD 권한이 필요하며 새 migration은 없다.
+- 최초 신청도 이번에는 WAITING/IDLE을 유지한다. 첫 곡 자동 재생·재생/일시정지/건너뛰기·전원 퇴장 정리는5/9단계, 실제 Outbox 발행·여러 Task로 상태 전파는6단계, YouTube UI·브라우저 자동재생은8단계다. 청취 opt-in이나 방 전체 음량 설정 API는 추가하지 않는다.
+
+계약은 `api/chat-music-queue.openapi.json`, 격리 검증은 `python3 scripts/verify-backend.py`를 사용한다.
+MySQL 테스트는 합성 곡/검수·현재 CONNECTED 원장을 사용하며 외부 YouTube/실제 로그인 브라우저·1000연결 부하·운영 배포 완료를 뜻하지 않는다.
+
+4단계 검증 결과(2026-11-09): 전체938개 중915통과·23조건부제외·실패0, 신규19개(실제 MySQL12·HTTP4·커서2·기동설정1) 통과.
+전체 실행 후 기동설정 테스트에 정상 활성화 검사를 보강해 해당1개와 Spotless·Checkstyle test를 재실행했다.
+Spotless·Checkstyle main/core/chat/test 및 최종 일반/Core/Chat 세 JAR 빌드 통과, 세 manifest의 소스 SHA256 일치 확인.
+`build/chat-music-queue-verification/summary.json`·`full-test`·`startup-check`에 증빙을 보존한다.
+OpenAPI JSON 파싱·로컬 참조67개를 확인했으며 전체 OpenAPI 메타스키마 검증으로 표시하지 않는다.

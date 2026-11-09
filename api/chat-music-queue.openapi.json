@@ -1,0 +1,874 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Regional chat music queue API",
+    "version": "1.0.0",
+    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README."
+  },
+  "paths": {
+    "/api/v1/chat-rooms/{room_id}/requestable-music": {
+      "get": {
+        "operationId": "findRequestableChatMusic",
+        "summary": "Query eligible verified regional music",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Roomid"
+          },
+          {
+            "$ref": "#/components/parameters/Membershipid"
+          },
+          {
+            "$ref": "#/components/parameters/Viewsessionid"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see README for fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidatePage"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/api/v1/chat-rooms/{room_id}/queue-items": {
+      "get": {
+        "operationId": "getChatMusicQueue",
+        "summary": "Current playback and ordered WAITING page",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Roomid"
+          },
+          {
+            "$ref": "#/components/parameters/Membershipid"
+          },
+          {
+            "$ref": "#/components/parameters/Viewsessionid"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see README for fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueSnapshot"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addChatMusicQueueItem",
+        "summary": "Append WAITING song; recheck eligibility",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Roomid"
+          },
+          {
+            "$ref": "#/components/parameters/Membershipid"
+          },
+          {
+            "$ref": "#/components/parameters/Viewsessionid"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotencykey"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success; see README for fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Added"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "music_id"
+                ],
+                "properties": {
+                  "music_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "example": {
+                "music_id": 123
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat-rooms/{room_id}/queue-items/{queue_item_id}": {
+      "delete": {
+        "operationId": "cancelChatMusicQueueItem",
+        "summary": "Any active participant may cancel a WAITING item",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Roomid"
+          },
+          {
+            "$ref": "#/components/parameters/Membershipid"
+          },
+          {
+            "$ref": "#/components/parameters/Viewsessionid"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotencykey"
+          },
+          {
+            "$ref": "#/components/parameters/Queueitemid"
+          },
+          {
+            "$ref": "#/components/parameters/Expectedversion"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success; see README for fields"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Candidate": {
+        "type": "object",
+        "required": [
+          "music_id",
+          "title",
+          "artist_name",
+          "album_cover_url",
+          "youtube_video_id",
+          "duration_millis",
+          "sources"
+        ],
+        "properties": {
+          "music_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "album_cover_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "youtube_video_id": {
+            "type": "string"
+          },
+          "duration_millis": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "RECORDED",
+                "RECOMMENDED"
+              ]
+            }
+          }
+        }
+      },
+      "QueueItem": {
+        "type": "object",
+        "required": [
+          "queue_item_id",
+          "music_id",
+          "added_by_user_id",
+          "sequence_no",
+          "status",
+          "title",
+          "artist_name",
+          "album_cover_url",
+          "youtube_video_id"
+        ],
+        "properties": {
+          "queue_item_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "music_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "added_by_user_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "sequence_no": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "WAITING",
+              "PLAYING"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "album_cover_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "youtube_video_id": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CandidatePage": {
+        "type": "object",
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "items",
+              "next_cursor"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Candidate"
+                }
+              },
+              "next_cursor": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "QueueSnapshot": {
+        "type": "object",
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "items",
+              "next_cursor",
+              "current",
+              "version",
+              "state",
+              "position_seconds",
+              "state_changed_at",
+              "server_time"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/QueueItem"
+                }
+              },
+              "next_cursor": {
+                "type": "string",
+                "nullable": true
+              },
+              "current": {
+                "nullable": true,
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/QueueItem"
+                  }
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "IDLE",
+                  "PLAYING",
+                  "PAUSED"
+                ]
+              },
+              "position_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "state_changed_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "server_time": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "Added": {
+        "type": "object",
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "queue_item_id",
+              "music_id",
+              "sequence_no",
+              "status",
+              "version"
+            ],
+            "properties": {
+              "queue_item_id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "music_id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "sequence_no": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "WAITING"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "Invalid input or cursor",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          }
+        }
+      },
+      "Error401": {
+        "description": "Authentication required",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          }
+        }
+      },
+      "Error403": {
+        "description": "Current connected participation unavailable or banned",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          }
+        }
+      },
+      "Error404": {
+        "description": "Room not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          }
+        }
+      },
+      "Error409": {
+        "description": "Conflict; data.code identifies queue/version/idempotency conflict",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          }
+        }
+      },
+      "Error410": {
+        "description": "Cursor or command receipt expired",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          }
+        }
+      },
+      "Error429": {
+        "description": "Account command interval; Retry-After seconds",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          },
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "Error503": {
+        "description": "Participation/Core/DB unavailable; retry with original UUID",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            }
+          },
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "Roomid": {
+        "name": "room_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1
+        }
+      },
+      "Membershipid": {
+        "name": "membership_id",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1
+        }
+      },
+      "Viewsessionid": {
+        "name": "view_session_id",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Size": {
+        "name": "size",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 20
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "Query": {
+        "name": "query",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "Idempotencykey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "Canonical lowercase UUID; same original tuple replays original HTTP result after current authorization."
+      },
+      "Queueitemid": {
+        "name": "queue_item_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "Expectedversion": {
+        "name": "expected_version",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    }
+  }
+}
