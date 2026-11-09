@@ -39,6 +39,7 @@ import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
 import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.message.query.ChatQueryException;
 import com.muse.meomuneum.chat.message.relay.ChatDeliveryMetrics;
+import com.muse.meomuneum.chat.music.ChatMusicException;
 import com.muse.meomuneum.chat.room.dto.ChatRoomMembershipResponse;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
@@ -552,6 +553,54 @@ public final class ChatParticipationService {
             }
             return result;
         });
+    }
+
+    /** REST music operations use the current connected view, including a remote Task owner. */
+    public <T> T musicTransaction(long user, String authSid, long room, long member, String view,
+            Function<MusicTransaction, T> operation) {
+        return read(user, room, member, view, context -> {
+            if (!authSid.equals(sid(member)) || jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM chat_view_sessions v JOIN chat_rooms r ON r.id=v.room_id
+                    JOIN regions g ON g.id=r.region_id JOIN regions p ON p.id=g.parent_id
+                    JOIN chat_room_members m ON m.id=v.membership_id
+                    WHERE v.id=? AND m.auth_session_id=? AND r.status='ACTIVE'
+                      AND g.is_active=TRUE AND p.is_active=TRUE
+                    """, Integer.class, view, authSid) != 1) {
+                throw denied();
+            }
+            return operation.apply(new MusicTransaction(context, room));
+        });
+    }
+
+    public final class MusicTransaction {
+        private final ReadContext context;
+        private final long room;
+        private boolean changed;
+
+        private MusicTransaction(ReadContext context, long room) {
+            this.context = context;
+            this.room = room;
+        }
+
+        public ReadContext context() {
+            return context;
+        }
+
+        public String producerId() {
+            return "chat:" + taskId;
+        }
+
+        public long changed() {
+            if (context.roomSeq() >= 9_007_199_254_740_991L) {
+                throw new ChatMusicException(409, "MUSIC_COUNTER_EXHAUSTED");
+            }
+            if (!changed) {
+                jdbc.update("UPDATE chat_room_runtime SET room_seq=room_seq+1 WHERE environment=? AND room_id=?",
+                        environment, room);
+                changed = true;
+            }
+            return context.roomSeq() + 1;
+        }
     }
 
     public ChatMessageResponse writeMessage(long user, long room, long member,
@@ -1107,7 +1156,8 @@ public final class ChatParticipationService {
             Thread.currentThread().interrupt();
             diagnostics.transactionFailed(tx.phase.stage(), interrupted, tx.started);
             throw new ChatParticipationUnavailableException();
-        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection rejected) {
+        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection
+                | ChatMusicException rejected) {
             throw rejected;
         } catch (ChatParticipationUnavailableException rejected) {
             diagnostics.transactionFailed(tx.phase.stage(), rejected, tx.started);

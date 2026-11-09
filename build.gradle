@@ -267,6 +267,7 @@ sourceSets {
 			include 'com/muse/meomuneum/auth/exception/AuthErrorCode.java'
 			include 'com/muse/meomuneum/auth/exception/AuthenticationFailedException.java'
 			// Existing shared advice signatures; no music service/controller enters Chat.
+			include 'com/muse/meomuneum/music/catalog/RequestableMusicRepository.java'
 			include 'com/muse/meomuneum/music/exception/MusicMetadataException.java'
 			include 'com/muse/meomuneum/musicrecord/exception/MusicRecordException.java'
 		}

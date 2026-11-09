@@ -55,6 +55,12 @@ location:
   token:
     secret: ${LOCATION_TOKEN_SECRET}
 chat:
+  music:
+    keys: ${CHAT_MUSIC_KEYS:}
+    queue:
+      enabled: ${CHAT_MUSIC_QUEUE_ENABLED:false}
+      capacity: ${CHAT_MUSIC_QUEUE_CAPACITY:100}
+      command-interval-millis: ${CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS:1000}
   lifecycle:
     enabled: ${CHAT_LIFECYCLE_ENABLED:false}
     drain-timeout: ${CHAT_DRAIN_TIMEOUT:20s}
