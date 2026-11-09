@@ -134,6 +134,12 @@ location-recommendation:
     timeout: ${LOCATION_RECOMMENDATION_AI_TIMEOUT:120s}
 
 chat:
+  music:
+    keys: ${CHAT_MUSIC_KEYS:}
+    queue:
+      enabled: ${CHAT_MUSIC_QUEUE_ENABLED:false}
+      capacity: ${CHAT_MUSIC_QUEUE_CAPACITY:100}
+      command-interval-millis: ${CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS:1000}
   redis:
     enabled: ${CHAT_REDIS_ENABLED:false}
     environment: ${CHAT_REDIS_ENVIRONMENT:}
