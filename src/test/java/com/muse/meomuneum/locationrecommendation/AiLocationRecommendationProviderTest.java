@@ -8,6 +8,7 @@ import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -15,8 +16,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.muse.meomuneum.locationrecommendation.config.LocationRecommendationSettings;
+import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse;
 import com.muse.meomuneum.locationrecommendation.provider.AiLocationRecommendationProvider;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -24,6 +28,8 @@ import com.sun.net.httpserver.HttpServer;
 import tools.jackson.databind.ObjectMapper;
 
 class AiLocationRecommendationProviderTest {
+    private static final UUID REQUEST_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+
     private HttpServer server;
 
     @AfterEach
@@ -34,13 +40,13 @@ class AiLocationRecommendationProviderTest {
     }
 
     @Test
-    void sendsOnlyLatitudeAndLongitudeAndParsesNormalizedTracks() throws Exception {
+    void sendsOnlyRequestIdAndCoordinatesAndParsesNormalizedTracks() throws Exception {
         AtomicReference<String> requestBody = new AtomicReference<>();
-        AtomicReference<String> requestId = new AtomicReference<>();
+        AtomicReference<String> requestIdHeader = new AtomicReference<>();
         AtomicReference<String> contentType = new AtomicReference<>();
         server = server(exchange -> {
             requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            requestId.set(exchange.getRequestHeaders().getFirst("X-Request-ID"));
+            requestIdHeader.set(exchange.getRequestHeaders().getFirst("X-Request-ID"));
             contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
             respond(exchange, 200, """
                     {"tracks":[{"track_id":"42","title":"Song","artist":"Artist",
@@ -48,17 +54,66 @@ class AiLocationRecommendationProviderTest {
                     "store_url":"https://example.test/store"}]}
                     """);
         });
-        var tracks = provider().recommend(37.5744, 127.0395, Duration.ofSeconds(2), () -> true)
+        var result = provider().recommend(REQUEST_ID, 37.5744, 127.0395, Duration.ofSeconds(2), () -> true)
                 .result().get(2, TimeUnit.SECONDS);
 
-        assertThat(requestBody.get()).contains("\"latitude\":37.5744", "\"longitude\":127.0395")
-                .doesNotContain("requestId", "userId", "threadId", "accuracyMeters");
-        assertThat(requestId.get()).isNull();
+        var request = new ObjectMapper().readTree(requestBody.get());
+        assertThat(request.propertyNames()).containsExactlyInAnyOrder("request_id", "latitude", "longitude");
+        assertThat(request.get("request_id").stringValue()).isEqualTo(REQUEST_ID.toString());
+        assertThat(request.get("latitude").doubleValue()).isEqualTo(37.5744);
+        assertThat(request.get("longitude").doubleValue()).isEqualTo(127.0395);
+        assertThat(requestIdHeader.get()).isNull();
         assertThat(contentType.get()).isEqualTo("application/json");
-        assertThat(tracks).containsExactly(
-                new com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse("42", "Song",
-                        "Artist", null,
-                        "https://example.test/art.jpg", "https://example.test/store"));
+        assertThat(result.message()).isNull();
+        assertThat(result.tracks()).containsExactly(new TrackResponse("42", "Song", "Artist", null,
+                "https://example.test/art.jpg", "https://example.test/store"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   ", "  산책에 어울리는 곡이에요.  "})
+    void returnsNormalizedMessageWithTracks(String message) throws Exception {
+        server = server(exchange -> respond(exchange, 200,
+                "{\"message\":\"" + message + "\",\"tracks\":[" + validTrack() + "]}"));
+
+        var result = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+                .result().get(2, TimeUnit.SECONDS);
+
+        assertThat(result.tracks()).containsExactly(new TrackResponse("42", "Song", "Artist", null, null, null));
+        assertThat(result.message()).isEqualTo(message.isBlank() ? null : message.strip());
+    }
+
+    @Test
+    void preservesTracksWhenMessageExceedsTheAiLengthLimit() throws Exception {
+        server = server(exchange -> respond(exchange, 200,
+                "{\"message\":\"" + "🎵".repeat(81) + "\",\"tracks\":[" + validTrack() + "]}"));
+
+        var result = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+                .result().get(2, TimeUnit.SECONDS);
+
+        assertThat(result.message()).isNull();
+        assertThat(result.tracks()).hasSize(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"tracks\":[],\"message\":null}",
+            "{\"tracks\":[],\"message\":42}",
+            "{\"tracks\":[],\"message\":{}}",
+            "{\"tracks\":[],\"extra\":true}",
+            "{\"tracks\":[],\"message\":\"Internal AI message\",\"extra\":true}"
+    })
+    void rejectsInvalidTopLevelFields(String body) throws Exception {
+        server = server(exchange -> respond(exchange, 200, body));
+
+        assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+                .result().get(2, TimeUnit.SECONDS))
+                .isInstanceOf(ExecutionException.class)
+                .satisfies(exception -> assertThat(exception.getCause())
+                        .isInstanceOfSatisfying(AiLocationRecommendationProvider.AiProviderException.class,
+                                cause -> {
+                                    assertThat(cause.status()).isEqualTo(502);
+                                    assertThat(cause.reason()).isEqualTo("INVALID_RESPONSE");
+                                }));
     }
 
     @Test
@@ -69,25 +124,25 @@ class AiLocationRecommendationProviderTest {
             respond(exchange, 200, "{\"tracks\":[]}");
         });
 
-        var call = provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> false);
+        var call = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> false);
 
         assertThat(call.dispatched()).isFalse();
-        assertThat(call.result().get(1, TimeUnit.SECONDS)).isEmpty();
+        assertThat(call.result().get(1, TimeUnit.SECONDS).tracks()).isEmpty();
         assertThat(received.get()).isZero();
     }
 
     @Test
     void emptyTracksAreValidAndMoreThanFiveTracksAreRejected() throws Exception {
         server = server(exchange -> respond(exchange, 200, "{\"tracks\":[]}"));
-        assertThat(provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
-                .result().get(2, TimeUnit.SECONDS)).isEmpty();
+        assertThat(provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+                .result().get(2, TimeUnit.SECONDS).tracks()).isEmpty();
         server.stop(0);
         server = server(exchange -> respond(exchange, 200,
                 "{\"tracks\":[" + validTrack() + "," + validTrack() + "," + validTrack() + "," + validTrack()
                         + "," + validTrack() + "," + validTrack() + "]}"));
 
-        assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true).result().get(2,
-                TimeUnit.SECONDS))
+        assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
+                .result().get(2, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
                 .hasCauseInstanceOf(AiLocationRecommendationProvider.AiProviderException.class);
     }
@@ -99,7 +154,7 @@ class AiLocationRecommendationProviderTest {
             server = server(exchange -> respond(exchange, 503,
                     "{\"details\":{\"reason\":\"" + reason + "\"},"
                             + "\"message\":\"private detail\"}"));
-            assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+            assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                     .result().get(2, TimeUnit.SECONDS))
                     .isInstanceOf(ExecutionException.class)
                     .satisfies(exception -> assertThat(exception.getCause())
@@ -116,7 +171,7 @@ class AiLocationRecommendationProviderTest {
             }
             respond(exchange, 200, "{\"tracks\":[]}");
         });
-        var call = provider().recommend(37.5, 127.0, Duration.ofMillis(30), () -> true);
+        var call = provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofMillis(30), () -> true);
 
         assertThatThrownBy(() -> call.result().get(1, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class);
         call.cancel().run();
@@ -127,7 +182,7 @@ class AiLocationRecommendationProviderTest {
         server = server(exchange -> respond(exchange, 503,
                 "{\"details\":{\"reason\":\"RATE_LIMITED\"}}"));
 
-        assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+        assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                 .result().get(2, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
                 .satisfies(exception -> assertThat(exception.getCause())
@@ -139,7 +194,7 @@ class AiLocationRecommendationProviderTest {
     @Test
     void mapsAi422AndRejectsUnsafeTrackUrls() throws Exception {
         server = server(exchange -> respond(exchange, 422, "{\"reason\":\"INVALID_REQUEST\"}"));
-        assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+        assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                 .result().get(2, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
                 .hasCauseInstanceOf(AiLocationRecommendationProvider.AiProviderException.class)
@@ -152,7 +207,7 @@ class AiLocationRecommendationProviderTest {
                             + "\"preview_url\":\"" + url + "\",\"artwork_url\":null,"
                             + "\"store_url\":null}]}"));
 
-            assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+            assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                     .result().get(2, TimeUnit.SECONDS))
                     .as("rejects unsafe URL %s", url)
                     .isInstanceOf(ExecutionException.class)
@@ -169,7 +224,7 @@ class AiLocationRecommendationProviderTest {
                 "{\"track_id\":\"42\",\"title\":\"Song\",\"artist\":1}")) {
             server = server(exchange -> respond(exchange, 200, "{\"tracks\":[" + track + "]}"));
 
-            assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+            assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                     .result().get(2, TimeUnit.SECONDS))
                     .isInstanceOf(ExecutionException.class)
                     .hasCauseInstanceOf(AiLocationRecommendationProvider.AiProviderException.class);
@@ -186,7 +241,7 @@ class AiLocationRecommendationProviderTest {
                         + "\"preview_url\":null,\"artwork_url\":null,\"store_url\":null,\"extra\":true}")) {
             server = server(exchange -> respond(exchange, 200, "{\"tracks\":[" + track + "]}"));
 
-            assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+            assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                     .result().get(2, TimeUnit.SECONDS))
                     .isInstanceOf(ExecutionException.class)
                     .hasCauseInstanceOf(AiLocationRecommendationProvider.AiProviderException.class);
@@ -199,7 +254,7 @@ class AiLocationRecommendationProviderTest {
     void oversizedSuccessfulAiResponseIsTypedAsInvalidResponse() throws Exception {
         server = server(exchange -> respond(exchange, 200, "{\"tracks\":[]}" + " ".repeat(262_144)));
 
-        assertThatThrownBy(() -> provider().recommend(37.5, 127.0, Duration.ofSeconds(2), () -> true)
+        assertThatThrownBy(() -> provider().recommend(REQUEST_ID, 37.5, 127.0, Duration.ofSeconds(2), () -> true)
                 .result().get(2, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
                 .satisfies(exception -> assertThat(exception.getCause())

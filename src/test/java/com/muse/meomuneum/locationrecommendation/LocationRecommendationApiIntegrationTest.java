@@ -33,6 +33,7 @@ import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.RecommendationRequest;
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.RecommendationResponse;
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.RegionResponse;
+import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse;
 import com.muse.meomuneum.locationrecommendation.exception.LocationRecommendationExceptionHandler;
 import com.muse.meomuneum.locationrecommendation.service.LocationRecommendationService;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
@@ -70,7 +71,7 @@ class LocationRecommendationApiIntegrationTest {
     @Test
     void recommendationAcceptsOnlyDocumentedBodyAndUuidV4Header() throws Exception {
         var response = new RecommendationResponse(REQUEST_ID, "EMPTY", null,
-                new RegionResponse(123, "11230", "Dongdaemun-gu", "Seoul"), List.of(), GENERATION, 4, 0);
+                new RegionResponse(123, "11230", "Dongdaemun-gu", "Seoul"), List.of(), null, GENERATION, 4, 0);
         when(service.recommend(eq(9L), eq(REQUEST_ID), any(RecommendationRequest.class))).thenReturn(response);
         String body = """
                 {"latitude":37.5744,"longitude":127.0395,"accuracyMeters":50,"sampleAgeMs":120,
@@ -129,7 +130,7 @@ class LocationRecommendationApiIntegrationTest {
                 "cancelEpoch":0}
                 """;
         var response = new RecommendationResponse(REQUEST_ID, "EMPTY", null,
-                new RegionResponse(123, "11230", "Dongdaemun-gu", "Seoul"), List.of(), GENERATION, 4, 0);
+                new RegionResponse(123, "11230", "Dongdaemun-gu", "Seoul"), List.of(), null, GENERATION, 4, 0);
         when(service.recommend(eq(9L), eq(REQUEST_ID), any(RecommendationRequest.class))).thenReturn(response);
 
         mvc.perform(post("/api/v1/location-recommendations").header("Idempotency-Key", REQUEST_ID.toString())
@@ -147,11 +148,24 @@ class LocationRecommendationApiIntegrationTest {
     }
 
     @Test
+    void returnsTheRecommendationMessageOnStatusLookup() throws Exception {
+        String message = "산책에 어울리는 곡이에요.";
+        var track = new TrackResponse("42", "Song", "Artist", null, null, null);
+        when(service.get(9L, REQUEST_ID)).thenReturn(new RecommendationResponse(REQUEST_ID, "READY", null,
+                new RegionResponse(123, "11230", "Dongdaemun-gu", "Seoul"), List.of(track), message, GENERATION, 4,
+                60_000));
+
+        mvc.perform(get("/api/v1/location-recommendations/{requestId}", REQUEST_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.recommendationMessage").value(message));
+    }
+
+    @Test
     void canonicalStatusDisplayClaimAndCancellationUseTheDocumentedRoutes() throws Exception {
         UUID claimKey = UUID.fromString("33333333-3333-4333-8333-333333333333");
         UUID cancelKey = UUID.fromString("44444444-4444-4444-8444-444444444444");
         when(service.get(9L, REQUEST_ID)).thenReturn(new RecommendationResponse(REQUEST_ID, "PROCESSING", null,
-                null, List.of(), GENERATION, 4, 0));
+                null, List.of(), null, GENERATION, 4, 0));
         when(service.claim(eq(9L), eq(REQUEST_ID), eq(claimKey), any()))
                 .thenReturn(new DisplayClaimResponse(REQUEST_ID, true, null));
         when(service.cancel(eq(9L), eq(cancelKey), any(CancellationRequest.class)))

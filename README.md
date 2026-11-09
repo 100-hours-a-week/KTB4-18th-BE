@@ -361,6 +361,17 @@ gradle/wrapper/                    Gradle Wrapper
 현재 지도 도트 데이터 기반은 이 이슈 범위에 포함되지 않아 `map_dot`은 `null`입니다. 이후 도트
 판정 기능이 연결되더라도 행정구역 판정과 위치 토큰 검증 경계는 그대로 재사용할 수 있습니다.
 
+## 위치 기반 음악 추천 AI 연동
+
+백엔드는 내부 `POST /v1/location/recommendations` 요청에 승인된 대표 추천 UUID를 문자열
+`request_id`로 전달하고, `latitude`와 `longitude`를 함께 보냅니다. AI의 성공 응답에는
+`tracks`가 필요하며 문자열 `message`를 함께 받을 수 있습니다.
+
+공개 `POST /api/v1/location-recommendations`와 `GET /api/v1/location-recommendations/{requestId}`의
+`data.recommendationMessage`는 AI 문구를 담는 문자열 또는 `null`입니다. 앞뒤 공백을 제거한 1~80자의
+문구를 `READY` 결과와 함께 보관하며, 문구가 없거나 결과가 만료·취소되면 `null`을 반환합니다.
+`data.reason`은 추천을 표시하지 않은 사유 코드입니다.
+
 ## 행정구역 채팅방 조회와 입장
 
 `GET /api/v1/regions/{region_id}/chat-room`은 사전 생성된 활성 시·군·구 채팅방을 조회합니다.
