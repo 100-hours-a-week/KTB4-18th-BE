@@ -82,7 +82,8 @@ class SongRegistrationMySqlIntegrationTest {
         for (String file : List.of("V1__recommendation_sample.sql",
                 "V20261002133615__expand_music_artist_name_length.sql",
                 "V20260921200528__create_users_table.sql", "V20260923142421__create_chat_room_foundation.sql",
-                "V20260925174748__create_map_dots_and_music_records_tables.sql")) {
+                "V20260925174748__create_map_dots_and_music_records_tables.sql",
+                "V20261108192420__add_chat_music_catalog_foundation.sql")) {
             try (var connection = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
             }
@@ -219,7 +220,7 @@ class SongRegistrationMySqlIntegrationTest {
         var reused = registration(itunes, cache).register(new Request("123"));
         assertThat(reused.created()).isFalse();
         assertThat(reused.music().title()).isEqualTo("authoritative");
-        assertThat(reused.music().is_queueable()).isTrue();
+        assertThat(reused.music().is_queueable()).isFalse();
         assertThat(tables()).isEqualTo(before);
         verify(itunes, org.mockito.Mockito.times(8)).lookup("123");
     }

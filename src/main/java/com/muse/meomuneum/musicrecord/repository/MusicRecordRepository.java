@@ -24,6 +24,10 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.RegionPart;
 
 @Repository
 public class MusicRecordRepository {
+    private static final String PLAYBACK_VERIFIED = "EXISTS(SELECT 1 FROM music_playback_sources ps " +
+            "WHERE ps.music_id=music.id AND BINARY ps.youtube_video_id=BINARY music.youtube_video_id " +
+            "AND ps.status='VERIFIED' AND ps.playback_country='KR' " +
+            "AND ps.verified_at<=UTC_TIMESTAMP(6) AND ps.valid_until>UTC_TIMESTAMP(6)) playback_verified";
     private final JdbcTemplate jdbc;
     public MusicRecordRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -57,12 +61,13 @@ public class MusicRecordRepository {
         conditions.append(")");
         arguments.add(limit);
         String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id FROM music WHERE provider='ITUNES' AND id<? AND id<=? "
+                + "preview_url, youtube_video_id, " + PLAYBACK_VERIFIED
+                + " FROM music WHERE provider='ITUNES' AND id<? AND id<=? "
                 + "AND (" + conditions + ") ORDER BY id DESC LIMIT ?";
         return jdbc.query(sql, (row, index) -> item(row.getLong("id"), row.getString("provider"),
                 row.getString("external_music_id"), row.getString("title"), row.getString("artist_name"),
                 row.getString("album_cover_url"), row.getString("preview_url"),
-                row.getString("youtube_video_id")), arguments.toArray());
+                row.getString("youtube_video_id"), row.getBoolean("playback_verified")), arguments.toArray());
     }
 
     public Map<String, StoredMusic> findStoredMusicByIds(List<String> externalIds, long highWatermark,
@@ -72,7 +77,7 @@ public class MusicRecordRepository {
         }
         String markers = String.join(",", Collections.nCopies(externalIds.size(), "?"));
         String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id, "
+                + "preview_url, youtube_video_id, " + PLAYBACK_VERIFIED + ", "
                 + "(LOWER(title) LIKE LOWER(?) ESCAPE '!' "
                 + "OR LOWER(artist_name) LIKE LOWER(?) ESCAPE '!') matches_search "
                 + "FROM music WHERE provider='ITUNES' AND id<=? AND external_music_id IN (" + markers + ")";
@@ -89,7 +94,8 @@ public class MusicRecordRepository {
             MusicItem music = item(row.getLong("id"), row.getString("provider"),
                     row.getString("external_music_id"), row.getString("title"),
                     row.getString("artist_name"), row.getString("album_cover_url"),
-                    row.getString("preview_url"), row.getString("youtube_video_id"));
+                    row.getString("preview_url"), row.getString("youtube_video_id"),
+                    row.getBoolean("playback_verified"));
             results.put(music.external_music_id(), new StoredMusic(music, row.getBoolean("matches_search")));
         }, arguments);
         return results;
@@ -138,7 +144,7 @@ public class MusicRecordRepository {
             throw new IllegalStateException("music id missing");
         }
         return item(keys.getKey().longValue(), music.provider(), music.external_music_id(), music.title(),
-                music.artist_name(), music.album_cover_url(), music.preview_url(), music.youtube_video_id());
+                music.artist_name(), music.album_cover_url(), music.preview_url(), music.youtube_video_id(), false);
     }
 
     public long upsertMusic(MusicItem music) {
@@ -160,11 +166,13 @@ public class MusicRecordRepository {
 
     public Optional<MusicItem> findMusic(String provider, String externalId) {
         String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id FROM music WHERE provider=? AND external_music_id=?";
+                + "preview_url, youtube_video_id, " + PLAYBACK_VERIFIED
+                + " FROM music WHERE provider=? AND external_music_id=?";
         return jdbc.query(sql, (row, index) -> item(row.getLong("id"), row.getString("provider"),
                 row.getString("external_music_id"), row.getString("title"), row.getString("artist_name"),
                 row.getString("album_cover_url"), row.getString("preview_url"),
-                row.getString("youtube_video_id")), provider, externalId).stream().findFirst();
+                row.getString("youtube_video_id"), row.getBoolean("playback_verified")), provider, externalId).stream()
+                .findFirst();
     }
 
     public Optional<MusicIdentity> findRecordMusicIdentity(long userId, long recordId) {
@@ -274,9 +282,9 @@ public class MusicRecordRepository {
                 LocalDateTime.ofInstant(deletedAt, ZoneOffset.UTC), recordId, userId);
     }
     private MusicItem item(long id, String provider, String externalId, String title, String artist,
-            String cover, String preview, String youtubeVideoId) {
+            String cover, String preview, String youtubeVideoId, boolean playbackVerified) {
         return new MusicItem(id, provider, externalId, title, artist, cover, preview,
-                youtubeVideoId, youtubeVideoId != null && youtubeVideoId.matches("[A-Za-z0-9_-]{11}"));
+                youtubeVideoId, playbackVerified);
     }
 
     private String escapeLikeLiteral(String value) {

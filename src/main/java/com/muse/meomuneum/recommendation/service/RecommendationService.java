@@ -46,19 +46,45 @@ public class RecommendationService {
     private final RecommendationEventStream eventStream;
     private final Executor recommendationTaskExecutor;
 
+    private final RecommendationLocationContext locationContext;
+
     public RecommendationService(RecommendationProvider provider, RecommendationRepository repository,
             MeterRegistry meterRegistry, RecommendationEventStream eventStream,
-            @Qualifier("recommendationTaskExecutor") Executor recommendationTaskExecutor) {
+            Executor recommendationTaskExecutor) {
+        this(provider, repository, meterRegistry, eventStream, recommendationTaskExecutor, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RecommendationService(RecommendationProvider provider, RecommendationRepository repository,
+            MeterRegistry meterRegistry, RecommendationEventStream eventStream,
+            @Qualifier("recommendationTaskExecutor") Executor recommendationTaskExecutor,
+            RecommendationLocationContext locationContext) {
         this.provider = provider;
         this.repository = repository;
         this.meterRegistry = meterRegistry;
         this.eventStream = eventStream;
         this.recommendationTaskExecutor = recommendationTaskExecutor;
+        this.locationContext = locationContext;
     }
 
     public RecommendationAcceptedResponse accept(RecommendationRequest request, String guestSessionId, Long userId) {
-        long recommendationId = repository.createSession(request, userId == null ? guestSessionId : null,
-                userId, Instant.now());
+        return accept(request, guestSessionId, userId, null);
+    }
+
+    public RecommendationAcceptedResponse accept(RecommendationRequest request, String guestSessionId, Long userId,
+            String authSessionId) {
+        long recommendationId;
+        if (request.location_resolution_token() == null) {
+            recommendationId = repository.createSession(request, userId == null ? guestSessionId : null,
+                    userId, Instant.now());
+        } else {
+            if (locationContext == null) {
+                throw new RecommendationException(503, "location context unavailable");
+            }
+            var location = locationContext.resolve(request.location_resolution_token(), userId, authSessionId);
+            recommendationId = repository.createSession(request, null, userId, Instant.now(),
+                    location.sigunguRegionId(), location.mapDotId());
+        }
         eventStream.register(recommendationId);
         try {
             recommendationTaskExecutor.execute(() -> process(recommendationId, request, guestSessionId, userId));
