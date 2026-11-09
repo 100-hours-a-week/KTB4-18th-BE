@@ -23,7 +23,8 @@ public final class ChatRedisSubscription implements AutoCloseable {
         this(connection, channels.roomPattern(), channels.controlChannel(), listener, onClose, onUnavailable);
     }
 
-    ChatRedisSubscription(StatefulRedisPubSubConnection<String, String> connection, String pattern, String control,
+    ChatRedisSubscription(StatefulRedisPubSubConnection<String, String> connection, String expectedPattern,
+            String control,
             RedisPubSubListener<String, String> listener, Consumer<ChatRedisSubscription> onClose,
             Runnable onUnavailable) {
         this.connection = connection;
@@ -46,7 +47,7 @@ public final class ChatRedisSubscription implements AutoCloseable {
 
             @Override
             public void psubscribed(String pattern, long count) {
-                if (pattern.equals(pattern)) {
+                if (expectedPattern.equals(pattern)) {
                     roomReady.set(true);
                 }
             }
@@ -61,7 +62,7 @@ public final class ChatRedisSubscription implements AutoCloseable {
 
             @Override
             public void punsubscribed(String pattern, long count) {
-                if (pattern.equals(pattern)) {
+                if (expectedPattern.equals(pattern)) {
                     roomReady.set(false);
                     onUnavailable.run();
                 }
@@ -76,13 +77,13 @@ public final class ChatRedisSubscription implements AutoCloseable {
 
             @Override
             public void message(String pattern, String channel, String message) {
-                if (isReady() && pattern.equals(pattern)) {
+                if (isReady() && expectedPattern.equals(pattern)) {
                     listener.message(pattern, channel, message);
                 }
             }
         });
         try {
-            connection.sync().psubscribe(pattern);
+            connection.sync().psubscribe(expectedPattern);
             connection.sync().subscribe(control);
         } catch (RuntimeException failure) {
             close();
