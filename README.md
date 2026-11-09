@@ -1400,7 +1400,7 @@ marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt
   신규 repository는 새 테이블을 조회하므로 DDL 선행이 필요하다. 구형 BE는 VERIFIED 의미를 알지 못하므로
   음원 신청 기능 활성화 전 모든 소비자가 새 판정에 맞는지 확인한다.
 - 기존 schema·곡·추천은 보존하고 오래된 영상 ID를 일괄 VERIFIED 처리하지 않는다.
-  3단계의 queue/playback/명령/outbox DDL은 추가하지 않았다.
+  2단계에서는 queue/playback/명령/outbox DDL을 추가하지 않았으며, 이후 저장 구조는 아래 3단계를 따른다.
   추천·기록 테이블의 인덱스 추가에 따른 운영 DDL 시간·잠금·여유 공간은 실제 데이터 규모에서 배포 전 확인한다.
 - rollback은 앱을 검증된 호환 버전으로 되돌리고 검수 테이블·출처를 보존한다. DDL 자동 역삭제는 하지 않는다.
 - `./gradlew test --tests '*MusicCatalogMySqlTest' --tests '*YouTubeVideoVerifierTest' --no-daemon`은
@@ -1467,3 +1467,91 @@ Gradle 종료 코드를 유지한다. 새 DB에서도 검증이 생략되지 않
 적용하므로 최신 Repository의 `recommendation_message` 컬럼도 함께 검증한다.
 Redis 설정 단위 테스트는 로컬 `.env`의 `CHAT_REDIS_ENABLED` 등에 영향을 받지 않도록
 환경 변수 소스를 제외하고 기본값·테스트에 명시한 설정을 검증한다.
+
+
+## 지역 음악 대기열·재생 저장 구조 (공동 재생 3단계)
+
+`V20261109103259__create_chat_music_state_storage.sql`은 기존 테이블을 변경하지 않고 다음 네 테이블을 추가한다.
+2단계의 곡·추천·검수 데이터와 기존 채팅 데이터는 보존한다. 이 단계는 저장 기반이며 음악 API·전이 서비스·
+Outbox worker·Redis 전파·FE·자동 종료 타이머를 활성화하지 않는다.
+
+| 테이블 | 책임·제약 |
+| --- | --- |
+| music_queue_items | 방·곡·신청자·BIGINT 순번·상태·생성/시작/종료 시각. 방별 순번 UNIQUE, 방별 PLAYING 최대1개 |
+| playback_states | 방별 현재 항목·IDLE/PLAYING/PAUSED·DECIMAL(10,3) 기준 위치·시각·aggregate version·다음 순번 |
+| chat_music_command_receipts | 환경·계정·방·명령 UUID별 완료 결과, 원래 sid/member/view·명령 유형·HMAC key ID/fingerprint·결과 버전·HTTP 상태·만료 시각 |
+| chat_music_outbox | 기존 메시지 Outbox와 분리. 환경·epoch·producer·방·room_seq·음악 버전·변경 참조 JSON·claim·재시도·만료·발행 시각 |
+
+### 무결성과 초기화
+
+- 큐 상태는 WAITING/PLAYING/PLAYED/SKIPPED/CANCELED이며, 취소·종료는 물리 삭제와 구분한다.
+  WAITING은 시작/종료 시각 없음, PLAYING은 시작만, PLAYED/SKIPPED는 시작·종료 모두 필요하다.
+  CANCELED는 종료 시각이 필요하고 시작 시각은 선택이다. 현재 곡의 전원 퇴장 취소도 표현 가능하지만
+  실제 전이 정책과 빈 방 확정·재연결 유예·장애 구분은 5/9단계에서 확정·구현한다.
+- generated playing_room_id UNIQUE로 한 방의 PLAYING 행은 최대1개다. 일시정지 중 큐 항목은 PLAYING을 유지한다.
+- playback PK는 chat_room_id이며 복합 FK `(chat_room_id,current_queue_item_id)`가 다른 방 항목 참조를 차단한다.
+  IDLE은 현재 항목 없음·위치0, PLAYING/PAUSED는 현재 항목이 필요하다. 음수 위치·버전·순번과 잘못된 상태는 거부한다.
+- 여러 테이블에 걸친 ‘현재 항목이 실제 PLAYING인가’, version/next_sequence_no와 큐의 대응은 CHECK로
+  보장한다고 주장하지 않는다. 4/5단계가 아래 잠금·원자적 전이 계약을 지켜야 한다.
+- version은 재생만이 아닌 큐+재생의 aggregate version이다. 한 공통 변경 트랜잭션당1회 증가한다.
+  단순 조회·시각 보정에는 증가시키지 않는다. next_sequence_no는 항목 취소·정리 후에도 감소/재사용하지 않는다.
+  순번·버전은 JSON 안전정수 범위를 사용하며 상한 도달 시 재설정하지 않고 변경을 거절해야 한다.
+- 위치 정밀도는1ms, 시각은 UTC DATETIME(6)이다. 새 시각 default는 UTC_TIMESTAMP(6)를 사용한다.
+- Migration은 기존 모든 방(비활성 포함)에 현재 항목 없는 IDLE/version0/next_sequence_no1을 생성한다.
+  기존 방·참여·메시지·곡의 ID·상태·시각과 온라인 인원은 변경하지 않는다.
+- 신규 방에는 `ChatMusicStateRepository.initializeRoom(roomId)`를 방 생성 또는 최초 음악 변경 트랜잭션에서
+  호출한다. 재호출은 곡·위치·버전·카운터·시각을 초기화하지 않는다. 현재 방 provisioning 흐름은 변경하지 않았으며
+  후속 음악 서비스가 이 초기화 경계를 연결한다. `lockRoom`은 쓰기 트랜잭션을 요구하고 초기화 후 FOR UPDATE한다.
+
+### 후속 서비스의 트랜잭션 계약
+
+1. 기존 Core 세션/참여/runtime 검증을 적용한다. 음악 state 존재나 과거 영수증으로 권한을 승인하지 않는다.
+2. 기존 runtime control → room runtime → playback state → 큐 순서로 잠근다. 여러 방은 방 ID 오름차순이다.
+   신규 방 초기화도 동일 규칙에 포함하고, 외부 네트워크 호출·Redis PUBLISH 중 DB 잠금을 유지하지 않는다.
+3. 현재 권한과 원래 명령 tuple·HMAC/key ID를 확인한다. 같은 UUID의 다른 요청은 충돌이며 단순 재시도를
+   새 신청/skip으로 실행하지 않는다. sid/member/view는 검증 근거 기록이지 현재 권한 자체가 아니다.
+4. next_sequence_no로 순번을 배정하고 큐·현재 항목·기준 위치/시각·version을 같은 트랜잭션으로 변경한다.
+   updated_at은 자동 갱신이 아니므로 실제 변경 SQL에서 UTC_TIMESTAMP(6)로 명시한다. 초기화 재호출은 갱신하지 않는다.
+5. 완료 영수증과 QUEUE_UPDATED/PLAYBACK_UPDATED 참조를 같은 트랜잭션으로 저장한다. 하나라도 실패하면 모두 롤백한다.
+   같은 음악의 별도 신청은 허용하며, 원래 명령 재전송과 구분한다. 구현은4/5단계의 책임이다.
+6. 커밋 후6단계 worker가 음악 outbox를 선점·발행한다. claim_token+claim_until과 현재 epoch를 확인해
+   만료 후 인계된 claim을 구 worker가 완료하지 못하게 한다. 선점/완료 SQL과 consumer 검증은6단계에서 구현한다.
+
+### 영수증·Outbox·보관 경계
+
+- 영수증은 완료 결과만 저장한다. PK는 `(environment,user_id,room_id,command_id)`이며 원문 요청/토큰 대신
+  canonical 요청의 HMAC fingerprint와 key ID를 저장한다. 결과는 허용된 응답 정보만 포함하는 JSON object/16KiB 이하,
+  HTTP2xx~4xx이며 일시적 저장소 실패를 완료 성공으로 기록하지 않는다. request 정규화·key rotation은4단계에서 정한다.
+- member/view에 FK를 걸지 않아 채팅의24시간 이력 정리가 영수증 보관을 강제하거나 반대로 차단하지 않게 한다.
+  방·계정 FK는 보존하며 계정 soft delete·현재 접근 권한 검사는 기존 정책을 따른다.
+- Outbox event_id는 UUID, `(environment,epoch,room_id,music_version,event_type)`는 UNIQUE다.
+  한 변경에 큐/재생 두 이벤트를 저장할 수 있고 같은 유형은 snapshot/hint 하나로 병합한다. PLAYBACK_SYNC는
+  시각 보정이므로 저장 이벤트에 넣지 않는다. room_seq는 기존 room runtime의 커밋 순서와 맞추며 음악 버전과 혼동하지 않는다.
+- 상태는 PENDING/SENT/EXPIRED, claim은 PENDING에서 token/until 쌍으로만 저장한다. SENT는 발행 확인 시각이 필요하다.
+  SENT는 모든 브라우저 수신 보장이 아니다. 이벤트 본문은 JSON object/16KiB 이하이며 개인정보·토큰을 넣지 않는다.
+- 환경·epoch는 전파/영수증 격리 정보다. 큐·재생 상태는 DB의 room_id별 공통 데이터이므로 서로 다른 배포 환경은
+  DB/schema를 분리해야 한다. Redis namespace만 바꿔 같은 DB의 음악 상태를 격리했다고 설명하지 않는다.
+- receipt/outbox의 expires_at은 필수이며 작성자가 명시한다. 이번 단계에서 보관 기간 수치를 정하거나 cleanup을
+  실행하지 않는다. 만료 영수증을 지운 후 오래된 UUID를 새 명령으로 실행하지 않도록,4단계의 요청 유효성/재시도 계약과
+  함께 정하기 전에는 자동 purge하지 않는다. key rotation도 유효 영수증 검증 기간과 함께 관리해야 한다.
+- 종료 큐 항목은 finished_at 인덱스로 정리할 수 있으나 현재 FK 참조를 먼저 해제하고 보관 정책을 합의해야 한다.
+  방당1행의 playback 상태는 취소/정리 때도 유지해 version/순번이 되돌아가지 않게 한다.
+
+### 적용·복구·검증
+
+- 새 additive DDL을 먼저 적용하고 후속 서비스를 배포한다. 기존 앱은 새 테이블을 사용하지 않아 이번 DDL만으로
+  공동 재생이 켜지지 않는다. 운영 DDL 시간·FK metadata lock·공간·권한과 단일 migrator는 배포 전 확인한다.
+- MySQL DDL은 전체 자동 rollback이 아니므로 일부 테이블 생성 후 실패하면 적용 이력·실제 DDL을 확인한 뒤
+  검토된 보정 절차를 사용한다. 제품 DB에 무조건 repair·outOfOrder·테이블 삭제를 적용하지 않는다.
+- 앱 rollback 시 네 테이블과 기존 데이터를 보존한다. 후속 writer가 만든 큐/영수증/outbox를 제거해 복구하지 않는다.
+- 두 로컬 migration 선택 목록에도 새 파일을 추가했다. 기존 catalog migration은 수정하지 않는다.
+- `bash scripts/verify-local.sh test --tests '*ChatMusicStorageMySqlTest'`는 격리 MySQL에서 upgrade1건·validate·재실행0건,
+  기존 데이터 보존, 초기화·잠금, FK/UNIQUE/CHECK, 동시 순번·claim 인계, 원자적 rollback, 대표 쿼리 실행계획을 검증한다.
+  테스트의1시간 expiry·5초 claim은 fixture일 뿐 운영 기간 확정이 아니다. 여러 JDBC 연결 경합을 다중 Task 전체 검증으로
+  표시하지 않으며, 실제 두 Chat JAR·Redis·FE 전파·운영 부하는6/9/10단계에서 검증한다.
+  실행계획 테스트는 FORCE INDEX로 대표 쿼리의 인덱스 사용 가능성을 확인한다. 소량 fixture에서 특정 인덱스를
+  optimizer가 반드시 선택한다고 단정하지 않으며 실제 규모의 실행계획·성능은 후속 부하 검증 대상이다.
+
+3단계 최종 검증은 신규 저장 구조7건을 포함한 전체919건 중896통과·23조건부제외·실패0이었다.
+Spotless·Checkstyle main/core/chat/test와 기존/Core/Chat JAR 모두 통과했다. 증빙은 로컬
+`build/chat-music-state-verification/summary.json`·`final-full/`에 보존한다. 운영 DB 적용·배포 검증 결과는 아니다.
