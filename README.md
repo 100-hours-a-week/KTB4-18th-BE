@@ -1661,3 +1661,83 @@ Spotless·Checkstyle main/core/chat/test 및 일반/Core/Chat 세 JAR 통과, �
 증빙 `build/chat-music-playback-verification/summary.json`, `full-test`, `final-music`, `final-participation`, 실행 로그.
 두 OpenAPI 파일의 JSON 파싱과 내부/파일 간 참조82개를 확인했으며 전체 메타스키마 검증으로 표시하지 않는다.
 두 참여 서비스의 동시성 테스트는 한 JVM에서 수행했고 실제 두 Chat 프로세스·YouTube/브라우저·운영 배포 검증은 아니다.
+
+### 여러 Task의 음악 상태 변경 전파 (공동 재생 6단계)
+
+`feature/chat-music-events`는5단계의 같은 트랜잭션에 저장된 음악 Outbox를 실제 Redis Pub/Sub와 기존 STOMP 방 구독에 연결한다.
+정본은 MySQL이며 Redis payload나 브라우저 종료 알림으로 공통 음악 상태를 덮어쓰지 않는다. UI는7·8번, 입장·재연결 추가 복구는9번이다.
+
+전파 경로:
+
+1. 각 Task의 음악 publisher가 현재 environment/epoch의 PENDING 방을25개씩 keyset 순회한다. control/자신의 Task lease/
+   room runtime 잠금 아래 방의 가장 오래된 `(music_version,event_type,event_id)`를5초 claim한다. 아직 claim 중이거나
+   backoff 대기 중인 head를 뒤의 이벤트가 추월하지 않는다. 방 잠금 경합은 SKIP LOCKED로 넘기고 다음 순회에서 다시 시도한다.
+2. claim TX를 닫은 뒤 token/만료/epoch/Task를 재확인하고 `<env>:chat:music:<room_id>`에 참조만 PUBLISH한다.
+   `schema_version`, `event_id`, `environment`, `producer_id`, `epoch`, `room_id`, `room_seq`, `music_version`,
+   `event_type`, `occurred_at`만 담고 곡/이용자/토큰/원문/재생 snapshot은 Redis에 싣지 않는다.
+3. 성공은 같은 유효 token으로 SENT/sent_at, 실패는 PENDING과0.5→1→2→최대5초+jitter backoff를 기록한다.
+   완료 전 장애는 같은 event_id가 재발행될 수 있다. claim 기한이 지난 이전 작업자는 새 claim을 완료할 수 없다.
+   네트워크 호출 동안 DB 잠금을 유지하지 않는다. PUBLISH의 subscriber 수와 SENT는 모든 브라우저의 수신 확인이 아니다.
+4. 발신 Task도 다른 Task와 같은 음악 구독 경로로 받는다. 채널/환경/엄격 JSON/producer 형식/epoch를 확인하고,
+   등록된 producer와 만료되지 않은 실제 Outbox 행의 모든 참조 필드를 대조한다. 구 epoch/잘못된 방·환경·가짜 UUID는 거절한다.
+5. 각 Task가 현재 control/epoch/lease/방 잠금 아래 DB의 최신 재생 snapshot을 읽는다. 원래 이벤트보다 최신 버전이어도
+   최신 snapshot을 전달하며 오래된 Outbox body를 재생하지 않는다. `(epoch,방,type)`별 high-water를 유지하므로
+   같은 버전의 QUEUE_UPDATED와 PLAYBACK_UPDATED는 각각 전달하고 같은 유형의 중복/뒤늦은 이벤트는 합친다.
+   캐시는 최대2048개·10분이며 만료/Task 재시작 후 중복 전송은 가능하다. snapshot은 여전히 최신 DB에서 읽는다.
+6. 현재 Task 소유 CONNECTED 소켓의 sid/계정/방/세대/lease·정지·탈퇴·현재 구독·JWT/Core 권한을 확인한 뒤
+   `/topic/chat-rooms/{room_id}`로 `{type,data}`를 보낸다. 비동기 outbound handler에서도 현재 권한을 새 batch DB 조회와
+   Core 확인으로 재검증한다. 다른 방·퇴장·예약·이전 연결/소유권의 소켓에 전송하지 않으며 기존 채팅의 전파·history는 유지한다.
+
+공개 STOMP 계약(`api/chat-music-events.schema.json`):
+
+| type | 의미 |
+| --- | --- |
+| QUEUE_UPDATED | 최신 큐 조회 힌트와 공통 재생 snapshot. 큐 전체/기록 ID/신청 원문을 싣지 않음 |
+| PLAYBACK_UPDATED | 시작·정지·재개·건너뛰기·자연 종료·방 비움의 최신 재생 snapshot |
+| PLAYBACK_SYNC | 현재 위치 보정용 최신 snapshot. 영수증/Outbox/버전 증가 없이 조회만 수행 |
+
+- `data`는 `room_id`, `epoch`, `version`(최신 aggregate version), `event_id`, `event_version`(원래 참조 버전),
+  `queue_refresh_required:true`, `playback`(5단계와 같은 snapshot)이다. SYNC의 event_id/event_version은 null이다.
+- FE는 현재 연결·방·epoch를 확인하고 낮은 버전을 버린다. 같은 버전의 두 변경 유형을 하나로 무시하지 않으며,
+  같은 버전의 SYNC는 시각 보정에 쓴다. 큐의 로컬 버전이 뒤처진 경우에만 최신 GET /queue-items를 호출한다.
+  snapshot 조회 뒤 다른 명령이 커밋되거나 REST 응답이 먼저 도착할 수 있으므로 FE의 버전 비교도 필요하다.
+- 로컬 구독 방을250ms 단위로 최대25개씩 확인하고 방별5초 이상 간격으로 SYNC한다. 참여자마다 DB snapshot을
+  따로 조회하지 않는다. PAUSED/IDLE은 그대로 유지하고 자동 재생 명령을 만들지 않는다. 방별 시각 캐시는 최대1024개다.
+  부하/경합에 따른 지연은 가능하며 실제1000연결·전체 지연 SLO 검증은10단계다. 기존 일반 채팅의 FE 누락 sync를 추가한 것은 아니다.
+
+제한·장애·보관·설정:
+
+- publisher1개/대기1개, receiver1개/대기128개로 bounded executor를 사용한다. 한 Task에서 snapshot 조회·broker enqueue를
+  직렬화하고 기존 preservePublishOrder를 유지한다. 수신 큐 초과/DB·transport 실패는 Task를 fail-closed하고1013 재연결로
+  전환한다. 조용히 이벤트를 버리거나 Redis 연결 복구만으로 latch를 자동 개방하지 않는다. 복구는 기존 lifecycle/운영 복구와9번을 따른다.
+- 다른 정상 Task는 미완료 claim 만료 후 전파를 이어갈 수 있다. Redis 전체 장애는 기존 전역 중단 정책을 유지한다.
+  음악 transport 준비 상태를 참여의 승인/commit/outbound guard에 결합해 불확실한 상태의 새 조작을 승인하지 않는다.
+- 60초 주기로 최대500개씩 구 epoch/만료 PENDING을 EXPIRED로 정리하고, 보존 기한이 지난 SENT/EXPIRED를 삭제한다.
+  실제 삭제 시각은 처리량·경합에 따라 늦을 수 있지만 만료 이벤트는 전송하지 않는다. 음악 영수증 tombstone과 큐 이력은 삭제하지 않는다.
+  미완료 음악 Outbox가 남아 있는 producer Task 등록 정보를 먼저 지우지 않는다. 방 정본은 환경별 별도 DB/schema를 사용한다.
+- `CHAT_MUSIC_EVENTS_ENABLED=false`가 기본값이다. 활성화에는 기존 music queue/playback, message relay/permission batcher,
+  distributed participation/Core 인증과 Redis가 필요하며 빠진 의존성은 기동 실패다. 새 DDL은 필요 없고3·5단계 DDL을 사용한다.
+  음악 기능 비활성화 시 추가 음악 구독·worker·음악 DB 조회를 만들지 않는다.
+- Redis Chat ACL에는 기존 room/control 권한에 더해 `&<env>:chat:music:*`의 PUBLISH/PSUBSCRIBE가 필요하다.
+  기존 TLS/인증/namespace 설정을 그대로 사용한다. 이번에는 실제 ACL·SSM·AWS·Redis·운영 DB 설정을 변경하지 않았다.
+  모든 Task에 동일 코드/키/플래그/ACL을 준비하고 제어된 활성화로 전환한다. 롤백은 음악 진입/worker를 중단하고
+  플래그/앱을 되돌리며 정본·미완료 Outbox·영수증을 삭제하지 않는다. 운영 배포 완료가 아니다.
+- `musicRelay` health와 `chat.music.relay.ready/published/rejected/failures` 지표를 제공한다. 개인·방 ID label은 없다.
+  활성화 시 기존 전체 readiness의 참여/Redis subscription 검사에도 반영된다.
+
+재현: `python3 scripts/verify-backend.py`는 격리 DB 전체 검증,
+`./gradlew chatMusicEventsProcessTest`는 실제 Core·두 Chat JAR/MySQL/Redis 및 격리 HTTPS Core 검증 경로의 전용 하네스다.
+후자는 합성 로그인 세션·서명·검수 곡을 사용하며 실제 YouTube 오디오·브라우저·운영 인증·실제1000연결 검증은 아니다.
+
+6단계 검증 결과(2026-11-09): 전체969개 중946통과·23조건부제외·실패0.
+기존 참여 전용49개와 실제 Core·두 Chat JAR/MySQL/Redis 전용 프로세스1개도 전부 통과했다.
+신규 회귀13개(음악 MySQL/Redis8·참조계약2·기동1·수신 한도1·outbound 음악 권한1)를 포함한다.
+실제 프로세스에서 REST를 연결 소유 Task와 다르게 보내고 양쪽 STOMP의 동일 버전 두 유형·정지 중 신청·명령 재시도·
+건너뛰기·서버 자동 종료·SYNC를 확인했다. publish 후 완료 누락·claim 인계·구 token/epoch·퇴장/Core 폐기는 도메인 검증에 포함했다.
+실제 수신 예시14개와 합성 Redis 참조1개는 FE의 기존 AJV6.15.0으로 검증했고 변조 예시8개는 거부했다.
+처음 OpenAPI에서 가져온 int64 format은 표준 JSON Schema의 type/integer·안전정수 범위로 정리했다.
+Spotless·Checkstyle main/core/chat/test·세 앱 JAR와 최종 manifest 소스 SHA256 일치를 확인했다.
+증빙 `build/chat-music-events-verification/summary.json`·`full-test`·`participation-test`·`process-test`·`schema.json`,
+프로세스별 `build/core-auth-integration/run-*/music-events.json`·`music-event-examples.json`·자식 로그에 보존한다.
+전체 회귀 이후에는 프로세스의 wire 예시 저장만 보강했고 제품 코드 변경 없이 최종 프로세스/참여 검증을 재실행했다.
+실제 OAuth 로그인·YouTube/브라우저 오디오·1000연결/SLO·전체 장애 조합·클라우드 배포 완료가 아니다.

@@ -1,0 +1,377 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:meomuneum:chat-music-events:v1",
+  "title": "Regional chat music references and STOMP delivery",
+  "description": "Redis references are bounded to16KiB and confirmed against committed Outbox. STOMP data.version/playback.version must agree; client retains maximum epoch/version. Same version QUEUE/PLAYBACK types are both valid. PLAYBACK_SYNC is neither persisted nor a version change. queue_refresh_required is a hint to refresh only when local queue version lags.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/RedisReference"
+    },
+    {
+      "$ref": "#/definitions/StompDelivery"
+    }
+  ],
+  "definitions": {
+    "QueueItem": {
+      "type": "object",
+      "required": [
+        "queue_item_id",
+        "music_id",
+        "added_by_user_id",
+        "sequence_no",
+        "status",
+        "title",
+        "artist_name",
+        "album_cover_url",
+        "youtube_video_id"
+      ],
+      "properties": {
+        "queue_item_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "music_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "added_by_user_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "WAITING",
+            "PLAYING"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "artist_name": {
+          "type": "string"
+        },
+        "album_cover_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "youtube_video_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "PlaybackSnapshot": {
+      "type": "object",
+      "required": [
+        "state",
+        "version",
+        "current_queue_item_id",
+        "position_seconds",
+        "estimated_position_seconds",
+        "state_changed_at",
+        "server_time",
+        "source_video_id",
+        "duration_millis",
+        "due_at",
+        "current"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "IDLE",
+            "PLAYING",
+            "PAUSED"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "current_queue_item_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "estimated_position_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "state_changed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_video_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 11
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_millis": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9999999999
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/QueueItem"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "RedisReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_id",
+        "environment",
+        "producer_id",
+        "epoch",
+        "room_id",
+        "room_seq",
+        "music_version",
+        "event_type",
+        "occurred_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "environment": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]{1,32}$"
+        },
+        "producer_id": {
+          "type": "string",
+          "pattern": "^chat:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "room_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "room_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "music_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "event_type": {
+          "enum": [
+            "QUEUE_UPDATED",
+            "PLAYBACK_UPDATED"
+          ]
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      }
+    },
+    "DeliveryData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "room_id",
+        "epoch",
+        "version",
+        "event_id",
+        "event_version",
+        "queue_refresh_required",
+        "playback"
+      ],
+      "properties": {
+        "room_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_version": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queue_refresh_required": {
+          "const": true
+        },
+        "playback": {
+          "$ref": "#/definitions/PlaybackSnapshot"
+        }
+      }
+    },
+    "StompDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "QUEUE_UPDATED",
+            "PLAYBACK_UPDATED",
+            "PLAYBACK_SYNC"
+          ]
+        },
+        "data": {
+          "$ref": "#/definitions/DeliveryData"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PLAYBACK_SYNC"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "properties": {
+                  "event_id": {
+                    "type": "null"
+                  },
+                  "event_version": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "data": {
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "event_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
