@@ -1444,3 +1444,26 @@ marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt
 
 최종 전체 검증은 892건 중 869통과·23조건부제외·실패0이며, 기존 실패20건이 모두 통과했다.
 Spotless·Checkstyle main/core/chat/test 및 기존/Core/Chat JAR 빌드도 통과했다.
+
+### 격리된 로컬 전체 검증
+
+Docker와 프로젝트에서 사용하는 Java를 준비한 뒤 다음 명령을 실행한다.
+
+```bash
+bash scripts/verify-local.sh
+# 특정 테스트만 실행할 때
+bash scripts/verify-local.sh test --tests '*MusicCatalogMySqlTest'
+```
+
+스크립트는 새 MySQL9.7 컨테이너를 로컬 임의 포트에 생성하고, 일반 통합 테스트와
+직접 인증 테스트에 각각 전용 계정과 root 접속 정보를 전달한다. `.env`를 읽지 않으며
+기존 DB와 Flyway 이력을 변경하지 않는다. 종료 시 자신이 생성한 컨테이너만 삭제하고
+Gradle 종료 코드를 유지한다. 새 DB에서도 검증이 생략되지 않도록 `--rerun-tasks`를 사용한다.
+테스트 결과는 `build/reports/tests/test/index.html`에 남는다.
+
+`AUTH_TEST_MYSQL_PASSWORD` 누락·root 인증 거부 및 기존 DB의 미적용 과거 migration으로
+인한 Flyway 검증 실패를 피하기 위한 실행 방법이다. 기존 DB에 `repair`나 `outOfOrder`를
+자동 적용하지 않는다. 카탈로그 테스트는 고정 버전 업그레이드를 검증한 뒤 최신 migration을
+적용하므로 최신 Repository의 `recommendation_message` 컬럼도 함께 검증한다.
+Redis 설정 단위 테스트는 로컬 `.env`의 `CHAT_REDIS_ENABLED` 등에 영향을 받지 않도록
+환경 변수 소스를 제외하고 기본값·테스트에 명시한 설정을 검증한다.
