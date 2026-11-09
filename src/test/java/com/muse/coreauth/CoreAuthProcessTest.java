@@ -68,6 +68,7 @@ import com.sun.net.httpserver.HttpsServer;
 class CoreAuthProcessTest {
     private static final boolean PRODUCTION = Boolean.getBoolean("auth.integration.production");
     private static final ProductionTlsFixture TLS = PRODUCTION ? new ProductionTlsFixture() : null;
+    private static final boolean MUSIC = Boolean.getBoolean("auth.integration.music-events");
     private static final boolean RUNTIME = Boolean.getBoolean("auth.integration.runtime");
     private static final String METRICS = "synthetic-metrics-service-token-at-least-32";
     private static final boolean CONTROL = Boolean.getBoolean("auth.integration.control-events");
@@ -103,6 +104,7 @@ class CoreAuthProcessTest {
                                 user core-auth on >%s &auth-test:chat:control:v1 \
                                 +hello +ping +quit +client|setinfo +client|setname +publish
                                 user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
+                                &auth-test:chat:music:* \
                                 +hello +ping +quit +publish +info +client|setinfo +client|setname \
                                 +subscribe +psubscribe +unsubscribe +punsubscribe \
                                 ~auth-test:chat:state:* +eval +hget +hset +expire
@@ -268,6 +270,14 @@ class CoreAuthProcessTest {
             if (CONTROL) {
                 chatEnv.put("CHAT_CONTROL_EVENTS_ENABLED", "true");
             }
+            if (MUSIC) {
+                chatEnv.put("CHAT_MUSIC_QUEUE_ENABLED", "true");
+                chatEnv.put("CHAT_MUSIC_PLAYBACK_ENABLED", "true");
+                chatEnv.put("CHAT_MUSIC_EVENTS_ENABLED", "true");
+                chatEnv.put("CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS", "0");
+                chatEnv.put("CHAT_MUSIC_KEYS", "fixture:" + java.util.Base64.getEncoder().encodeToString(
+                        "synthetic-music-fingerprint-key-at-least-32-bytes".getBytes(StandardCharsets.UTF_8)));
+            }
             if (PRODUCTION) {
                 chatEnv.putAll(Map.of("CHAT_AUTH_REDIS_ENABLED", "true", "CORE_AUTH_PRODUCER_IDS", PRODUCER,
                         "CHAT_REDIS_SSL_CA_CERTIFICATE", TLS.certificate().toString()));
@@ -321,6 +331,10 @@ class CoreAuthProcessTest {
             }
             Probe second = join(subscribed, revokedSid, region, room);
             Probe survivor = join(polling, survivingSid, region, room);
+            if (MUSIC) {
+                musicChecks(jdbc, polling, subscribed, first, second, revokedSid, region, room);
+                return;
+            }
             if (CONTROL) {
                 String controlSid = UUID.randomUUID().toString();
                 sessions.put(controlSid, session(controlSid));
@@ -903,6 +917,101 @@ class CoreAuthProcessTest {
             }
         });
         return new Node(pending.process(), actualPort[0]);
+    }
+
+    private void musicChecks(JdbcTemplate jdbc, Node firstTask, Node secondTask, Probe first, Probe second,
+            String sid, long region, long room) throws Exception {
+        jdbc.update("INSERT INTO music(provider,external_music_id,title,artist_name,youtube_video_id) "
+                + "VALUES ('ITUNES','music-events-process','synthetic song','synthetic artist','abcdefghijk')");
+        long music = jdbc.queryForObject("SELECT id FROM music WHERE external_music_id='music-events-process'",
+                Long.class);
+        jdbc.update("""
+                INSERT INTO music_playback_sources(music_id,youtube_video_id,channel_id,channel_kind,review_reference,
+                  reviewed_by,status,duration_millis,playback_country,verified_at,valid_until,version)
+                VALUES (?,'abcdefghijk','synthetic','ARTIST','synthetic','test','VERIFIED',120000,'KR',
+                  TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6)),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),1)
+                """, music);
+        jdbc.update("""
+                INSERT INTO recommendation_sessions(user_id,region_id,trigger_type,input_type,conversation_key,status)
+                VALUES (411001,?,'CHATBOT','TEXT','music-events-process','COMPLETED')
+                """, region);
+        long rec = jdbc.queryForObject("SELECT id FROM recommendation_sessions "
+                + "WHERE conversation_key='music-events-process'", Long.class);
+        jdbc.update("INSERT INTO recommendation_items(recommendation_session_id,music_id,rank_no) VALUES (?,?,1)", rec,
+                music);
+        String base = "/api/v1/chat-rooms/" + room;
+        String firstQuery = "?membership_id=" + first.membership + "&view_session_id=" + first.view;
+        String secondQuery = "?membership_id=" + second.membership + "&view_session_id=" + second.view;
+        var added = request(secondTask, "POST", base + "/queue-items" + firstQuery, token(sid),
+                json.writeValueAsString(Map.of("music_id", music)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+        assertEquals(201, added.statusCode(), added.body());
+        long current = json.readTree(added.body()).path("data").path("queue_item_id").asLong();
+        for (Probe probe : List.of(first, second)) {
+            awaitMusic(probe, "QUEUE_UPDATED", 1);
+            assertEquals("PLAYING", awaitMusic(probe, "PLAYBACK_UPDATED", 1).path("playback").path("state").asText());
+        }
+        String pauseId = UUID.randomUUID().toString();
+        String pauseBody = json.writeValueAsString(Map.of("action", "PAUSE", "queue_item_id", current,
+                "expected_version", 1));
+        var paused = request(firstTask, "POST", base + "/playback/commands" + secondQuery, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(200, paused.statusCode(), paused.body());
+        for (Probe probe : List.of(first, second)) {
+            assertEquals("PAUSED", awaitMusic(probe, "PLAYBACK_UPDATED", 2).path("playback").path("state").asText());
+        }
+        var retry = request(secondTask, "POST", base + "/playback/commands" + secondQuery, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(paused.body(), retry.body());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_command_receipts WHERE command_id=?",
+                Integer.class, pauseId));
+        var queued = request(firstTask, "POST", base + "/queue-items" + secondQuery, token(sid),
+                json.writeValueAsString(Map.of("music_id", music)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+        assertEquals(201, queued.statusCode(), queued.body());
+        for (Probe probe : List.of(first, second)) {
+            assertEquals("PAUSED", awaitMusic(probe, "QUEUE_UPDATED", 3).path("playback").path("state").asText());
+        }
+        var skipped = request(firstTask, "POST", base + "/playback/commands" + secondQuery, token(sid),
+                json.writeValueAsString(Map.of("action", "SKIP", "queue_item_id", current, "expected_version", 3)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+        assertEquals(200, skipped.statusCode(), skipped.body());
+        for (Probe probe : List.of(first, second)) {
+            var next = awaitMusic(probe, "PLAYBACK_UPDATED", 4);
+            assertEquals("PLAYING", next.path("playback").path("state").asText());
+            assertTrue(next.path("playback").path("current_queue_item_id").asLong() != current);
+        }
+        jdbc.update("""
+                UPDATE playback_states SET state_changed_at=TIMESTAMPADD(SECOND,-121,UTC_TIMESTAMP(6)),
+                  due_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) WHERE chat_room_id=?
+                """, room);
+        for (Probe probe : List.of(first, second)) {
+            assertEquals("IDLE", awaitMusic(probe, "PLAYBACK_UPDATED", 5).path("playback").path("state").asText());
+            assertEquals("IDLE", awaitMusic(probe, "PLAYBACK_SYNC", 5).path("playback").path("state").asText());
+        }
+        await(() -> jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_outbox WHERE room_id=? AND status='SENT'",
+                Integer.class, room) == 8);
+        assertEquals(5,
+                jdbc.queryForObject("SELECT version FROM playback_states WHERE chat_room_id=?", Integer.class, room));
+        var checks = Map.of("twoChatProcesses", true, "realCoreChecks", true, "crossTaskRest", true,
+                "senderViaPubSub", true, "equalVersionPair", true, "pauseRetry", true, "pausedAdd", true,
+                "skipAndServerEnd", true, "readOnlyPeriodicSync", true);
+        Files.writeString(evidence.resolve("music-events.json"), json.writeValueAsString(checks));
+        Files.writeString(evidence.resolve("music-event-examples.json"), json.writeValueAsString(musicExamples));
+    }
+
+    private final List<com.fasterxml.jackson.databind.JsonNode> musicExamples = new ArrayList<>();
+
+    private com.fasterxml.jackson.databind.JsonNode awaitMusic(Probe probe, String type, long version)
+            throws Exception {
+        for (int attempt = 0; attempt < 20; attempt++) {
+            var data = frameData(probe.await(type));
+            if (data.path("version").asLong() >= version) {
+                musicExamples.add(json.valueToTree(Map.of("type", type, "data", data)));
+                return data;
+            }
+        }
+        throw new AssertionError("latest music snapshot missing");
     }
 
     private Probe join(Node node, String sid, long region, long room) throws Exception {
