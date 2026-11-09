@@ -74,6 +74,10 @@ class MusicCatalogMySqlTest {
         flyway.validate();
         assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(flyway.info().current().getVersion().toString()).isEqualTo(MIGRATION_VERSION);
+
+        // 고정 버전의 업그레이드 검증 이후에는 현재 Repository와 같은 스키마를 사용한다.
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+
         assertThat(new MusicRecordRepository(jdbc).findMusic("ITUNES", "legacy").orElseThrow().is_queueable())
                 .isFalse();
         assertThat(jdbc.queryForObject("SELECT region_id FROM recommendation_sessions WHERE conversation_key='legacy'",
@@ -188,7 +192,7 @@ class MusicCatalogMySqlTest {
         var context = popup.context(user);
         var admission = popup.admit(user, id, popupRequest(context), popupRegion(), true);
         assertThat(popup.complete(user, id, admission.scopeGeneration(), admission.admittedCancelEpoch(),
-                List.of(popupTrack("" + user)), deadline()).status()).isEqualTo("READY");
+                List.of(popupTrack("" + user)), null, deadline()).status()).isEqualTo("READY");
         sources.save(review(0), video(), Instant.now());
         assertThat(eligibility.findSources(user, region, music).orElseThrow().recommended()).isTrue();
         popup.cancel(user, UUID.randomUUID(), id, context.scopeGeneration(), context.cancelEpoch());
@@ -209,7 +213,7 @@ class MusicCatalogMySqlTest {
                 + "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test-only archive failure'");
         try {
             assertThatThrownBy(() -> popup.complete(user, id, admission.scopeGeneration(),
-                    admission.admittedCancelEpoch(), List.of(popupTrack("new-rollback")), deadline()))
+                    admission.admittedCancelEpoch(), List.of(popupTrack("new-rollback")), null, deadline()))
                     .isInstanceOf(RuntimeException.class);
         } finally {
             jdbc.execute("DROP TRIGGER reject_catalog_item");
