@@ -137,9 +137,8 @@ public class ChatMessageOutboundGuard implements ExecutorChannelInterceptor {
                                 : participation.permitsMessageEnqueue(context.get().userId(), socket, room, id,
                                         message.getHeaders().get("chatEnqueuePermissions"))
                         : handling
-                                ? permissionBatcher == null
-                                        ? participation.permitsSocket(context.get().userId(), socket, room)
-                                        : permissionBatcher.permitsSocket(context.get().userId(), socket, room)
+                                ? permitsSocketAtHandler(context.get(), socket, room,
+                                        message.getHeaders().get("chatMusicVersion") instanceof Long)
                                 : participation.permitsSocketEnqueue(context.get().userId(), socket, room,
                                         message.getHeaders().get("chatSocketEnqueuePermissions"));
                 if (!permitted) {
@@ -164,6 +163,19 @@ public class ChatMessageOutboundGuard implements ExecutorChannelInterceptor {
             return null;
         }
         return message;
+    }
+
+    private boolean permitsSocketAtHandler(ChatAuthSessionRegistry.Context context, String socket, long room,
+            boolean music) {
+        if (permissionBatcher != null) {
+            return music
+                    ? permissionBatcher.permitsMusic(context.userId(), socket, room)
+                    : permissionBatcher.permitsSocket(context.userId(), socket, room);
+        }
+        return music
+                ? participation.permitsMusicBatch(java.util.List.of(
+                        new ChatParticipationService.MessagePermission(context.userId(), socket, room, -1))).getFirst()
+                : participation.permitsSocket(context.userId(), socket, room);
     }
 
     private boolean coreValid(Message<?> message) {

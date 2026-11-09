@@ -20,6 +20,12 @@ public final class ChatRedisSubscription implements AutoCloseable {
     ChatRedisSubscription(StatefulRedisPubSubConnection<String, String> connection, ChatRedisChannels channels,
             RedisPubSubListener<String, String> listener, Consumer<ChatRedisSubscription> onClose,
             Runnable onUnavailable) {
+        this(connection, channels.roomPattern(), channels.controlChannel(), listener, onClose, onUnavailable);
+    }
+
+    ChatRedisSubscription(StatefulRedisPubSubConnection<String, String> connection, String pattern, String control,
+            RedisPubSubListener<String, String> listener, Consumer<ChatRedisSubscription> onClose,
+            Runnable onUnavailable) {
         this.connection = connection;
         this.onClose = onClose;
         connection.addListener(new RedisConnectionStateListener() {
@@ -33,21 +39,21 @@ public final class ChatRedisSubscription implements AutoCloseable {
         connection.addListener(new RedisPubSubAdapter<>() {
             @Override
             public void subscribed(String channel, long count) {
-                if (channels.controlChannel().equals(channel)) {
+                if (control.equals(channel)) {
                     controlReady.set(true);
                 }
             }
 
             @Override
             public void psubscribed(String pattern, long count) {
-                if (channels.roomPattern().equals(pattern)) {
+                if (pattern.equals(pattern)) {
                     roomReady.set(true);
                 }
             }
 
             @Override
             public void unsubscribed(String channel, long count) {
-                if (channels.controlChannel().equals(channel)) {
+                if (control.equals(channel)) {
                     controlReady.set(false);
                     onUnavailable.run();
                 }
@@ -55,7 +61,7 @@ public final class ChatRedisSubscription implements AutoCloseable {
 
             @Override
             public void punsubscribed(String pattern, long count) {
-                if (channels.roomPattern().equals(pattern)) {
+                if (pattern.equals(pattern)) {
                     roomReady.set(false);
                     onUnavailable.run();
                 }
@@ -63,21 +69,21 @@ public final class ChatRedisSubscription implements AutoCloseable {
 
             @Override
             public void message(String channel, String message) {
-                if (isReady() && channels.controlChannel().equals(channel)) {
+                if (isReady() && control.equals(channel)) {
                     listener.message(channel, message);
                 }
             }
 
             @Override
             public void message(String pattern, String channel, String message) {
-                if (isReady() && channels.roomPattern().equals(pattern)) {
+                if (isReady() && pattern.equals(pattern)) {
                     listener.message(pattern, channel, message);
                 }
             }
         });
         try {
-            connection.sync().psubscribe(channels.roomPattern());
-            connection.sync().subscribe(channels.controlChannel());
+            connection.sync().psubscribe(pattern);
+            connection.sync().subscribe(control);
         } catch (RuntimeException failure) {
             close();
             throw failure;
