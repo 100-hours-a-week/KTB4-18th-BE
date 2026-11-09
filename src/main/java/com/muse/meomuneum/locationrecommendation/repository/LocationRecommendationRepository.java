@@ -210,7 +210,7 @@ public class LocationRecommendationRepository {
     }
 
     public RecommendationResponse complete(long userId, UUID requestId, UUID generation, long cancelEpoch,
-            List<TrackResponse> tracks, long deadlineNanos) {
+            List<TrackResponse> tracks, String recommendationMessage, long deadlineNanos) {
         try {
             return inTransaction(deadlineNanos, () -> {
                 State state = lockState(userId);
@@ -230,7 +230,8 @@ public class LocationRecommendationRepository {
                     updateTerminalOwned(root, LocationRecommendationStatus.EMPTY, null, true);
                     releaseLease(userId, requestId);
                 } else {
-                    insertDailyIssue(userId, root, tracks, generation, cancelEpoch, deadlineNanos);
+                    insertDailyIssue(userId, root, tracks, recommendationMessage, generation, cancelEpoch,
+                            deadlineNanos);
                     releaseLease(userId, requestId);
                 }
                 State latest = readState(userId);
@@ -382,7 +383,8 @@ public class LocationRecommendationRepository {
             UUID ownerRequest = state.leaseRequestId();
             UUID ledgerTarget = targetRequestId;
             jdbc.update("UPDATE location_recommendation_requests SET status='CANCELLED', error_reason='CANCELLED', "
-                    + "tracks=JSON_ARRAY(), display_claim_key=NULL, display_claimed_at=NULL, "
+                    + "tracks=JSON_ARRAY(), recommendation_message=NULL, "
+                    + "display_claim_key=NULL, display_claimed_at=NULL, "
                     + "updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND canonical_request_id IS NULL "
                     + "AND scope_generation=? AND admitted_cancel_epoch=? AND status IN ('PROCESSING','READY')",
                     userId, generation.toString(), expectedCancelEpoch);
@@ -415,9 +417,10 @@ public class LocationRecommendationRepository {
         return inTransaction(() -> {
             int deleted = jdbc.update("DELETE FROM location_recommendation_daily_issues WHERE issued_date < "
                     + "DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR)");
-            jdbc.update("UPDATE location_recommendation_requests SET tracks=JSON_ARRAY(), "
+            jdbc.update("UPDATE location_recommendation_requests SET tracks=JSON_ARRAY(), recommendation_message=NULL, "
                     + "display_claim_key=NULL, display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) "
-                    + "WHERE status='READY' AND expires_at<=UTC_TIMESTAMP(6) AND JSON_LENGTH(tracks)>0");
+                    + "WHERE status='READY' AND expires_at<=UTC_TIMESTAMP(6) "
+                    + "AND (JSON_LENGTH(tracks)>0 OR recommendation_message IS NOT NULL)");
             jdbc.update("DELETE a FROM location_recommendation_requests a JOIN location_recommendation_requests c "
                     + "ON c.user_id=a.user_id AND c.request_id=a.canonical_request_id "
                     + "WHERE a.canonical_request_id IS NOT NULL "
@@ -504,7 +507,7 @@ public class LocationRecommendationRepository {
     private Optional<Request> findByRequestId(long userId, UUID id) {
         return jdbc.query("SELECT r.user_id, r.request_id, r.idempotency_key, r.canonical_request_id, "
                 + "r.scope_generation, r.region_id, r.scope_date, r.status, r.admitted_cancel_epoch, "
-                + "r.expires_at, r.display_claim_key, r.error_reason, r.tracks, "
+                + "r.expires_at, r.display_claim_key, r.error_reason, r.tracks, r.recommendation_message, "
                 + "CASE WHEN r.expires_at IS NULL THEN 0 ELSE GREATEST(0, "
                 + "TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(6), r.expires_at) DIV 1000) END ttl_ms, "
                 + "g.code region_code, g.name region_name, p.name sido_name "
@@ -565,7 +568,8 @@ public class LocationRecommendationRepository {
         } else if (status == LocationRecommendationStatus.READY
                 && !testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
             jdbc.update("UPDATE location_recommendation_requests SET status='SUPERSEDED', "
-                    + "error_reason='RECORDED_REGION', tracks=JSON_ARRAY(), display_claim_key=NULL, "
+                    + "error_reason='RECORDED_REGION', tracks=JSON_ARRAY(), recommendation_message=NULL, "
+                    + "display_claim_key=NULL, "
                     + "display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND request_id=? "
                     + "AND status='READY'", userId, request.requestId().toString());
             status = LocationRecommendationStatus.SUPERSEDED;
@@ -578,7 +582,8 @@ public class LocationRecommendationRepository {
         }
         return new RecommendationResponse(request.requestId(), status.name(), reason,
                 new RegionResponse(request.regionId(), request.regionCode(), request.regionName(), request.sidoName()),
-                tracks, request.generation(), state.cancelEpoch(), Math.min(RESULT_TTL_MILLIS, ttl));
+                tracks, status == LocationRecommendationStatus.READY ? request.recommendationMessage() : null,
+                request.generation(), state.cancelEpoch(), Math.min(RESULT_TTL_MILLIS, ttl));
     }
 
     private boolean isExpired(Request request) {
@@ -587,7 +592,8 @@ public class LocationRecommendationRepository {
 
     private void expireReservation(long userId, UUID requestId) {
         jdbc.update("UPDATE location_recommendation_requests SET status='FAILED', error_reason='LEASE_EXPIRED', "
-                + "tracks=JSON_ARRAY(), updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND request_id=? "
+                + "tracks=JSON_ARRAY(), recommendation_message=NULL, updated_at=UTC_TIMESTAMP(6) "
+                + "WHERE user_id=? AND request_id=? "
                 + "AND canonical_request_id IS NULL AND status='PROCESSING'", userId, requestId.toString());
     }
 
@@ -634,8 +640,8 @@ public class LocationRecommendationRepository {
         return null;
     }
 
-    private void insertDailyIssue(long userId, Request request, List<TrackResponse> tracks, UUID generation,
-            long cancelEpoch, long deadlineNanos) {
+    private void insertDailyIssue(long userId, Request request, List<TrackResponse> tracks,
+            String recommendationMessage, UUID generation, long cancelEpoch, long deadlineNanos) {
         requireBeforeDeadline(deadlineNanos);
         String json = serialize(tracks);
         if (!testRepeatEnabled) {
@@ -653,11 +659,13 @@ public class LocationRecommendationRepository {
         int updated = jdbc.update("UPDATE location_recommendation_requests r SET status='READY', error_reason=NULL, "
                 + "issued_date=DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), issued_at=UTC_TIMESTAMP(6), "
                 + "expires_at=DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 10 MINUTE), tracks=CAST(? AS JSON), "
+                + "recommendation_message=?, "
                 + "updated_at=UTC_TIMESTAMP(6) WHERE r.user_id=? AND r.request_id=? "
                 + "AND r.canonical_request_id IS NULL AND r.status='PROCESSING' AND EXISTS "
                 + "(SELECT 1 FROM location_recommendation_states s WHERE s.user_id=r.user_id "
                 + "AND s.lease_request_uuid=r.request_id AND s.scope_generation=? AND s.cancel_epoch=? "
-                + "AND s.lease_expires_at>UTC_TIMESTAMP(6))", json, userId, request.requestId().toString(),
+                + "AND s.lease_expires_at>UTC_TIMESTAMP(6))", json, recommendationMessage, userId,
+                request.requestId().toString(),
                 generation.toString(), cancelEpoch);
         if (updated != 1 || System.nanoTime() - deadlineNanos >= 0) {
             throw new ReservationLostException();
@@ -700,7 +708,7 @@ public class LocationRecommendationRepository {
             boolean requireLiveLease) {
         String liveClause = requireLiveLease ? " AND s.lease_expires_at>UTC_TIMESTAMP(6)" : "";
         int updated = jdbc.update("UPDATE location_recommendation_requests r SET status=?, error_reason=?, "
-                + "tracks=JSON_ARRAY(), "
+                + "tracks=JSON_ARRAY(), recommendation_message=NULL, "
                 + "display_claim_key=NULL, display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) "
                 + "WHERE r.user_id=? AND r.request_id=? AND r.canonical_request_id IS NULL "
                 + "AND r.status='PROCESSING' AND EXISTS (SELECT 1 FROM location_recommendation_states s "
@@ -903,7 +911,8 @@ public class LocationRecommendationRepository {
     private record Request(long userId, UUID requestId, UUID idempotencyKey, UUID canonicalRequestId,
             UUID generation, long regionId, LocalDate scopeDate, LocationRecommendationStatus status,
             long admittedCancelEpoch, java.time.LocalDateTime expiresAt, UUID displayClaimKey, String errorReason,
-            List<TrackResponse> tracks, long ttlMillis, String regionCode, String regionName, String sidoName) {
+            List<TrackResponse> tracks, String recommendationMessage, long ttlMillis, String regionCode,
+            String regionName, String sidoName) {
     }
 
     private record Cancellation(UUID targetRequestId, UUID generation, long expectedEpoch, long resultEpoch,
@@ -928,7 +937,8 @@ public class LocationRecommendationRepository {
                     LocationRecommendationStatus.valueOf(row.getString("status")),
                     row.getLong("admitted_cancel_epoch"), row.getObject("expires_at", java.time.LocalDateTime.class),
                     uuidOrNull(row.getString("display_claim_key")), row.getString("error_reason"),
-                    tracks(row.getString("tracks")), row.getLong("ttl_ms"), row.getString("region_code"),
+                    tracks(row.getString("tracks")), row.getString("recommendation_message"), row.getLong("ttl_ms"),
+                    row.getString("region_code"),
                     row.getString("region_name"), row.getString("sido_name"));
         }
     }
