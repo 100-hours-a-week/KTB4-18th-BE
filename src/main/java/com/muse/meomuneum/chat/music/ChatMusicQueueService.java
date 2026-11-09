@@ -2,7 +2,6 @@ package com.muse.meomuneum.chat.music;
 
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
-import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -27,7 +26,8 @@ public class ChatMusicQueueService {
     private final ChatMusicCursor cursors;
     private final ObjectMapper json = new ObjectMapper();
     private final int capacity;
-    private final int commandIntervalMillis;
+    private final ChatMusicCommandStore commands;
+    private ChatMusicPlaybackService playback;
 
     public ChatMusicQueueService(JdbcTemplate jdbc, ChatParticipationService participation,
             ChatMusicStateRepository states, RequestableMusicRepository catalog, ChatMusicKeys keys,
@@ -42,7 +42,11 @@ public class ChatMusicQueueService {
         this.keys = keys;
         this.cursors = new ChatMusicCursor(keys);
         this.capacity = capacity;
-        this.commandIntervalMillis = commandIntervalMillis;
+        this.commands = new ChatMusicCommandStore(jdbc, keys, commandIntervalMillis);
+    }
+
+    public void setPlaybackService(ChatMusicPlaybackService service) {
+        playback = service;
     }
 
     public void validateRetainedKeys(String environment) {
@@ -111,6 +115,9 @@ public class ChatMusicQueueService {
                     result.put("server_time", tx.context().asOf().toInstant(ZoneOffset.UTC).toString());
                     result.put("current",
                             state.queueItemId() == null ? null : current(caller.roomId(), state.queueItemId()));
+                    if (playback != null) {
+                        result.putAll(playback.snapshot(caller.roomId()));
+                    }
                     return result;
                 });
     }
@@ -141,34 +148,11 @@ public class ChatMusicQueueService {
         return participation.musicTransaction(c.userId(), c.sid(), c.roomId(), c.membershipId(), c.viewId(), tx -> {
             var context = tx.context();
             var state = states.lockRoom(c.roomId());
-            String content = "command|" + context.environment() + "|" + c.userId() + "|" + c.roomId() + "|"
-                    + commandId + "|" + c.sid() + "|" + c.membershipId() + "|" + c.viewId() + "|" + type + "|"
-                    + target + "|" + expectedVersion;
-            var receipts = jdbc.query("""
-                    SELECT key_id,fingerprint,http_status,result_body,expires_at FROM chat_music_command_receipts
-                    WHERE environment=? AND user_id=? AND room_id=? AND command_id=?
-                    """, (row, index) -> new Receipt(row.getString("key_id"), row.getString("fingerprint"),
-                    row.getInt("http_status"), row.getString("result_body"),
-                    row.getObject("expires_at", LocalDateTime.class)),
-                    context.environment(), c.userId(), c.roomId(), commandId);
-            if (!receipts.isEmpty()) {
-                var receipt = receipts.getFirst();
-                if (!keys.matches(receipt.keyId(), receipt.fingerprint(), content)) {
-                    throw new ChatMusicException(409, "COMMAND_ID_CONFLICT");
-                }
-                if (!receipt.expiresAt().isAfter(context.asOf())) {
-                    throw new ChatMusicException(410, "COMMAND_EXPIRED");
-                }
-                return new Result(receipt.status(),
-                        receipt.body());
+            Result replay = commands.replay(c, tx, commandId, type, target, expectedVersion);
+            if (replay != null) {
+                return replay;
             }
-            if (jdbc.queryForObject("""
-                    SELECT COUNT(*) FROM chat_music_command_receipts WHERE environment=? AND user_id=?
-                      AND completed_at>TIMESTAMPADD(MICROSECOND,?,UTC_TIMESTAMP(6))
-                    """, Long.class, context.environment(), c.userId(), -commandIntervalMillis * 1000L) > 0) {
-                throw new ChatMusicException(429, "COMMAND_RATE_LIMITED",
-                        Math.max(1, (commandIntervalMillis + 999) / 1000));
-            }
+            commands.limit(c, tx);
             if (state.version() >= MAX_NUMBER || (type.equals("ADD") && state.nextSequenceNo() >= MAX_NUMBER)) {
                 throw new ChatMusicException(409, "MUSIC_COUNTER_EXHAUSTED");
             }
@@ -187,43 +171,41 @@ public class ChatMusicQueueService {
                 }
                 item = target;
             }
+            var playbackChange = playback != null && type.equals("ADD")
+                    ? playback.afterAdd(tx)
+                    : ChatMusicPlaybackService.Change.NONE;
             long version = state.version() + 1;
             jdbc.update("""
                     UPDATE playback_states SET version=?,next_sequence_no=?,updated_at=UTC_TIMESTAMP(6)
                     WHERE chat_room_id=?
                     """, version, state.nextSequenceNo() + (type.equals("ADD") ? 1 : 0), c.roomId());
-            long roomSeq = tx.changed();
+            tx.changed();
             int status = type.equals("ADD") ? 201 : 204;
+            Map<String, Object> data = new LinkedHashMap<>();
+            if (type.equals("ADD")) {
+                data.put("queue_item_id", item);
+                data.put("music_id", target);
+                data.put("sequence_no", state.nextSequenceNo());
+                data.put("status", jdbc.queryForObject("SELECT status FROM music_queue_items WHERE id=?",
+                        String.class, item));
+                data.put("version", version);
+                if (playback != null) {
+                    data.put("playback", playback.snapshot(c.roomId()));
+                }
+            }
             String body = type.equals("ADD")
-                    ? json.writeValueAsString(Map.of("message", "music queued", "data",
-                            Map.of("queue_item_id", item, "music_id", target, "sequence_no", state.nextSequenceNo(),
-                                    "status", "WAITING", "version", version)))
+                    ? json.writeValueAsString(Map.of("message", "music queued", "data", data))
                     : "{}";
-            jdbc.update("""
-                    INSERT INTO chat_music_command_receipts(environment,user_id,room_id,command_id,auth_session_id,
-                      membership_id,view_id,command_type,key_id,fingerprint,result_version,http_status,result_body,
-                      expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,TIMESTAMPADD(HOUR,24,UTC_TIMESTAMP(6)))
-                    """, context.environment(), c.userId(), c.roomId(), commandId, c.sid(), c.membershipId(),
-                    c.viewId(),
-                    type, keys.activeId(), keys.digest(keys.activeId(), content), version, status, body);
-            String eventId = UUID.randomUUID().toString();
-            String event = json.writeValueAsString(Map.of("event_id", eventId, "environment", context.environment(),
-                    "epoch", context.epoch(), "producer_id", tx.producerId(), "room_id", c.roomId(), "room_seq",
-                    roomSeq,
-                    "music_version", version, "type", "QUEUE_UPDATED", "data",
-                    Map.of("action", type, "queue_item_id", item),
-                    "occurred_at", context.asOf().toInstant(ZoneOffset.UTC).toString()));
-            jdbc.update("""
-                    INSERT INTO chat_music_outbox(event_id,environment,epoch,producer_id,room_id,room_seq,
-                      music_version,event_type,event_body,expires_at)
-                    VALUES (?,?,?,?,?,?,?,'QUEUE_UPDATED',?,TIMESTAMPADD(HOUR,24,UTC_TIMESTAMP(6)))
-                    """, eventId, context.environment(), context.epoch(), tx.producerId(), c.roomId(), roomSeq, version,
-                    event);
-            return new Result(status, body);
+            Result result = new Result(status, body);
+            commands.complete(c, tx, commandId, type, target, expectedVersion, version, result);
+            if (playback != null) {
+                playback.events(tx, version, new ChatMusicPlaybackService.Change(true, playbackChange.playback()),
+                        type);
+            } else {
+                commands.event(tx, version, "QUEUE_UPDATED", Map.of("action", type, "queue_item_id", item));
+            }
+            return result;
         });
-    }
-
-    private record Receipt(String keyId, String fingerprint, int status, String body, LocalDateTime expiresAt) {
     }
 
     private long append(Caller c, long music, long sequence) {

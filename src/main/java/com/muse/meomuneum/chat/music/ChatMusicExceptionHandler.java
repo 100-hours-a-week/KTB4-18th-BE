@@ -15,7 +15,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.global.response.ApiResponse;
 
-@RestControllerAdvice(assignableTypes = ChatMusicQueueController.class)
+@RestControllerAdvice(assignableTypes = {ChatMusicQueueController.class, ChatMusicPlaybackController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ChatMusicExceptionHandler {
     @ExceptionHandler(ChatMusicException.class)

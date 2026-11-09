@@ -56,6 +56,8 @@ location:
     secret: ${LOCATION_TOKEN_SECRET}
 chat:
   music:
+    playback:
+      enabled: ${CHAT_MUSIC_PLAYBACK_ENABLED:false}
     keys: ${CHAT_MUSIC_KEYS:}
     queue:
       enabled: ${CHAT_MUSIC_QUEUE_ENABLED:false}

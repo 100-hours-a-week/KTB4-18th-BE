@@ -534,31 +534,33 @@ public final class ChatParticipationService {
     }
 
     public <T> T read(long user, long room, long member, String view, Function<ReadContext, T> operation) {
-        return execute(user, tx -> {
-            tx.lock(List.of(room));
-            RuntimeView current = owned(user, room, member, view);
-            if (!current.state.equals("CONNECTED") || current.owner == null || !ownerLive(current.owner)
-                    || current.generation < 1 || jdbc.queryForObject("""
-                            SELECT COUNT(*) FROM chat_view_sessions WHERE id=? AND ended_at IS NULL
-                                AND updated_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
-                            """, Integer.class, view) != 1) {
-                throw denied();
-            }
-            authorizeUser(user, false);
-            access.authorize(user, sid(member));
-            T result = operation
-                    .apply(new ReadContext(environment, epoch, current.generation, tx.version(room), now()));
-            if (!ownerLive(current.owner)) {
-                throw denied();
-            }
-            return result;
-        });
+        return execute(user, tx -> read(tx, user, room, member, view, operation));
     }
 
-    /** REST music operations use the current connected view, including a remote Task owner. */
+    private <T> T read(Transition tx, long user, long room, long member, String view,
+            Function<ReadContext, T> operation) {
+        tx.lock(List.of(room));
+        RuntimeView current = owned(user, room, member, view);
+        if (!current.state.equals("CONNECTED") || current.owner == null || !ownerLive(current.owner)
+                || current.generation < 1 || jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM chat_view_sessions WHERE id=? AND ended_at IS NULL
+                            AND updated_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                        """, Integer.class, view) != 1) {
+            throw denied();
+        }
+        authorizeUser(user, false);
+        access.authorize(user, sid(member));
+        T result = operation.apply(new ReadContext(environment, epoch, current.generation, tx.version(room), now()));
+        if (!ownerLive(current.owner)) {
+            throw denied();
+        }
+        return result;
+    }
+
+    /** REST music operations authorize the current connected view, including a remote Task owner. */
     public <T> T musicTransaction(long user, String authSid, long room, long member, String view,
             Function<MusicTransaction, T> operation) {
-        return read(user, room, member, view, context -> {
+        return execute(user, tx -> read(tx, user, room, member, view, context -> {
             if (!authSid.equals(sid(member)) || jdbc.queryForObject("""
                     SELECT COUNT(*) FROM chat_view_sessions v JOIN chat_rooms r ON r.id=v.room_id
                     JOIN regions g ON g.id=r.region_id JOIN regions p ON p.id=g.parent_id
@@ -568,22 +570,42 @@ public final class ChatParticipationService {
                     """, Integer.class, view, authSid) != 1) {
                 throw denied();
             }
-            return operation.apply(new MusicTransaction(context, room));
+            return operation.apply(new MusicTransaction(context, room, tx));
+        }));
+    }
+
+    private volatile java.util.function.Consumer<MusicTransaction> musicPresenceHook;
+
+    public void setMusicPresenceHook(java.util.function.Consumer<MusicTransaction> hook) {
+        musicPresenceHook = Objects.requireNonNull(hook);
+    }
+
+    /** Internal scheduler only; still pins control, epoch, Task lease and room before music locks. */
+    public <T> T systemMusicTransaction(long room, Function<MusicTransaction, T> operation) {
+        return execute(null, tx -> {
+            tx.lock(List.of(room));
+            return operation.apply(new MusicTransaction(
+                    new ReadContext(environment, epoch, 0, tx.version(room), now()), room, tx));
         });
     }
 
     public final class MusicTransaction {
         private final ReadContext context;
         private final long room;
-        private boolean changed;
+        private final Transition transition;
 
-        private MusicTransaction(ReadContext context, long room) {
+        private MusicTransaction(ReadContext context, long room, Transition transition) {
             this.context = context;
             this.room = room;
+            this.transition = transition;
         }
 
         public ReadContext context() {
             return context;
+        }
+
+        public long roomId() {
+            return room;
         }
 
         public String producerId() {
@@ -594,12 +616,8 @@ public final class ChatParticipationService {
             if (context.roomSeq() >= 9_007_199_254_740_991L) {
                 throw new ChatMusicException(409, "MUSIC_COUNTER_EXHAUSTED");
             }
-            if (!changed) {
-                jdbc.update("UPDATE chat_room_runtime SET room_seq=room_seq+1 WHERE environment=? AND room_id=?",
-                        environment, room);
-                changed = true;
-            }
-            return context.roomSeq() + 1;
+            transition.changed(room);
+            return transition.version(room);
         }
     }
 
@@ -1083,7 +1101,7 @@ public final class ChatParticipationService {
         }
     }
 
-    private <T> T execute(long user, Function<Transition, T> action) {
+    private <T> T execute(Long user, Function<Transition, T> action) {
         if (!available()) {
             throw new ChatParticipationUnavailableException();
         }
@@ -1119,9 +1137,12 @@ public final class ChatParticipationService {
                 tx.phase("task_guard");
                 requireTask();
                 tx.phase("user_lock");
-                List<Long> users = jdbc.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, user);
-                if (users.isEmpty()) {
-                    throw error(ChatRoomErrorCode.USER_NOT_FOUND);
+                if (user != null) {
+                    List<Long> users = jdbc.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class,
+                            user);
+                    if (users.isEmpty()) {
+                        throw error(ChatRoomErrorCode.USER_NOT_FOUND);
+                    }
                 }
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
@@ -1146,6 +1167,11 @@ public final class ChatParticipationService {
                 T applied = action.apply(tx);
                 tx.phase("control_outbox");
                 for (long room : tx.presence) {
+                    var hook = musicPresenceHook;
+                    if (hook != null) {
+                        hook.accept(new MusicTransaction(
+                                new ReadContext(environment, epoch, 0, tx.version(room), now()), room, tx));
+                    }
                     tx.projectionVersions.put(room, tx.version(room));
                     recordControl("CHAT_PRESENCE_CHANGED", room, tx.version(room),
                             Map.of("room_id", room, "room_seq", tx.version(room)));
