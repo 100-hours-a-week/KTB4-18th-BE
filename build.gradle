@@ -453,3 +453,19 @@ tasks.register('musicCatalog', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.muse.meomuneum.music.catalog.MusicCatalogCommand'
 }
+
+// Packaged Core + two Chat Tasks, isolated MySQL/Redis and synthetic signed sessions.
+tasks.register('chatMusicEventsProcessTest', Test) {
+    dependsOn 'coreBootJar', 'chatBootJar'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/CoreAuthProcessTest.class'
+    systemProperty 'auth.integration.distributed-presence', 'true'
+    systemProperty 'auth.integration.message-relay', 'true'
+    systemProperty 'auth.integration.control-events', 'true'
+    systemProperty 'auth.integration.music-events', 'true'
+    systemProperty 'auth.integration.core-jar', tasks.named('coreBootJar').get().archiveFile.get().asFile.absolutePath
+    systemProperty 'auth.integration.chat-jar', tasks.named('chatBootJar').get().archiveFile.get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}

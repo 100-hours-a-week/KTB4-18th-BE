@@ -76,13 +76,24 @@ public class ChatRedisConnection implements AutoCloseable {
 
     public synchronized ChatRedisSubscription openSubscription(ChatRedisChannels channels,
             RedisPubSubListener<String, String> listener) {
-        Objects.requireNonNull(channels, "channels");
+        return openSubscription(channels.roomPattern(), channels.controlChannel(), listener);
+    }
+
+    public synchronized ChatRedisSubscription openMusicSubscription(ChatRedisChannels channels,
+            RedisPubSubListener<String, String> listener) {
+        return openSubscription(channels.musicPattern(), channels.controlChannel(), listener);
+    }
+
+    private ChatRedisSubscription openSubscription(String pattern, String control,
+            RedisPubSubListener<String, String> listener) {
+        Objects.requireNonNull(pattern, "pattern");
         Objects.requireNonNull(listener, "listener");
         if (closed.get()) {
             throw new IllegalStateException("Chat Redis connection is closed");
         }
         try {
-            ChatRedisSubscription subscription = new ChatRedisSubscription(client.connectPubSub(), channels, listener,
+            ChatRedisSubscription subscription = new ChatRedisSubscription(client.connectPubSub(), pattern, control,
+                    listener,
                     subscriptions::remove, this::unavailable);
             subscriptions.add(subscription);
             return subscription;

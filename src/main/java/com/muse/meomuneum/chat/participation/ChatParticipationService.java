@@ -216,6 +216,11 @@ public final class ChatParticipationService {
     }
 
     private volatile BooleanSupplier messageTransportReady = () -> true;
+    private volatile BooleanSupplier musicTransportReady = () -> true;
+
+    public void setMusicTransportReady(BooleanSupplier guard) {
+        musicTransportReady = Objects.requireNonNull(guard);
+    }
 
     public void setMessageTransportReady(BooleanSupplier guard) {
         messageTransportReady = guard;
@@ -231,7 +236,7 @@ public final class ChatParticipationService {
         if (!runtimePermit.getAsBoolean()) {
             return unavailable("runtime_permit");
         }
-        if (!messageTransportReady.getAsBoolean()) {
+        if (!messageTransportReady.getAsBoolean() || !musicTransportReady.getAsBoolean()) {
             return unavailable("message_transport");
         }
         long remaining = localLease - System.nanoTime();
@@ -750,6 +755,14 @@ public final class ChatParticipationService {
     }
 
     public SocketEnqueuePermissions issueSocketEnqueuePermissions(long room) {
+        return issueSocketEnqueuePermissions(room, false);
+    }
+
+    public SocketEnqueuePermissions issueMusicEnqueuePermissions(long room) {
+        return issueSocketEnqueuePermissions(room, true);
+    }
+
+    private SocketEnqueuePermissions issueSocketEnqueuePermissions(long room, boolean music) {
         if (!available()) {
             throw new ChatParticipationUnavailableException();
         }
@@ -763,7 +776,8 @@ public final class ChatParticipationService {
                             AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
                                 AND b.deleted_at IS NULL AND b.created_at<=UTC_TIMESTAMP(6)
                                 AND b.expires_at>UTC_TIMESTAMP(6)) AND
-                        """ + EFFECTIVE + " GROUP BY v.socket_token,v.owner_generation,v.user_id HAVING COUNT(*)=1",
+                        """ + EFFECTIVE + (music ? " AND v.state='CONNECTED'" : "")
+                        + " GROUP BY v.socket_token,v.owner_generation,v.user_id HAVING COUNT(*)=1",
                         environment, room, taskId, epoch));
         var permitted = new HashMap<String, RecipientPermission>();
         rows.forEach(row -> {
@@ -806,6 +820,14 @@ public final class ChatParticipationService {
 
     /** Fresh primary read for requests already waiting at actual handlers; no previous result is reused. */
     private List<Boolean> permitsDeliveryBatch(List<MessagePermission> requests, boolean messages) {
+        return permitsDeliveryBatch(requests, messages, false);
+    }
+
+    public List<Boolean> permitsMusicBatch(List<MessagePermission> requests) {
+        return permitsDeliveryBatch(requests, false, true);
+    }
+
+    private List<Boolean> permitsDeliveryBatch(List<MessagePermission> requests, boolean messages, boolean music) {
         if (requests.size() > 32) {
             throw new IllegalArgumentException("At most 32 current delivery requests per DB read");
         }
@@ -875,7 +897,8 @@ public final class ChatParticipationService {
                             AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
                                 AND b.deleted_at IS NULL AND b.created_at<=UTC_TIMESTAMP(6)
                                 AND b.expires_at>UTC_TIMESTAMP(6))
-                        """ + messageBoundary + " GROUP BY q.slot HAVING COUNT(*)=1";
+                        """ + messageBoundary + (music ? " AND v.state='CONNECTED'" : "")
+                + " GROUP BY q.slot HAVING COUNT(*)=1";
         var permitted = measured(
                 messages
                         ? ChatDeliveryMetrics.Stage.MESSAGE_PERMISSION_BATCH_DB
