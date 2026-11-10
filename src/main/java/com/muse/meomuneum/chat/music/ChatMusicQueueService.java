@@ -94,6 +94,9 @@ public class ChatMusicQueueService {
         checkSize(size);
         return participation.musicTransaction(caller.userId(), caller.sid(), caller.roomId(), caller.membershipId(),
                 caller.viewId(), tx -> {
+                    if (playback != null) {
+                        playback.reconcile(tx);
+                    }
                     var state = states.lockRoom(caller.roomId());
                     long now = tx.context().asOf().toEpochSecond(ZoneOffset.UTC);
                     String scope = scope(caller, tx.context().environment(), "queue", size);
@@ -108,6 +111,7 @@ public class ChatMusicQueueService {
                             WHERE q.room_id=? AND q.status='WAITING' AND q.sequence_no>? ORDER BY q.sequence_no LIMIT ?
                             """, caller.roomId(), page.last(), size + 1);
                     var result = paginated(items, size, scope, state.version(), now, "sequence_no");
+                    result.put("epoch", tx.context().epoch());
                     result.put("version", state.version());
                     result.put("state", state.state());
                     result.put("position_seconds", state.positionSeconds());
