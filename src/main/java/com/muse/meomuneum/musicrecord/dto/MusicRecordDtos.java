@@ -79,7 +79,8 @@ public final class MusicRecordDtos {
     }
 
     public record MusicRecordDetailResponse(long record_id, MusicSummary music, long map_dot_id, Region region,
-            String custom_place_name, String emotion_memo, Instant created_at, Instant updated_at) {
+            String custom_place_name, String emotion_memo, Instant created_at, Instant updated_at,
+            String preview_url) {
     }
 
     public record UpdateResponse(long record_id, Instant updated_at) {

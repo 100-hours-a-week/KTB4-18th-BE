@@ -325,7 +325,7 @@ public class MusicRecordRepository {
     public Optional<MusicRecordDetailResponse> findRecord(long userId, long recordId) {
         String sql = "SELECT mr.id record_id, mr.map_dot_id, mr.custom_place_name, mr.emotion_memo, "
                 + "mr.created_at, mr.updated_at, m.id music_id, "
-                + RECORD_MUSIC_NAMES + "m.album_cover_url, "
+                + RECORD_MUSIC_NAMES + "m.album_cover_url, m.preview_url, "
                 + "g.id sigungu_id, g.code sigungu_code, g.name sigungu_name, "
                 + "s.id sido_id, s.code sido_code, s.name sido_name "
                 + "FROM music_records mr JOIN music m ON m.id=mr.music_id "
@@ -338,7 +338,8 @@ public class MusicRecordRepository {
                 row.getObject("created_at", LocalDateTime.class).toInstant(ZoneOffset.UTC),
                 row.getObject("updated_at", LocalDateTime.class) == null
                         ? null
-                        : row.getObject("updated_at", LocalDateTime.class).toInstant(ZoneOffset.UTC)),
+                        : row.getObject("updated_at", LocalDateTime.class).toInstant(ZoneOffset.UTC),
+                row.getString("preview_url")),
                 recordId, userId).stream().findFirst();
     }
     public boolean existsActiveRecord(long recordId) {

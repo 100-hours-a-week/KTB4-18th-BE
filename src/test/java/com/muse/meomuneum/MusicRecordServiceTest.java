@@ -61,7 +61,7 @@ class MusicRecordServiceTest {
                 5L, new Region(new RegionPart(5L, "11", "서울특별시"),
                         new RegionPart(4L, "11440", "마포구")),
                 "홍대", "산책 중",
-                Instant.parse("2026-09-22T06:30:00Z"), null);
+                Instant.parse("2026-09-22T06:30:00Z"), null, null);
     }
 
     @Test
