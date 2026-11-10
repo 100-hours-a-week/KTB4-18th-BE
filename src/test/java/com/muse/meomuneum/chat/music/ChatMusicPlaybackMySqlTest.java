@@ -451,6 +451,114 @@ class ChatMusicPlaybackMySqlTest {
         assertThatThrownBy(playback::validateStorage).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void queueReadRepairsOverdueTrackAndReturnsEpochWithoutReplayingEveryElapsedSong() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        long previous = item();
+        due();
+        var latest = apiA.queue(caller, 20, null);
+        assertThat(latest.get("epoch")).isEqualTo(1L);
+        assertThat(latest.get("version")).isEqualTo(4L);
+        assertThat(status(previous)).isEqualTo("PLAYED");
+        assertThat(latest.get("state")).isEqualTo("PLAYING");
+        assertThat(item()).isNotEqualTo(previous);
+        assertThat(apiB.queue(other, 20, null).get("version")).isEqualTo(4L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_queue_items WHERE room_id=? AND status='PLAYED'",
+                Long.class, caller.roomId())).isEqualTo(1);
+    }
+
+    private void verifiedFailure(int seconds) {
+        for (var c : List.of(caller, other)) {
+            jdbc.update("""
+                    INSERT INTO chat_view_intervals(view_session_id,process_id,started_at,start_after_message_id,
+                        verified_at,verified_through_message_id)
+                    VALUES (?,?,TIMESTAMPADD(SECOND,-60,UTC_TIMESTAMP(6)),0,
+                        TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6)),0)
+                    """, c.viewId(), taskB.taskId(), -seconds);
+        }
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment=? AND task_id=?", environment, taskB.taskId());
+    }
+
+    @Test
+    void pausedFailureSurvivesOnlyTheLastVerifiedThirtySecondsAndWorkerScansIt() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        playback.control(taskA, caller, UUID.randomUUID().toString(), "PAUSE", item(), 1);
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        verifiedFailure(5);
+        try (var worker = new ChatMusicPlaybackWorker(jdbc, taskA, playback)) {
+            worker.poll();
+            assertThat(jdbc.queryForObject("SELECT state FROM playback_states WHERE chat_room_id=?",
+                    String.class, caller.roomId())).isEqualTo("PAUSED");
+            jdbc.update("UPDATE chat_view_intervals SET verified_at=TIMESTAMPADD(SECOND,-31,UTC_TIMESTAMP(6)) "
+                    + "WHERE view_session_id IN (?,?)", caller.viewId(), other.viewId());
+            worker.poll();
+            worker.poll();
+            assertThat(jdbc.queryForObject("SELECT state FROM playback_states WHERE chat_room_id=?",
+                    String.class, caller.roomId())).isEqualTo("IDLE");
+            assertThat(count("chat_music_command_receipts")).isEqualTo(3);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_queue_items WHERE room_id=? "
+                    + "AND status='CANCELED'", Long.class, caller.roomId())).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void expiredOrphanIsClearedBeforeTheSameViewCanMaskAbsenceWithANewReservation() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        playback.control(taskA, caller, UUID.randomUUID().toString(), "PAUSE", item(), 1);
+        verifiedFailure(31);
+        taskA.claim(caller.userId(), caller.sid(), caller.roomId(), caller.membershipId(), caller.viewId(), "restored");
+        assertThat(jdbc.queryForObject("SELECT state FROM playback_states WHERE chat_room_id=?",
+                String.class, caller.roomId())).isEqualTo("IDLE");
+        assertThat(status(jdbc.queryForObject("SELECT MIN(id) FROM music_queue_items WHERE room_id=?",
+                Long.class, caller.roomId()))).isEqualTo("CANCELED");
+    }
+
+    @Test
+    void sameViewRecoveryInsideGracePreservesPausedPinAndDoesNotGrantReadingAcrossAbsence() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        long current = item();
+        playback.control(taskA, caller, UUID.randomUUID().toString(), "PAUSE", current, 1);
+        verifiedFailure(5);
+        taskA.claim(caller.userId(), caller.sid(), caller.roomId(), caller.membershipId(), caller.viewId(), "restored");
+        taskA.ready(caller.userId(), caller.roomId(), caller.membershipId(), caller.viewId(), "restored");
+        var restored = apiA.queue(caller, 20, null);
+        assertThat(restored.get("state")).isEqualTo("PAUSED");
+        assertThat(restored.get("version")).isEqualTo(2L);
+        assertThat(restored.get("source_video_id")).isEqualTo("abcdefghijk");
+        assertThat(restored.get("current_queue_item_id")).isEqualTo(current);
+    }
+
+    @Test
+    void lateRestJoinCannotResurrectPausedQueueByCreatingANewReservation() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        playback.control(taskA, caller, UUID.randomUUID().toString(), "PAUSE", item(), 1);
+        verifiedFailure(31);
+        var views = (ChatViewStorageService) org.springframework.test.util.ReflectionTestUtils
+                .getField(taskA, "storage");
+        doAnswer(invocation -> {
+            String view = UUID.randomUUID().toString();
+            jdbc.update("""
+                    INSERT INTO chat_view_sessions(id,user_id,room_id,membership_id,created_at,updated_at)
+                    VALUES (?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+                    """, view, caller.userId(), caller.roomId(), caller.membershipId());
+            return view;
+        }).when(views).create(caller.userId(), caller.roomId(), caller.membershipId());
+        long parent = jdbc.queryForObject("SELECT parent_id FROM regions WHERE id=?", Long.class, region);
+        var claims = new com.muse.meomuneum.location.security.LocationResolutionClaims(caller.userId(), parent,
+                jdbc.queryForObject("SELECT code FROM regions WHERE id=?", String.class, parent), region,
+                jdbc.queryForObject("SELECT code FROM regions WHERE id=?", String.class, region),
+                java.time.Instant.now().plusSeconds(60));
+        var joined = taskA.join(caller.userId(), caller.sid(), caller.roomId(), claims);
+        assertThat(joined.membership().viewSessionId()).isNotEqualTo(caller.viewId());
+        assertThat(jdbc.queryForObject("SELECT state FROM playback_states WHERE chat_room_id=?",
+                String.class, caller.roomId())).isEqualTo("IDLE");
+        assertThat(jdbc.queryForObject("SELECT version FROM playback_states WHERE chat_room_id=?",
+                Long.class, caller.roomId())).isEqualTo(3L);
+    }
+
     private void tick(ChatParticipationService task) {
         task.systemMusicTransaction(caller.roomId(), tx -> {
             playback.reconcile(tx);

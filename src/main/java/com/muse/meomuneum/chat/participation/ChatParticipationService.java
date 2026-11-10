@@ -282,6 +282,8 @@ public final class ChatParticipationService {
                 return new Join(null, true);
             }
             LocalDateTime now = now();
+            // Reconcile absence before a new reservation can hide a stale room after a Task failure.
+            reconcileMusicAbsence(tx, room);
             long memberId = same == null ? createMembership(user, sid, room, now) : same.id;
             String view = storage.create(user, room, memberId);
             jdbc.update(
@@ -322,6 +324,7 @@ public final class ChatParticipationService {
                             || current.deadline != null && current.deadline.isAfter(now()))) {
                 throw denied();
             }
+            reconcileMusicAbsence(tx, room);
             if (!capacity(user, room, roomCapacity(room))) {
                 throw error(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED);
             }
@@ -583,6 +586,14 @@ public final class ChatParticipationService {
 
     public void setMusicPresenceHook(java.util.function.Consumer<MusicTransaction> hook) {
         musicPresenceHook = Objects.requireNonNull(hook);
+    }
+
+    private void reconcileMusicAbsence(Transition tx, long room) {
+        var hook = musicPresenceHook;
+        if (hook != null) {
+            hook.accept(new MusicTransaction(
+                    new ReadContext(environment, epoch, 0, tx.version(room), now()), room, tx));
+        }
     }
 
     /** Internal scheduler only; still pins control, epoch, Task lease and room before music locks. */

@@ -1741,3 +1741,79 @@ Spotless·Checkstyle main/core/chat/test·세 앱 JAR와 최종 manifest 소스 
 프로세스별 `build/core-auth-integration/run-*/music-events.json`·`music-event-examples.json`·자식 로그에 보존한다.
 전체 회귀 이후에는 프로세스의 wire 예시 저장만 보강했고 제품 코드 변경 없이 최종 프로세스/참여 검증을 재실행했다.
 실제 OAuth 로그인·YouTube/브라우저 오디오·1000연결/SLO·전체 장애 조합·클라우드 배포 완료가 아니다.
+
+## 공동 재생 9단계 서버 입장·재연결·Task/Redis 장애 복구 (2026-11-09~10)
+
+`feature/chat-music-recovery`(시작 f875f51)에서 FE 선행9단계에 이어 BE를 구현했다.
+앞서5·6단계에서 후속으로 남긴 서버 복구는 이 절을 따른다. 공개 경로/UUID/큐·재생 정책과 플래그 기본false를 유지하며
+새 migration/영속 필드·운영 설정은 추가하지 않았다. 기존 view 검증 시각·runtime epoch·음악 Outbox를 사용한다.
+
+- Task 종료/lease 상실과 명시적 퇴장을 구분한다. 유효 CONNECTED·RESERVED/GRACE가 없더라도
+  아직 종료하지 않은 view의 마지막 DB 검증 시각이30초 이내라면 음악 복구를 기다린다.
+  장애를 발견한 시각부터 새30초를 주거나 읽기 구간/참여 권한을 연장하지 않는다.
+  이 유예 동안 PAUSED의 위치·고정 소스·버전과 대기열은 유지하고, PLAYING의 기준 시각은 서버 DB에 유지한다.
+- 유예가 만료된 부재는 현재/WAITING을 CANCELED·IDLE로 정리한다. 명시적 마지막 퇴장은 기존처럼 즉시 정리한다.
+  user/ban/view 만료·Task epoch/lease를 함께 확인하며 종료한 view의 과거 기록으로 유예를 만들지 않는다.
+  `join`의 새 예약 및 같은 view의 `claim` **이전**에 방 잠금 안에서 부재를 확인해,
+  늦게 들어온 예약/재연결이 오래된 일시정지 큐를 되살리지 못하게 한다.
+- bounded worker는 PAUSED를 포함한 활성 상태를20방/250ms keyset 단위로 확인한다.
+  hook이 이미 지난 비정상 종료도 정리 대상이며 실제 판단은 control/Task/방/재생 잠금 아래 다시 한다.
+  건강한 방의 no-op은 음악 version·room_seq·영수증·Outbox를 늘리지 않는다.
+- 권한 있는 GET queue-items는 같은 transaction에서 지연된 종료를 reconcile한 뒤 snapshot을 반환한다.
+  오래 지연된 곡을 여러 개 소급 종료하지 않고 현재 곡을 한 번 종료한 뒤 다음 곡을 새 기준 시각으로 시작한다.
+  이미 고정된 video/duration은 유지한다. queue cursor의 version이 바뀌면 기존409→첫 페이지 재조회 계약을 따른다.
+  자동 전이·버전·Outbox는 한 TX이며 실패하면 함께 롤백한다. GET은 사용자 명령 영수증/새 신청을 만들지 않는다.
+- QueueSnapshot에 선택 `epoch`를 추가했다(OpenAPI1.2.0). 기존 필드/응답과 영수증 재현 형식은 유지한다.
+  FE는 이 값을 알림보다 먼저 세대 기준으로 고정하고 다른epoch는 새 채팅 연결/fresh조회 전까지 승인하지 않는다.
+  구 BE의 필드 누락과 구 FE의 추가필드 무시는 호환된다. 플레이어는8단계 기본 위치 보정·개인 음량 정책을 유지한다.
+- 기존 전용 `ChatRecoveryCommand`는 구epoch의 음악 PENDING Outbox도1000행씩 EXPIRED 처리하고
+  claim token/until을 해제한다. 미처리 음악 행이 남으면 finish가 RUNNING을 승인하지 않는다.
+  음악 테이블 도입 전 DB도 지원하도록 테이블 존재를 확인한다. 음악 큐/완료 영수증·tombstone은 삭제하지 않는다.
+  마지막 검증 유예가 지난 큐는 새 Task의 worker 또는 join/claim 경계에서 정리한다.
+  같은 sid/member/view·원 UUID 재확인은 원 응답을 재현해도 현재 재생을 되돌리지 않는다.
+
+복구/전환은 기존 운영 계약대로 라우팅·구 Task 중단→전용 명령→새 UUID Chat 기동이다.
+Redis가 돌아왔다는 이유만으로 차단된 Task를 자동 개방하지 않는다. 최신 Chat JAR로 복구 명령을 실행해야 음악 Outbox도 닫힌다.
+rollback 시 기존 음악/참여 테이블·영수증을 보존하고 플래그를 내린다. 이 작업에서 운영 DB/Redis/AWS를 변경하지 않았다.
+음악 worker의 스캔/DB 부하는 bounded하나 실제1000연결/전체 방 수·SLO 승인은10번 운영 준비에서 확인해야 한다.
+
+검증 재현:
+
+```sh
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest --no-daemon
+./gradlew test --tests 'com.muse.meomuneum.chat.music.*' --no-daemon
+./gradlew chatMusicRecoveryTest --no-daemon
+./gradlew chatParticipationTest --tests '*ChatParticipationMySqlTest' --no-daemon
+./gradlew test --tests '*ChatRuntimeRecoveryStorageTest' --no-daemon
+python3 scripts/verify-backend.py spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest test bootJar coreBootJar chatBootJar
+# FE 저장소: 커밋 전 BE 소스도 명시적으로 임시 사본에 반영
+npm run verify:chat:music:sync:integration -- --worktree
+```
+
+`chatMusicRecoveryTest`는 실제 MySQL/Redis와 Core/여러 Chat JAR를 실행한다.
+SIGTERM→동일 view 인계·실제 SIGKILL→강제 lease 만료 주입→재기동에서 PAUSED/pin/큐를 확인했다.
+lease 만료/30초 경과는 기다리기 대신 DB 시각 fault를 주입하므로 실제 장애 복구 시간/SLO 측정과 구분한다.
+Redis 컨테이너 실제 재시작→1013/readiness503/음악503→Chat 중단→CLI 새epoch→재기동을 검증했다.
+구 Outbox expire·영수증 보존/원응답 재현·만료 부재 정리·재연결 뒤 최신 epoch/IDLE도 확인했다.
+
+도메인 시험은 조회 중 종료·두 Task 단일 전이·유예/만료·PAUSED orphan scan·늦은 REST join/claim·명시 퇴장·원자적 실패 회귀를 포함한다.
+기존 참여 복구 시험에는 음악 PENDING을 남기면 finish가 거부되고 재개 chunk 후 claim이 해제되는 검증을 추가했다.
+FE 통합 하네스의 `--worktree`는 src/build.gradle의 추적 변경만 임시 archive에 적용하고 SHA256을 남긴다.
+환경 파일·원본 BE를 바꾸지 않으며 미추적 src가 있으면 조용히 누락시키지 않고 중단한다.
+합성 인증/GPS/곡과 격리 MySQL/Redis·HTTPS Core·실제 두 Chat/FE를 사용하는 시험이며 실제 OAuth/YouTube·운영 배포가 아니다.
+증빙은 build/chat-music-recovery-verification/와 build/core-auth-integration/run-*/music-recovery.json,
+FE node_modules/.tmp/chat-music-sync-verification/backend-worktree.json·process-result.json·harness-path.txt를 따른다.
+커밋·push·PR·실제 배포는 수행하지 않았다.
+
+복구 계정은 음악 Outbox SELECT/UPDATE 권한도 필요하다. 테이블의 실제 미존재(MySQL1146/42S02)만
+도입 전 DB 호환 예외로 허용하며, 권한 부족·연결 오류를 테이블 없음으로 간주하지 않는다.
+운영 권한 부여는 이번 작업에서 실행하지 않았다.
+
+최종 검증 결과: 전체 회귀975개 중952통과·23조건부 제외·실패0(최초 전체 XML 보존).
+이후 DB 권한/구 DB 호환 가드2개·수정된 참여 복구49개 전부 통과,
+최종 chatMusicRecoveryTest20개(음악 DB19+실제 Core/Chat/Redis 프로세스1) 전부 통과했다.
+Spotless·Checkstyle main/core/chat/test·세 JAR 빌드 통과, 최종 소스 지문과 세 manifest 일치를 확인했다.
+FE 전체991개 중984통과·7조건부 제외·실패0이며 포맷/린트/타입/빌드 통과했다.
+첫 FE 실행의 기존 음악 기록200곡 시험5초 timeout1건은 worker2 전체 재실행으로 통과했고 원본 JSON을 보존했다.
+실제 소스 overlay를 포함한 FE/Core/두 Chat 통합도 통과했다. 최종 CLI 테이블/권한 probe 보완은
+그 이후 권한 가드·실제 복구/참여 회귀에서 검증했다. 서로 다른 검증 실행 범위를 전체 단일 E2E로 표시하지 않는다.

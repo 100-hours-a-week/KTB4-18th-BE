@@ -45,7 +45,7 @@ public final class ChatMusicPlaybackWorker implements AutoCloseable {
         try {
             var rooms = jdbc.queryForList("""
                     SELECT p.chat_room_id FROM playback_states p WHERE p.chat_room_id>?
-                      AND ((p.state='PLAYING' AND p.due_at<=UTC_TIMESTAMP(6)) OR
+                      AND (p.state IN ('PLAYING','PAUSED') OR
                         (p.state='IDLE' AND EXISTS(SELECT 1 FROM music_queue_items q
                           WHERE q.room_id=p.chat_room_id AND q.status='WAITING')))
                     ORDER BY p.chat_room_id LIMIT 20

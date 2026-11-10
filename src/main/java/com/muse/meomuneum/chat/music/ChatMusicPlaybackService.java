@@ -93,7 +93,7 @@ public final class ChatMusicPlaybackService {
     }
 
     public void presenceChanged(MusicTransaction tx) {
-        if (!hasPotentialParticipants(tx)) {
+        if (!hasPotentialParticipants(tx) && !hasRecoverableParticipants(tx)) {
             publish(tx, clear(tx.roomId(), lock(tx.roomId())), "ROOM_EMPTY");
         }
     }
@@ -108,11 +108,7 @@ public final class ChatMusicPlaybackService {
             return Change.NONE;
         }
         if (!hasPotentialParticipants(tx)) {
-            return clear(tx.roomId(), s);
-        }
-        // A disconnected/fenced owner is not proof of an intentional departure. Recovery belongs to step 9.
-        if (!hasEffectiveParticipants(tx)) {
-            return Change.NONE;
+            return hasRecoverableParticipants(tx) ? Change.NONE : clear(tx.roomId(), s);
         }
         if (s.state().equals("PLAYING") && !s.due().isAfter(s.now())) {
             finish(tx.roomId(), s, "PLAYED");
@@ -311,15 +307,6 @@ public final class ChatMusicPlaybackService {
     private boolean hasPotentialParticipants(MusicTransaction tx) {
         return jdbc.queryForObject("""
                 SELECT COUNT(*) FROM chat_view_runtime v JOIN chat_view_sessions s ON s.id=v.view_id
-                JOIN chat_room_members m ON m.id=v.membership_id WHERE v.environment=? AND v.epoch=? AND v.room_id=?
-                  AND m.deleted_at IS NULL AND s.ended_at IS NULL
-                  AND (v.state='CONNECTED' OR (v.state IN ('RESERVED','GRACE') AND v.deadline>UTC_TIMESTAMP(6)))
-                """, Long.class, tx.context().environment(), tx.context().epoch(), tx.roomId()) > 0;
-    }
-
-    private boolean hasEffectiveParticipants(MusicTransaction tx) {
-        return jdbc.queryForObject("""
-                SELECT COUNT(*) FROM chat_view_runtime v JOIN chat_view_sessions s ON s.id=v.view_id
                 JOIN chat_room_members m ON m.id=v.membership_id JOIN users u ON u.id=v.user_id
                 LEFT JOIN chat_runtime_tasks t ON t.environment=v.environment AND t.task_id=v.owner_task_id
                 WHERE m.deleted_at IS NULL AND s.ended_at IS NULL AND u.deleted_at IS NULL
@@ -331,6 +318,26 @@ public final class ChatMusicPlaybackService {
                     (t.epoch=v.epoch AND t.state='ACTIVE' AND t.lease_until>UTC_TIMESTAMP(6)))
                   AND (v.state='CONNECTED' OR
                     (v.state IN ('RESERVED','GRACE') AND v.deadline>UTC_TIMESTAMP(6)))
+                """, Long.class, tx.context().environment(), tx.context().epoch(), tx.roomId()) > 0;
+    }
+
+    /** Failure recovery never manufactures a new grace period or a reading entitlement. */
+    private boolean hasRecoverableParticipants(MusicTransaction tx) {
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_view_runtime v JOIN chat_view_sessions s ON s.id=v.view_id
+                JOIN chat_room_members m ON m.id=v.membership_id JOIN users u ON u.id=v.user_id
+                LEFT JOIN chat_runtime_tasks t ON t.environment=v.environment AND t.task_id=v.owner_task_id
+                WHERE v.environment=? AND v.epoch=? AND v.room_id=?
+                  AND m.deleted_at IS NULL AND s.ended_at IS NULL AND u.deleted_at IS NULL
+                  AND s.updated_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                  AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id AND b.deleted_at IS NULL
+                    AND b.created_at<=UTC_TIMESTAMP(6) AND b.expires_at>UTC_TIMESTAMP(6))
+                  AND (v.state='OFFLINE' OR (v.state IN ('CONNECTED','RESERVED','GRACE')
+                    AND v.owner_task_id IS NOT NULL
+                    AND (t.task_id IS NULL OR t.epoch<>v.epoch OR t.state<>'ACTIVE'
+                      OR t.lease_until<=UTC_TIMESTAMP(6))))
+                  AND EXISTS(SELECT 1 FROM chat_view_intervals i WHERE i.view_session_id=v.view_id
+                    AND i.verified_at>TIMESTAMPADD(SECOND,-30,UTC_TIMESTAMP(6)))
                 """, Long.class, tx.context().environment(), tx.context().epoch(), tx.roomId()) > 0;
     }
 

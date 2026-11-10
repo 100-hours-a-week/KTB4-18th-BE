@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Regional chat music queue API",
-    "version": "1.1.0",
-    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards."
+    "version": "1.2.0",
+    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards. Step 9: authorized queue reads reconcile elapsed playback and return additive current runtime epoch. Expired absence is cleared before join/claim; the original verified30s failure grace never grants reading rights."
   },
   "paths": {
     "/api/v1/chat-rooms/{room_id}/requestable-music": {
@@ -556,6 +556,13 @@
                 "type": "string",
                 "format": "date-time",
                 "nullable": true
+              },
+              "epoch": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Runtime epoch authorized by this read; additive in step9."
               }
             }
           }
