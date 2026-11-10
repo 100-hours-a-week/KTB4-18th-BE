@@ -40,6 +40,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.Location;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.recommendation.provider.ItunesRecommendationProvider;
 import com.muse.meomuneum.recommendation.provider.RecommendationCommand;
 import com.sun.net.httpserver.HttpExchange;
@@ -129,7 +130,8 @@ class ItunesMusicSearchClientHttpTest {
         when(repository.searchMusic("query", Long.MAX_VALUE, 0L, 21)).thenReturn(List.of());
         var cache = new MusicSearchCandidateCache(java.time.Clock.systemUTC());
         var service = new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("test-only-secret"), cache);
+                new MusicSearchCursorCodec("test-only-secret"), cache,
+                mock(MusicSearchStorageService.class));
 
         var first = service.search("query", "ITUNES", null, 2);
         assertThat(first.items()).extracting(MusicItem::external_music_id).containsExactly("125", "126");
@@ -160,7 +162,8 @@ class ItunesMusicSearchClientHttpTest {
         when(repository.searchMusic("han roro", Long.MAX_VALUE, 0L, 21)).thenReturn(List.of());
         var cache = new MusicSearchCandidateCache(java.time.Clock.systemUTC());
         var service = new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("test-only-secret"), cache);
+                new MusicSearchCursorCodec("test-only-secret"), cache,
+                mock(MusicSearchStorageService.class));
 
         var first = service.search("한로로", "ITUNES", null, 2);
         assertThat(first.items()).extracting(MusicItem::external_music_id).containsExactly("125", "124");
@@ -430,7 +433,8 @@ class ItunesMusicSearchClientHttpTest {
         LocationResolutionTokenProvider tokens = mock(LocationResolutionTokenProvider.class);
         MusicRecordService service = new MusicRecordService(repository, client, tokens,
                 new MusicSearchCursorCodec("test-only-secret"),
-                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                mock(MusicSearchStorageService.class));
         when(repository.highestMusicId()).thenReturn(0L);
         when(repository.searchMusic("테스트", Long.MAX_VALUE, 0L, 21)).thenReturn(List.of());
         when(tokens.validate("location-token", 1L)).thenReturn(

@@ -34,6 +34,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository.MusicIden
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -43,6 +44,7 @@ class MusicRecordServiceTest {
     private ItunesMusicSearchClient itunes;
     private MusicRecordService service;
     private MusicSearchCandidateCache storage;
+    private MusicSearchStorageService searchStorage;
     private ObjectMapper mapper;
     private MusicRecordDetailResponse detail;
 
@@ -53,8 +55,10 @@ class MusicRecordServiceTest {
         itunes = mock(ItunesMusicSearchClient.class);
         storage = new MusicSearchCandidateCache(java.time.Clock.systemUTC());
         when(itunes.country()).thenReturn("KR");
+        searchStorage = mock(MusicSearchStorageService.class);
         service = new MusicRecordService(repository, itunes,
-                tokens, new MusicSearchCursorCodec("test-secret"), storage);
+                tokens, new MusicSearchCursorCodec("test-secret"), storage,
+                searchStorage);
         mapper = new ObjectMapper();
         detail = new MusicRecordDetailResponse(7L,
                 new MusicSummary(11L, "밤편지", "아이유", null),
@@ -62,6 +66,21 @@ class MusicRecordServiceTest {
                         new RegionPart(4L, "11440", "마포구")),
                 "홍대", "산책 중",
                 Instant.parse("2026-09-22T06:30:00Z"), null, null);
+    }
+
+    @Test
+    void externalSearchAdmitsTheFullResultOnceBeforePaging() {
+        var first = new MusicItem(null, "ITUNES", "11", "첫 곡", "가수", null, null, null, false);
+        var second = new MusicItem(null, "ITUNES", "12", "둘째 곡", "가수", null, null, null, false);
+        var all = List.of(first, second);
+        when(itunes.search("가수")).thenReturn(all);
+
+        var page = service.search("가수", "ITUNES", null, 1);
+        assertThat(page.items()).hasSize(1);
+        assertThat(service.search("가수", "ITUNES", page.next_cursor(), 1).items()).hasSize(1);
+        assertThat(service.search("가수", "ITUNES", null, 1).items()).hasSize(1);
+        verify(searchStorage).store(all);
+        verify(itunes).search("가수");
     }
 
     @Test

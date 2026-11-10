@@ -31,10 +31,12 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames;
 public class MusicRecordRepository {
     private static final List<String> SEARCH_NAME_COLUMNS = List.of("title", "artist_name", "title_us",
             "artist_name_us", "title_ko", "artist_name_ko");
-    private static final String MUSIC_NAMES = "COALESCE(title_ko, title_us, title) title, "
-            + "COALESCE(artist_name_ko, artist_name_us, artist_name) artist_name, ";
-    private static final String RECORD_MUSIC_NAMES = "COALESCE(m.title_ko, m.title_us, m.title) title, "
-            + "COALESCE(m.artist_name_ko, m.artist_name_us, m.artist_name) artist_name, ";
+    private static final String MUSIC_NAMES = "COALESCE(NULLIF(TRIM(title_ko), ''), "
+            + "NULLIF(TRIM(title_us), ''), title) title, COALESCE(NULLIF(TRIM(artist_name_ko), ''), "
+            + "NULLIF(TRIM(artist_name_us), ''), artist_name) artist_name, ";
+    private static final String RECORD_MUSIC_NAMES = "COALESCE(NULLIF(TRIM(m.title_ko), ''), "
+            + "NULLIF(TRIM(m.title_us), ''), m.title) title, COALESCE(NULLIF(TRIM(m.artist_name_ko), ''), "
+            + "NULLIF(TRIM(m.artist_name_us), ''), m.artist_name) artist_name, ";
     private static final String STOREFRONT_COLUMNS = "title_us, artist_name_us, title_ko, artist_name_ko";
     private static final String PLAYBACK_VERIFIED = "EXISTS(SELECT 1 FROM music_playback_sources ps " +
             "WHERE ps.music_id=music.id AND BINARY ps.youtube_video_id=BINARY music.youtube_video_id " +
@@ -226,7 +228,8 @@ public class MusicRecordRepository {
                 + "title_ko=COALESCE(incoming.title_ko, music.title_ko), "
                 + "artist_name_ko=COALESCE(incoming.artist_name_ko, music.artist_name_ko), "
                 + "album_cover_url=COALESCE(incoming.album_cover_url, music.album_cover_url), "
-                + "preview_url=COALESCE(incoming.preview_url, music.preview_url), updated_at=CURRENT_TIMESTAMP(6)",
+                + "preview_url=COALESCE(incoming.preview_url, music.preview_url), "
+                + "updated_at=CURRENT_TIMESTAMP(6)",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
                 music.album_cover_url(), music.preview_url(), names.titleUs(), names.artistNameUs(),
                 names.titleKo(), names.artistNameKo(), music.releaseEpochSecond());

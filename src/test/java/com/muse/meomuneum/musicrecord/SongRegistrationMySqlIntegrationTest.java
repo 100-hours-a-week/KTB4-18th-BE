@@ -59,6 +59,7 @@ import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.musicrecord.service.SongRegistrationService;
 import com.sun.net.httpserver.HttpServer;
 
@@ -259,7 +260,7 @@ class SongRegistrationMySqlIntegrationTest {
     }
 
     @Test
-    void firstPageCacheHitSubsequentPageEmptyAndFailureLeaveBothTablesIdentical() throws Exception {
+    void firstPageCacheHitSubsequentPageEmptyAndFailureDoNotWriteCatalogSynchronously() {
         long id = repository.insertSelectedMusic(item("1", "original", "stored artist")).music_id();
         jdbc.update("UPDATE music SET youtube_video_id='abcdefghijk', preview_url='stored-preview', "
                 + "created_at='2026-01-01 00:00:00.123456', updated_at='2026-02-02 01:02:03.654321' WHERE id=?", id);
@@ -283,10 +284,6 @@ class SongRegistrationMySqlIntegrationTest {
                 org.springframework.http.HttpStatus.BAD_GATEWAY, "music provider unavailable"));
         assertThatThrownBy(() -> search.search("failure", "ITUNES", null, 20)).hasMessage("music provider unavailable");
         assertThat(tables()).isEqualTo(before);
-        assertThatThrownBy(() -> Class.forName("com.muse.meomuneum.musicrecord.service.MusicSearchStorageService"))
-                .isInstanceOf(ClassNotFoundException.class);
-        assertThatThrownBy(() -> Class.forName("com.muse.meomuneum.musicrecord.config.MusicSearchStorageConfig"))
-                .isInstanceOf(ClassNotFoundException.class);
     }
 
     @Test
@@ -363,7 +360,8 @@ class SongRegistrationMySqlIntegrationTest {
         var tokens = mock(LocationResolutionTokenProvider.class);
         when(tokens.validate("token", 1L)).thenReturn(new LocationResolutionClaims(1L, 1L, "11", 2L, "11440", 1L,
                 Instant.now().plusSeconds(300)));
-        var records = new MusicRecordService(repository, itunes, tokens, new MusicSearchCursorCodec("secret"), cache);
+        var records = new MusicRecordService(repository, itunes, tokens, new MusicSearchCursorCodec("secret"), cache,
+                mock(MusicSearchStorageService.class));
         var transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         var created = transaction.execute(status -> records.create(1,
                 new CreateRequest(new MusicSelection("ITUNES", "123"), "token", "place", "memo")));
@@ -522,7 +520,8 @@ class SongRegistrationMySqlIntegrationTest {
 
     private MusicRecordService search(ItunesMusicSearchClient client, MusicSearchCandidateCache candidates) {
         return new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("secret"), candidates);
+                new MusicSearchCursorCodec("secret"), candidates,
+                mock(MusicSearchStorageService.class));
     }
 
     private Map<String, List<Map<String, Object>>> tables() {

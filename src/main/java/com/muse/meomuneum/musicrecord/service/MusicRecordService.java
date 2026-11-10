@@ -33,6 +33,7 @@ import tools.jackson.databind.JsonNode;
 public class MusicRecordService {
     private static final int PAGE_SIZE = 20;
     private final MusicSearchCandidateCache candidates;
+    private final MusicSearchStorageService searchStorage;
     private final MusicRecordRepository repository;
     private final ItunesMusicSearchClient itunes;
     private final LocationResolutionTokenProvider tokens;
@@ -41,8 +42,10 @@ public class MusicRecordService {
 
     public MusicRecordService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
             LocationResolutionTokenProvider tokens,
-            MusicSearchCursorCodec searchCursors, MusicSearchCandidateCache candidates) {
+            MusicSearchCursorCodec searchCursors, MusicSearchCandidateCache candidates,
+            MusicSearchStorageService searchStorage) {
         this.candidates = candidates;
+        this.searchStorage = searchStorage;
         this.repository = repository;
         this.itunes = itunes;
         this.tokens = tokens;
@@ -98,7 +101,11 @@ public class MusicRecordService {
         }
         String key = searchKey(country, normalized);
         var snapshot = candidates.findQuery(key)
-                .orElseGet(() -> candidates.putSearch(key, country, normalized, itunes.search(normalized)));
+                .orElseGet(() -> {
+                    var results = itunes.search(normalized);
+                    searchStorage.store(results);
+                    return candidates.putSearch(key, country, normalized, results);
+                });
         return externalPage(snapshot, normalized, country, 0, pageSize);
     }
 

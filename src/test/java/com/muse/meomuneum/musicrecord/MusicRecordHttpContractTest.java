@@ -34,6 +34,7 @@ import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -50,7 +51,8 @@ class MusicRecordHttpContractTest {
         MusicRecordService service = new MusicRecordService(repository,
                 itunes, mock(LocationResolutionTokenProvider.class),
                 new MusicSearchCursorCodec("test-only-secret"),
-                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                mock(MusicSearchStorageService.class));
         CurrentUserResolver users = mock(CurrentUserResolver.class);
         when(users.resolve(nullable(Authentication.class))).thenReturn(1L);
         mvc = MockMvcBuilders.standaloneSetup(new MusicRecordController(service, users))
@@ -86,7 +88,8 @@ class MusicRecordHttpContractTest {
                 .path("data").path("next_cursor").asText();
         var restarted = new MusicRecordService(repository, itunes, mock(LocationResolutionTokenProvider.class),
                 new MusicSearchCursorCodec("test-only-secret"),
-                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                mock(MusicSearchStorageService.class));
         var restartedMvc = MockMvcBuilders.standaloneSetup(
                 new MusicRecordController(restarted, mock(CurrentUserResolver.class)))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
