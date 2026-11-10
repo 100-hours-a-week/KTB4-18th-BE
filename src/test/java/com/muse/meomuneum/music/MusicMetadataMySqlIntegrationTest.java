@@ -82,6 +82,8 @@ class MusicMetadataMySqlIntegrationTest {
                 "INSERT INTO music (provider,external_music_id,title,artist_name) VALUES ('ITUNES','2',?,?)",
                 TITLE, ARTIST)).hasMessageContaining("Data too long for column 'artist_name'");
         copyMigration(MIGRATION);
+        copyMigration("V20261110133622__add_music_storefront_names.sql");
+        copyMigration("V20261110135304__add_music_release_epoch.sql");
         flyway().migrate();
         assertThat(jdbc.queryForObject("SELECT artist_name FROM music WHERE external_music_id='1'", String.class))
                 .isEqualTo("가수");

@@ -36,6 +36,51 @@ class MusicSearchCursorCodecTest {
     }
 
     @Test
+    void dateOrderedCursorSignsTheReleaseBoundaryAndDistinguishesMissingDatesFromLegacy() {
+        String dated = codec.encode("q", "KR", 2, codec.database(7, 30, -17L));
+        var datePosition = codec.decode(dated, "q", "KR", 2);
+        assertThat(datePosition.lastReleaseEpochSecond()).isEqualTo(-17L);
+        assertThat(datePosition.legacyDatabaseOrder()).isFalse();
+
+        String undated = codec.encode("q", "KR", 2, datePosition.advanceDatabase(8, null));
+        var nullPosition = codec.decode(undated, "q", "KR", 2);
+        assertThat(nullPosition.lastReleaseEpochSecond()).isNull();
+        assertThat(nullPosition.legacyDatabaseOrder()).isFalse();
+
+        String legacy = "M3w4ZTM1YzJjZDNiZjY2NDFiZGIwZTIwNTBiNzY5MzJjYmIyZTYwMzRhMGRkYWNjMWQ5YmVhODJhNmJhNTdm"
+                + "N2NmfElUVU5FU3xLUnwyfERCfDd8MzB8fDB8MTc5MjYyNzIwMHwxNzkyNjI5MDAw"
+                + ".gWX--tCKBWcujraY9-DB2tw9c88Nh1mBBU2sto7wOhU";
+        var oldPosition = codec.decode(legacy, "q", "KR", 2);
+        assertThat(oldPosition.lastDbId()).isEqualTo(7);
+        assertThat(oldPosition.legacyDatabaseOrder()).isTrue();
+        assertThat(codec.encode("q", "KR", 2, oldPosition)).isEqualTo(legacy);
+    }
+
+    @Test
+    void relevanceCursorSignsTheTierAndMaintainsLegacyReleaseOrder() {
+        String token = codec.encode("한로로", "KR", 2, codec.database(7, 30, 12L, 0));
+        var position = codec.decode(token, "한로로", "KR", 2);
+        assertThat(position.lastMatchPriority()).isZero();
+        assertThat(position.lastReleaseEpochSecond()).isEqualTo(12L);
+        String next = codec.encode("한로로", "KR", 2, position.advanceDatabase(8, null, 1));
+        var boundary = codec.decode(next, "한로로", "KR", 2);
+        assertThat(boundary.lastMatchPriority()).isEqualTo(1);
+        assertThat(boundary.lastReleaseEpochSecond()).isNull();
+        assertThat(boundary.highWatermark()).isEqualTo(30);
+        assertThat(boundary.expiresAt()).isEqualTo(position.expiresAt());
+
+        String outOfRange = codec.encode("한로로", "KR", 2, codec.database(7, 30, 12L, 3));
+        assertThatThrownBy(() -> codec.decode(outOfRange, "한로로", "KR", 2))
+                .isInstanceOf(MusicRecordException.class);
+
+        String dated = codec.encode("한로로", "KR", 2, codec.database(7, 30, 12L));
+        var datedPosition = codec.decode(dated, "한로로", "KR", 2);
+        assertThat(datedPosition.lastMatchPriority()).isNull();
+        assertThat(datedPosition.advanceDatabase(8, 11L, 1).lastMatchPriority()).isNull();
+        assertThat(codec.encode("한로로", "KR", 2, datedPosition)).isEqualTo(dated);
+    }
+
+    @Test
     void databaseCursorExpiresWithoutSlidingOnLaterPages() {
         String first = codec.encode("q", "KR", 20, codec.database(30, 50));
         var later = new MusicSearchCursorCodec("secret", Clock.fixed(now.plusSeconds(1799), ZoneOffset.UTC));

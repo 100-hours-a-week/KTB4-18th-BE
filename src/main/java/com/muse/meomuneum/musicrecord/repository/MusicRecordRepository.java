@@ -1,14 +1,18 @@
 package com.muse.meomuneum.musicrecord.repository;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -21,9 +25,17 @@ import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicRecordResponse;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSummary;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.Region;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.RegionPart;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames;
 
 @Repository
 public class MusicRecordRepository {
+    private static final List<String> SEARCH_NAME_COLUMNS = List.of("title", "artist_name", "title_us",
+            "artist_name_us", "title_ko", "artist_name_ko");
+    private static final String MUSIC_NAMES = "COALESCE(title_ko, title_us, title) title, "
+            + "COALESCE(artist_name_ko, artist_name_us, artist_name) artist_name, ";
+    private static final String RECORD_MUSIC_NAMES = "COALESCE(m.title_ko, m.title_us, m.title) title, "
+            + "COALESCE(m.artist_name_ko, m.artist_name_us, m.artist_name) artist_name, ";
+    private static final String STOREFRONT_COLUMNS = "title_us, artist_name_us, title_ko, artist_name_ko";
     private static final String PLAYBACK_VERIFIED = "EXISTS(SELECT 1 FROM music_playback_sources ps " +
             "WHERE ps.music_id=music.id AND BINARY ps.youtube_video_id=BINARY music.youtube_video_id " +
             "AND ps.status='VERIFIED' AND ps.playback_country='KR' " +
@@ -38,36 +50,85 @@ public class MusicRecordRepository {
     }
 
     public List<MusicItem> searchMusic(String query, long beforeId, long highWatermark, int limit) {
-        String title = "LOWER(REGEXP_REPLACE(title, '[[:space:]]', '')) LIKE LOWER(?) ESCAPE '!'";
-        String artist = "LOWER(REGEXP_REPLACE(artist_name, '[[:space:]]', '')) LIKE LOWER(?) ESCAPE '!'";
-        String pair = "(" + title + " OR " + artist + ")";
-        String[] tokens = query.split(" ");
-        var arguments = new java.util.ArrayList<Object>();
-        arguments.add(beforeId);
+        boolean firstPage = beforeId == Long.MAX_VALUE;
+        return searchMusic(query, highWatermark, limit, "id<?", List.of(beforeId),
+                firstPage ? "match_priority, release_epoch_second DESC, id DESC" : "id DESC", firstPage);
+    }
+
+    public List<MusicItem> searchMusic(String query, long beforeId, Long beforeRelease, long highWatermark,
+            int limit) {
+        return searchMusic(query, beforeId, beforeRelease, null, highWatermark, limit);
+    }
+
+    public List<MusicItem> searchMusic(String query, long beforeId, Long beforeRelease, Integer beforePriority,
+            long highWatermark, int limit) {
+        String boundary = beforeRelease == null
+                ? "release_epoch_second IS NULL AND id<?"
+                : "(release_epoch_second < ? OR (release_epoch_second = ? AND id<?) OR release_epoch_second IS NULL)";
+        var anchor = new ArrayList<Long>();
+        boolean ranked = beforePriority != null;
+        if (ranked) {
+            boundary = "(match_priority > ? OR (match_priority = ? AND " + boundary + "))";
+            anchor.add(beforePriority.longValue());
+            anchor.add(beforePriority.longValue());
+        }
+        if (beforeRelease != null) {
+            anchor.add(beforeRelease);
+            anchor.add(beforeRelease);
+        }
+        anchor.add(beforeId);
+        String order = ranked
+                ? "match_priority, release_epoch_second DESC, id DESC"
+                : "release_epoch_second DESC, id DESC";
+        return searchMusic(query, highWatermark, limit, boundary, anchor, order, ranked);
+    }
+
+    private List<MusicItem> searchMusic(String query, long highWatermark, int limit, String boundary,
+            List<Long> anchor, String order, boolean ranked) {
+        String namesMatch = compactNamesMatch("");
+        String literal = escapeLikeLiteral(query.replace(" ", ""));
+        String compact = "%" + literal + "%";
+        var arguments = new ArrayList<Object>();
+        String rankSelect = "";
+        if (ranked) {
+            String rankMatch = compactNamesMatch(" COLLATE utf8mb4_0900_as_cs");
+            rankSelect = ", CASE WHEN " + rankMatch + " THEN 0 WHEN " + rankMatch + " THEN 1 ELSE 2 END match_priority";
+            arguments.addAll(Collections.nCopies(SEARCH_NAME_COLUMNS.size(), literal));
+            arguments.addAll(Collections.nCopies(SEARCH_NAME_COLUMNS.size(), compact));
+        }
         arguments.add(highWatermark);
-        String compact = "%" + escapeLikeLiteral(query.replace(" ", "")) + "%";
-        arguments.add(compact);
-        arguments.add(compact);
-        StringBuilder conditions = new StringBuilder(pair).append(" OR (");
+        arguments.addAll(Collections.nCopies(SEARCH_NAME_COLUMNS.size(), compact));
+        StringBuilder conditions = new StringBuilder(namesMatch).append(" OR (");
+        String[] tokens = query.split(" ");
         for (int i = 0; i < tokens.length; i++) {
             if (i > 0) {
                 conditions.append(" AND ");
             }
-            conditions.append(pair);
+            conditions.append(namesMatch);
             String pattern = "%" + escapeLikeLiteral(tokens[i]) + "%";
-            arguments.add(pattern);
-            arguments.add(pattern);
+            arguments.addAll(Collections.nCopies(SEARCH_NAME_COLUMNS.size(), pattern));
         }
         conditions.append(")");
+        arguments.addAll(anchor);
         arguments.add(limit);
-        String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id, " + PLAYBACK_VERIFIED
-                + " FROM music WHERE provider='ITUNES' AND id<? AND id<=? "
-                + "AND (" + conditions + ") ORDER BY id DESC LIMIT ?";
-        return jdbc.query(sql, (row, index) -> item(row.getLong("id"), row.getString("provider"),
-                row.getString("external_music_id"), row.getString("title"), row.getString("artist_name"),
-                row.getString("album_cover_url"), row.getString("preview_url"),
-                row.getString("youtube_video_id"), row.getBoolean("playback_verified")), arguments.toArray());
+        String sql = "SELECT id, provider, external_music_id, " + MUSIC_NAMES + "album_cover_url, "
+                + "preview_url, youtube_video_id, release_epoch_second, " + PLAYBACK_VERIFIED + rankSelect
+                + " FROM music WHERE provider='ITUNES' AND id<=? AND (" + conditions + ")";
+        if (ranked) {
+            sql = "SELECT * FROM (" + sql + ") ranked WHERE " + boundary;
+        } else {
+            sql += " AND " + boundary;
+        }
+        sql += " ORDER BY " + order + " LIMIT ?";
+        return jdbc.query(sql, (row, index) -> catalogItem(row, ranked ? row.getInt("match_priority") : null),
+                arguments.toArray());
+    }
+
+    private String compactNamesMatch(String collation) {
+        return SEARCH_NAME_COLUMNS.stream()
+                .map(column -> "LOWER(REGEXP_REPLACE(" + column + ", '[[:space:]]', ''))" + collation
+                        + " LIKE LOWER(?) ESCAPE '!'")
+                .collect(Collectors.joining(" OR ", "(", ")"));
     }
 
     public Map<String, StoredMusic> findStoredMusicByIds(List<String> externalIds, long highWatermark,
@@ -76,28 +137,21 @@ public class MusicRecordRepository {
             return Map.of();
         }
         String markers = String.join(",", Collections.nCopies(externalIds.size(), "?"));
-        String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id, " + PLAYBACK_VERIFIED + ", "
-                + "(LOWER(title) LIKE LOWER(?) ESCAPE '!' "
-                + "OR LOWER(artist_name) LIKE LOWER(?) ESCAPE '!') matches_search "
+        String namesMatch = SEARCH_NAME_COLUMNS.stream().map(column -> "LOWER(" + column + ") LIKE LOWER(?) ESCAPE '!'")
+                .collect(Collectors.joining(" OR ", "(", ")"));
+        String sql = "SELECT id, provider, external_music_id, " + MUSIC_NAMES + "album_cover_url, "
+                + "preview_url, youtube_video_id, release_epoch_second, " + PLAYBACK_VERIFIED + ", " + namesMatch
+                + " IS TRUE matches_search "
                 + "FROM music WHERE provider='ITUNES' AND id<=? AND external_music_id IN (" + markers + ")";
-        Object[] arguments = new Object[externalIds.size() + 3];
         String pattern = "%" + escapeLikeLiteral(query) + "%";
-        arguments[0] = pattern;
-        arguments[1] = pattern;
-        arguments[2] = highWatermark;
-        for (int i = 0; i < externalIds.size(); i++) {
-            arguments[i + 3] = externalIds.get(i);
-        }
+        var arguments = new java.util.ArrayList<Object>(Collections.nCopies(SEARCH_NAME_COLUMNS.size(), pattern));
+        arguments.add(highWatermark);
+        arguments.addAll(externalIds);
         Map<String, StoredMusic> results = new LinkedHashMap<>();
         jdbc.query(sql, row -> {
-            MusicItem music = item(row.getLong("id"), row.getString("provider"),
-                    row.getString("external_music_id"), row.getString("title"),
-                    row.getString("artist_name"), row.getString("album_cover_url"),
-                    row.getString("preview_url"), row.getString("youtube_video_id"),
-                    row.getBoolean("playback_verified"));
+            MusicItem music = catalogItem(row);
             results.put(music.external_music_id(), new StoredMusic(music, row.getBoolean("matches_search")));
-        }, arguments);
+        }, arguments.toArray());
         return results;
     }
 
@@ -118,18 +172,23 @@ public class MusicRecordRepository {
     public void insertMusicIfAbsent(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
+                + "preview_url, youtube_video_id, " + STOREFRONT_COLUMNS + ", release_epoch_second) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
-                music.album_cover_url(), music.preview_url(), music.youtube_video_id());
+                music.album_cover_url(), music.preview_url(), music.youtube_video_id(),
+                music.storefrontNames().titleUs(), music.storefrontNames().artistNameUs(),
+                music.storefrontNames().titleKo(), music.storefrontNames().artistNameKo(), music.releaseEpochSecond());
     }
 
     public MusicItem insertSelectedMusic(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
         var keys = new GeneratedKeyHolder();
+        var names = music.storefrontNames();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
                     "INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                            + "preview_url, youtube_video_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            + "preview_url, youtube_video_id, " + STOREFRONT_COLUMNS + ", release_epoch_second) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     new String[]{"id"});
             statement.setString(1, music.provider());
             statement.setString(2, music.external_music_id());
@@ -138,24 +197,39 @@ public class MusicRecordRepository {
             statement.setString(5, music.album_cover_url());
             statement.setString(6, music.preview_url());
             statement.setString(7, music.youtube_video_id());
+            statement.setString(8, names.titleUs());
+            statement.setString(9, names.artistNameUs());
+            statement.setString(10, names.titleKo());
+            statement.setString(11, names.artistNameKo());
+            statement.setObject(12, music.releaseEpochSecond(), java.sql.Types.BIGINT);
             return statement;
         }, keys);
         if (keys.getKey() == null) {
             throw new IllegalStateException("music id missing");
         }
         return item(keys.getKey().longValue(), music.provider(), music.external_music_id(), music.title(),
-                music.artist_name(), music.album_cover_url(), music.preview_url(), music.youtube_video_id(), false);
+                music.artist_name(), music.album_cover_url(), music.preview_url(), music.youtube_video_id(),
+                false, music.releaseEpochSecond(), null);
     }
 
     public long upsertMusic(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
+        var names = music.storefrontNames();
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE "
-                + "title=VALUES(title), artist_name=VALUES(artist_name), "
-                + "album_cover_url=COALESCE(VALUES(album_cover_url), album_cover_url), "
-                + "preview_url=COALESCE(VALUES(preview_url), preview_url), updated_at=CURRENT_TIMESTAMP(6)",
+                + "preview_url, " + STOREFRONT_COLUMNS + ", release_epoch_second) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS incoming "
+                + "ON DUPLICATE KEY UPDATE "
+                + "title=COALESCE(incoming.title_ko, music.title_ko, incoming.title), "
+                + "artist_name=COALESCE(incoming.artist_name_ko, music.artist_name_ko, incoming.artist_name), "
+                + "title_us=COALESCE(incoming.title_us, music.title_us), "
+                + "artist_name_us=COALESCE(incoming.artist_name_us, music.artist_name_us), "
+                + "title_ko=COALESCE(incoming.title_ko, music.title_ko), "
+                + "artist_name_ko=COALESCE(incoming.artist_name_ko, music.artist_name_ko), "
+                + "album_cover_url=COALESCE(incoming.album_cover_url, music.album_cover_url), "
+                + "preview_url=COALESCE(incoming.preview_url, music.preview_url), updated_at=CURRENT_TIMESTAMP(6)",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
-                music.album_cover_url(), music.preview_url());
+                music.album_cover_url(), music.preview_url(), names.titleUs(), names.artistNameUs(),
+                names.titleKo(), names.artistNameKo(), music.releaseEpochSecond());
         Long id = jdbc.queryForObject("SELECT id FROM music WHERE provider=? AND external_music_id=?",
                 Long.class, music.provider(), music.external_music_id());
         if (id == null) {
@@ -164,15 +238,25 @@ public class MusicRecordRepository {
         return id;
     }
 
+    public void mergeStorefrontNames(MusicItem music) {
+        var names = music.storefrontNames();
+        if (names.titleUs() == null && names.artistNameUs() == null
+                && names.titleKo() == null && names.artistNameKo() == null) {
+            return;
+        }
+        jdbc.update("UPDATE music SET title_us=COALESCE(?, title_us), artist_name_us=COALESCE(?, artist_name_us), "
+                + "title_ko=COALESCE(?, title_ko), artist_name_ko=COALESCE(?, artist_name_ko) "
+                + "WHERE provider=? AND external_music_id=?",
+                names.titleUs(), names.artistNameUs(), names.titleKo(), names.artistNameKo(),
+                music.provider(), music.external_music_id());
+    }
+
     public Optional<MusicItem> findMusic(String provider, String externalId) {
-        String sql = "SELECT id, provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id, " + PLAYBACK_VERIFIED
-                + " FROM music WHERE provider=? AND external_music_id=?";
-        return jdbc.query(sql, (row, index) -> item(row.getLong("id"), row.getString("provider"),
-                row.getString("external_music_id"), row.getString("title"), row.getString("artist_name"),
-                row.getString("album_cover_url"), row.getString("preview_url"),
-                row.getString("youtube_video_id"), row.getBoolean("playback_verified")), provider, externalId).stream()
-                .findFirst();
+        String sql = "SELECT id, provider, external_music_id, " + MUSIC_NAMES + "album_cover_url, "
+                + "preview_url, youtube_video_id, release_epoch_second, " + PLAYBACK_VERIFIED
+                + " FROM music WHERE provider=? "
+                + "AND external_music_id=?";
+        return jdbc.query(sql, (row, index) -> catalogItem(row), provider, externalId).stream().findFirst();
     }
 
     public Optional<MusicIdentity> findRecordMusicIdentity(long userId, long recordId) {
@@ -222,7 +306,7 @@ public class MusicRecordRepository {
     }
     public List<MusicRecordResponse> findRecords(long userId, Instant createdAt, long id, int size) {
         String sql = "SELECT mr.id record_id, mr.map_dot_id, mr.custom_place_name, mr.emotion_memo, "
-                + "mr.created_at, m.id music_id, m.title, m.artist_name, m.album_cover_url, "
+                + "mr.created_at, m.id music_id, " + RECORD_MUSIC_NAMES + "m.album_cover_url, "
                 + "g.id sigungu_id, g.code sigungu_code, g.name sigungu_name, "
                 + "s.id sido_id, s.code sido_code, s.name sido_name "
                 + "FROM music_records mr JOIN music m ON m.id=mr.music_id "
@@ -241,7 +325,7 @@ public class MusicRecordRepository {
     public Optional<MusicRecordDetailResponse> findRecord(long userId, long recordId) {
         String sql = "SELECT mr.id record_id, mr.map_dot_id, mr.custom_place_name, mr.emotion_memo, "
                 + "mr.created_at, mr.updated_at, m.id music_id, "
-                + "m.title, m.artist_name, m.album_cover_url, "
+                + RECORD_MUSIC_NAMES + "m.album_cover_url, "
                 + "g.id sigungu_id, g.code sigungu_code, g.name sigungu_name, "
                 + "s.id sido_id, s.code sido_code, s.name sido_name "
                 + "FROM music_records mr JOIN music m ON m.id=mr.music_id "
@@ -281,10 +365,23 @@ public class MusicRecordRepository {
                 + "WHERE id=? AND user_id=? AND deleted_at IS NULL",
                 LocalDateTime.ofInstant(deletedAt, ZoneOffset.UTC), recordId, userId);
     }
+    private MusicItem catalogItem(ResultSet row) throws SQLException {
+        return catalogItem(row, null);
+    }
+
+    private MusicItem catalogItem(ResultSet row, Integer matchPriority) throws SQLException {
+        return item(row.getLong("id"), row.getString("provider"), row.getString("external_music_id"),
+                row.getString("title"), row.getString("artist_name"), row.getString("album_cover_url"),
+                row.getString("preview_url"), row.getString("youtube_video_id"),
+                row.getBoolean("playback_verified"), row.getObject("release_epoch_second", Long.class), matchPriority);
+    }
+
     private MusicItem item(long id, String provider, String externalId, String title, String artist,
-            String cover, String preview, String youtubeVideoId, boolean playbackVerified) {
-        return new MusicItem(id, provider, externalId, title, artist, cover, preview,
-                youtubeVideoId, playbackVerified);
+            String cover, String preview, String youtubeVideoId, boolean playbackVerified,
+            Long releaseEpochSecond, Integer matchPriority) {
+        return new MusicItem(id, provider, externalId, title, artist, cover, preview, youtubeVideoId,
+                playbackVerified, StorefrontNames.EMPTY,
+                releaseEpochSecond, matchPriority);
     }
 
     private String escapeLikeLiteral(String value) {

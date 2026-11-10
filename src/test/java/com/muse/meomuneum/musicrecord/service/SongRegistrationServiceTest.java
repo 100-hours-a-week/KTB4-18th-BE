@@ -22,6 +22,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames;
 import com.muse.meomuneum.musicrecord.dto.SongRegistrationDtos.Request;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
@@ -64,6 +65,22 @@ class SongRegistrationServiceTest {
     }
 
     @Test
+    void failedCachedLocalizationIsRetriedBeforeInsert() {
+        var service = service();
+        var candidate = new MusicItem(null, "ITUNES", "1", "US title", "US artist", null, null, null, false,
+                new StorefrontNames("US title", "US artist", null, null, true));
+        var localized = new MusicItem(null, "ITUNES", "1", "한국 곡", "한국 가수", null, null, null, false,
+                new StorefrontNames("US title", "US artist", "한국 곡", "한국 가수", false));
+        cache.put("key", "KR", java.util.List.of(candidate));
+        when(itunes.retryKoreanLookup(candidate)).thenReturn(localized);
+        when(repository.insertSelectedMusic(localized)).thenReturn(item(1L, "1"));
+
+        assertThat(service.register(new Request("1")).created()).isTrue();
+        verify(repository).insertSelectedMusic(localized);
+        verify(itunes, never()).lookup(any());
+    }
+
+    @Test
     void duplicateRollsBackBeforeFreshReadAndOtherErrorsAreNotSuppressed() {
         var service = service();
         when(repository.findMusic("ITUNES", "1")).thenReturn(Optional.empty(), Optional.empty(),
@@ -77,6 +94,7 @@ class SongRegistrationServiceTest {
         order.verify(repository).insertSelectedMusic(any());
         order.verify(manager).rollback(any());
         order.verify(manager).getTransaction(any());
+        order.verify(repository).mergeStorefrontNames(item(null, "1"));
         order.verify(repository).findMusic("ITUNES", "1");
         order.verify(manager).commit(any());
     }
