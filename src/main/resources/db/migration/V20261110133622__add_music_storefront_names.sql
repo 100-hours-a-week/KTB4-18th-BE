@@ -1,0 +1,6 @@
+ALTER TABLE music
+    ADD COLUMN title_us VARCHAR(255) NULL,
+    ADD COLUMN artist_name_us VARCHAR(1000) NULL,
+    ADD COLUMN title_ko VARCHAR(255) NULL,
+    ADD COLUMN artist_name_ko VARCHAR(1000) NULL,
+    ALGORITHM=INSTANT;
