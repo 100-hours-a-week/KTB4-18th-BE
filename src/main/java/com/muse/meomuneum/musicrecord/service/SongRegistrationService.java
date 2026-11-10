@@ -25,7 +25,6 @@ public class SongRegistrationService {
     private final ItunesMusicSearchClient itunes;
     private final MusicSearchCandidateCache candidates;
     private final TransactionTemplate writes;
-    private final TransactionTemplate reads;
     private final Map<String, CompletableFuture<Response>> inFlight = new HashMap<>();
 
     public SongRegistrationService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
@@ -35,9 +34,6 @@ public class SongRegistrationService {
         this.candidates = candidates;
         writes = new TransactionTemplate(transactions);
         writes.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        reads = new TransactionTemplate(transactions);
-        reads.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        reads.setReadOnly(true);
     }
 
     public Response register(Request request) {
@@ -89,14 +85,21 @@ public class SongRegistrationService {
         if (stored.isPresent()) {
             return new Response(stored.orElseThrow(), false);
         }
-        var selected = candidates.findCandidate(itunes.country(), id).orElseGet(() -> itunes.lookup(id)
-                .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
-                        "music not found")));
+        var selected = candidates.findCandidate(itunes.country(), id)
+                .map(candidate -> candidate.storefrontNames().retryKoreanLookup()
+                        ? itunes.retryKoreanLookup(candidate)
+                        : candidate)
+                .orElseGet(() -> itunes.lookup(id)
+                        .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
+                                "music not found")));
         try {
             return writes.execute(status -> new Response(repository.insertSelectedMusic(selected), true));
         } catch (DuplicateKeyException exception) {
-            return reads.execute(status -> repository.findMusic("ITUNES", id)
-                    .map(music -> new Response(music, false)).orElseThrow(() -> exception));
+            return writes.execute(status -> {
+                repository.mergeStorefrontNames(selected);
+                return repository.findMusic("ITUNES", id).map(music -> new Response(music, false))
+                        .orElseThrow(() -> exception);
+            });
         }
     }
 }

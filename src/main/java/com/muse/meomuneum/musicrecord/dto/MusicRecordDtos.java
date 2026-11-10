@@ -9,6 +9,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 public final class MusicRecordDtos {
     private MusicRecordDtos() {
     }
@@ -24,7 +26,32 @@ public final class MusicRecordDtos {
 
     public record MusicItem(Long music_id, String provider, String external_music_id, String title,
             String artist_name, String album_cover_url, String preview_url, String youtube_video_id,
-            boolean is_queueable) {
+            boolean is_queueable, @JsonIgnore StorefrontNames storefrontNames, @JsonIgnore Long releaseEpochSecond,
+            @JsonIgnore Integer matchPriority) {
+        public MusicItem(Long musicId, String provider, String externalMusicId, String title,
+                String artistName, String albumCoverUrl, String previewUrl, String youtubeVideoId,
+                boolean queueable, StorefrontNames storefrontNames, Long releaseEpochSecond) {
+            this(musicId, provider, externalMusicId, title, artistName, albumCoverUrl, previewUrl, youtubeVideoId,
+                    queueable, storefrontNames, releaseEpochSecond, null);
+        }
+        public MusicItem(Long musicId, String provider, String externalMusicId, String title,
+                String artistName, String albumCoverUrl, String previewUrl, String youtubeVideoId,
+                boolean queueable) {
+            this(musicId, provider, externalMusicId, title, artistName, albumCoverUrl, previewUrl, youtubeVideoId,
+                    queueable, StorefrontNames.EMPTY, null);
+        }
+
+        public MusicItem(Long musicId, String provider, String externalMusicId, String title,
+                String artistName, String albumCoverUrl, String previewUrl, String youtubeVideoId,
+                boolean queueable, StorefrontNames storefrontNames) {
+            this(musicId, provider, externalMusicId, title, artistName, albumCoverUrl, previewUrl, youtubeVideoId,
+                    queueable, storefrontNames, null);
+        }
+    }
+
+    public record StorefrontNames(String titleUs, String artistNameUs, String titleKo, String artistNameKo,
+            boolean retryKoreanLookup) {
+        public static final StorefrontNames EMPTY = new StorefrontNames(null, null, null, null, false);
     }
 
     public record MusicSummary(long music_id, String title, String artist_name, String album_cover_url) {
