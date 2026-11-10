@@ -333,6 +333,9 @@ class CoreAuthProcessTest {
             Probe survivor = join(polling, survivingSid, region, room);
             if (MUSIC) {
                 musicChecks(jdbc, polling, subscribed, first, second, revokedSid, region, room);
+                if (Boolean.getBoolean("auth.integration.music-recovery")) {
+                    musicRecoveryChecks(jdbc, chatEnv, trust, polling, subscribed, second, revokedSid, region, room);
+                }
                 return;
             }
             if (CONTROL) {
@@ -998,6 +1001,97 @@ class CoreAuthProcessTest {
                 "skipAndServerEnd", true, "readOnlyPeriodicSync", true);
         Files.writeString(evidence.resolve("music-events.json"), json.writeValueAsString(checks));
         Files.writeString(evidence.resolve("music-event-examples.json"), json.writeValueAsString(musicExamples));
+    }
+
+    private void musicRecoveryChecks(JdbcTemplate jdbc, Map<String, String> chatEnv, Path trust,
+            Node polling, Node subscribed, Probe view, String sid, long region, long room) throws Exception {
+        long song = jdbc.queryForObject("SELECT id FROM music WHERE external_music_id='music-events-process'",
+                Long.class);
+        String base = "/api/v1/chat-rooms/" + room;
+        String query = "?membership_id=" + view.membership + "&view_session_id=" + view.view;
+        assertEquals(201, request(polling, "POST", base + "/queue-items" + query, token(sid),
+                json.writeValueAsString(Map.of("music_id", song)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString())).statusCode());
+        long current = jdbc.queryForObject("SELECT current_queue_item_id FROM playback_states WHERE chat_room_id=?",
+                Long.class, room);
+        String pauseId = UUID.randomUUID().toString();
+        String pauseBody = json.writeValueAsString(Map.of("action", "PAUSE", "queue_item_id", current,
+                "expected_version", 6));
+        var paused = request(polling, "POST", base + "/playback/commands" + query, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(200, paused.statusCode(), paused.body());
+        assertEquals(201, request(polling, "POST", base + "/queue-items" + query, token(sid),
+                json.writeValueAsString(Map.of("music_id", song)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString())).statusCode());
+        stop(subscribed);
+        assertEquals(1013, view.closed.get(5, TimeUnit.SECONDS));
+        Probe drained = connect(polling, sid, room, view.membership, view.view);
+        var afterDrain = request(polling, "GET", base + "/queue-items" + query, token(sid), null, Map.of());
+        assertEquals(200, afterDrain.statusCode(), afterDrain.body());
+        assertEquals("PAUSED", json.readTree(afterDrain.body()).path("data").path("state").asText());
+        polling.process().destroyForcibly();
+        assertTrue(polling.process().waitFor(10, TimeUnit.SECONDS));
+        // Deterministic expired-lease fault; the process has really been killed, no live owner is bypassed.
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment='auth-test' AND state='ACTIVE'");
+        Node replacement = start("chat", chatEnv, trust);
+        Probe resumed = connect(replacement, sid, room, drained.membership, drained.view);
+        var recovered = request(replacement, "GET", base + "/queue-items" + query, token(sid), null, Map.of());
+        assertEquals(200, recovered.statusCode(), recovered.body());
+        var data = json.readTree(recovered.body()).path("data");
+        assertEquals("PAUSED", data.path("state").asText());
+        assertEquals(8, data.path("version").asLong());
+        assertEquals("abcdefghijk", data.path("source_video_id").asText());
+        assertEquals(current, data.path("current_queue_item_id").asLong());
+        long epoch = data.path("epoch").asLong();
+        assertTrue(epoch > 0);
+        REDIS.getDockerClient().restartContainerCmd(REDIS.getContainerId()).exec();
+        assertEquals(1013, resumed.closed.get(8, TimeUnit.SECONDS));
+        await(() -> status(replacement, "/actuator/health/readiness") == 503);
+        assertEquals(503, request(replacement, "GET", base + "/queue-items" + query, token(sid), null,
+                Map.of()).statusCode());
+        stop(replacement);
+        // Simulate an outage beyond the original verified grace, without manufacturing a new interval.
+        jdbc.update("""
+                UPDATE chat_view_intervals i JOIN chat_view_runtime v ON v.view_id=i.view_session_id
+                SET i.started_at=TIMESTAMPADD(SECOND,-60,UTC_TIMESTAMP(6)),
+                  i.verified_at=TIMESTAMPADD(SECOND,-31,UTC_TIMESTAMP(6)),
+                  i.ends_at=CASE WHEN i.ends_at IS NULL THEN NULL ELSE
+                    TIMESTAMPADD(SECOND,-31,UTC_TIMESTAMP(6)) END
+                WHERE v.environment='auth-test' AND v.room_id=?
+                """, room);
+        jdbc.update("""
+                UPDATE chat_music_outbox SET status='PENDING',sent_at=NULL,claim_token=?,
+                  claim_until=TIMESTAMPADD(SECOND,10,UTC_TIMESTAMP(6))
+                WHERE room_id=? AND event_type='QUEUE_UPDATED' AND music_version=8
+                """, UUID.randomUUID().toString(), room);
+        long receipts = jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_command_receipts WHERE room_id=?",
+                Long.class, room);
+        recoveryCommand();
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_outbox WHERE environment='auth-test' "
+                + "AND epoch=? AND status='PENDING'", Integer.class, epoch));
+        assertEquals(receipts, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_command_receipts WHERE room_id=?",
+                Long.class, room));
+        Node fresh = start("chat", chatEnv, trust);
+        Probe restored = connect(fresh, sid, room, resumed.membership, resumed.view);
+        var latest = request(fresh, "GET", base + "/queue-items" + query, token(sid), null, Map.of());
+        assertEquals(200, latest.statusCode(), latest.body());
+        var finalState = json.readTree(latest.body()).path("data");
+        assertEquals(epoch + 1, finalState.path("epoch").asLong());
+        assertEquals("IDLE", finalState.path("state").asText());
+        assertEquals(0, finalState.path("items").size());
+        assertEquals("CANCELED", jdbc.queryForObject("SELECT status FROM music_queue_items WHERE id=?",
+                String.class, current));
+        var replay = request(fresh, "POST", base + "/playback/commands" + query, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(paused.body(), replay.body());
+        assertEquals(finalState.path("version").asLong(), jdbc.queryForObject(
+                "SELECT version FROM playback_states WHERE chat_room_id=?", Long.class, room));
+        assertFalse(restored.closed.isDone());
+        Files.writeString(evidence.resolve("music-recovery.json"), json.writeValueAsString(Map.of(
+                "sigtermPausedPreserved", true, "realSigkill", true, "sameViewTaskTakeover", true,
+                "leaseExpiryFault", true, "realRedisRestartClosed", true, "operatorCommandNewEpoch", true,
+                "oldOutboxExpired", true, "expiredAbsenceCleared", true, "receiptReplayDidNotRestoreState", true)));
     }
 
     private final List<com.fasterxml.jackson.databind.JsonNode> musicExamples = new ArrayList<>();
