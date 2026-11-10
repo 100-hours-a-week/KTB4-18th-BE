@@ -1817,3 +1817,142 @@ FE 전체991개 중984통과·7조건부 제외·실패0이며 포맷/린트/타
 첫 FE 실행의 기존 음악 기록200곡 시험5초 timeout1건은 worker2 전체 재실행으로 통과했고 원본 JSON을 보존했다.
 실제 소스 overlay를 포함한 FE/Core/두 Chat 통합도 통과했다. 최종 CLI 테이블/권한 probe 보완은
 그 이후 권한 가드·실제 복구/참여 회귀에서 검증했다. 서로 다른 검증 실행 범위를 전체 단일 E2E로 표시하지 않는다.
+
+## 공동 재생 10단계 통합 검증·운영 반영 준비 (2026-11-10)
+
+양쪽 `feature/chat-music-verification`에서2~9단계의 릴리스 후보 검증과 운영 인계 자료를 준비한다.
+상세 실행·반영·중단·롤백/전역 복구·기능 플래그·운영 승인 조건은 [아래 운영 절차](#10단계-운영-체크리스트와-반영-절차)를 따른다.
+
+```sh
+python3 scripts/verify-chat-music-release.py --live-youtube
+```
+
+이 명령은 격리 BE 전체/서버 복구/참여 회귀·세 JAR, FE 전체 검사/빌드,
+실제 Core/두 Chat/MySQL/Redis에 연결한2계정·3브라우저, 계약 검증·미디어 smoke를 묶는다.
+실행별 `build/chat-music-release-verification/<UTC시각>/summary.json`은 소스/HEAD/JAR SHA와
+단계 결과·조건부 제외·운영 gate를 구분한다. 소스 변경이나 실패를 성공 증빙으로 재사용하지 않는다.
+`localVerificationPassed`가true여도 `operationalActivationAllowed`는별도필수gate가남으면false다.
+검수카탈로그가없고운영환경/물리기기/1000연결확인전이므로기본음악플래그는false를유지한다.
+
+이번 검증 전용 Core fixture는 다른 계정의 서명 토큰/세션/위치 근거를 발급할 수 있게 확장했다.
+운영 인증을 대체하지 않으며 실제 곡을 등록하지 않는다. 최종 동작 검증은 auth/GPS/YouTube SDK 경계만 합성이고
+React/ChatParticipation/REST/STOMP/Core 인증 확인/DB/Redis/두 Chat은 실제 구현이다.
+기존 모의 브라우저/실제 YouTube 데모 시험과도 구분한다. 운영 DB/Redis/AWS·배포·커밋/push/PR 변경은 없다.
+
+### 10단계 운영 체크리스트와 반영 절차
+
+2026-11-10 · 2~9단계 BE/FE 대상. 이 문서는 실제 배포 승인서가 아니다.
+로컬 통합 통과와 운영 활성화 승인은 분리하며 `api/chat-music-release-gates.json`에 후자를 기록한다.
+
+#### 재현과 검증 범위
+
+BE 저장소에서 실행한다. Docker·JDK25·Node·npm 의존성·설치 Chrome이 필요하다.
+실행 시작 전에 `./gradlew spotlessApply`와 FE `npm run format:check`를 끝내 소스를 고정한다.
+
+```sh
+python3 scripts/verify-chat-music-release.py --live-youtube
+```
+
+FE에서도 `npm run verify:chat:music:readiness -- --live-youtube`로 같은 명령을 실행한다.
+대체 FE 경로는 BE 명령의 `--frontend-dir`로 지정한다. 운영 주소/계정/토큰은 인자로 넣지 않는다.
+
+- 격리 MySQL 전체 회귀·정적 검사·일반/Core/Chat JAR, 실제 Task 종료/Redis 재시작/CLI 복구, 참여 회귀.
+- FE 포맷·린트·전용 타입·전체 시험·빌드, 실제 서버에 연결한 세 브라우저, 음악 이벤트/조회 계약 대조.
+- 기존 수신 누락/조회503/online·UI 차단·개인 음량 회귀. 선택한 실제 YouTube SDK/공식 데모 smoke.
+- 실행별 `build/chat-music-release-verification/<UTC시각>/summary.json`과 단계 로그/XML·응답 예시를 보존한다.
+  JAR/source SHA256과 양쪽 HEAD를 기록하고 실행 중 소스가 바뀌거나 명령이 실패하면 성공을 승인하지 않는다.
+  기존 조건부 제외는 XML에 남기고 전용 프로세스 검증으로 주요 경로를 따로 확인한다.
+
+실제 서버 브라우저 시험은 서로 다른2계정·3탭의 실제 ChatParticipation/REST/STOMP/React를 사용한다.
+GPS/로그인 저장 경계와 YouTube SDK만 합성이다. Core 인증 검사·DB·Redis·두 Chat·큐/명령·전파는 실제 구현이다.
+신청→첫 자동 재생→이웃 곡 취소→전체 일시정지→정지 중 새 탭 입장→건너뛰기→개인 음량 격리→음악 중 채팅→
+일부 탭 퇴장 유지→마지막 탭 퇴장→재입장 빈 큐를 확인한다. 실제 OAuth/음원/동시1000기기의 시험은 아니다.
+별도 실제 YouTube smoke는 공식 API 데모만 재생하며 운영 카탈로그를 등록하지 않는다.
+
+#### 고정 정책·계약
+
+- 모든 활성 참여자가 신청·재생·일시정지·재개·건너뛰기·대기 곡 취소를 한다. 호스트/신청자 전용 권한을 두지 않는다.
+- 입장 시 공통 상태를 따른다. 청취 시작/중지 선택은 없고 개인 음량·음소거만 제공한다. PAUSED 입장은 cue만 한다.
+- 큐/재생/명령 영수증/Outbox는 DB 정본, 위치/종료는 DB UTC와 고정 video/duration이 기준이다.
+  클라이언트 ENDED/영상 오류로 자동 다음 곡을 정하지 않는다. 공식 iframe 재생이며 오디오 추출·중계는 없다.
+- 마지막 유효 참여 종료는 현재/WAITING 취소·IDLE이다. Task 장애의 미종료 view는 마지막 검증 시각30초 안에서만 보존한다.
+- UUID는 원 sid/member/view/명령 tuple로만 명시적 확인한다. 불확실한 명령의 자동 재전송·새 UUID 재신청은 없다.
+- music version/epoch·현재 곡/expected_version을 검증한다. cursor 충돌은 첫 페이지 재조회한다.
+  연결 ready→fresh 음악 조회 전과 음악 확인 실패 중에는 재생·공통 조작을 허용하지 않는다.
+- 기본 위치 보정은1초 확인/2초 초과 오차/반복 seek 최소5초다. 음악15초 침묵은 재조회한다.
+  전달 지연·광고·브라우저 버퍼 차이가 제거된 무오차 동시 재생 보장은 아니다.
+
+#### 배포 전 확인: 담당자·증빙이 필요한 차단 조건
+
+| 항목 | 확인할 내용 |
+| --- | --- |
+| 검수 곡 | 검수 목록이 현재 없음. 지역에서 신청 가능한 KR/VERIFIED·공식영상·길이·근거·유효기한과 임베드 가능 여부를 확인 후 등록한다. 합성 fixture를 운영으로 옮기지 않는다. |
+| DB | 모든 선행 migration과 V20261108192420/20261109103259/20261109132852를 단일 migrator로 적용·validate한다. Chat의 음악 DML/잠금, 복구 계정의 음악 Outbox SELECT/UPDATE 권한과 풀/저장량을 확인한다. |
+| Redis | 기존 namespace/TLS/인증에 음악 `&<env>:chat:music:*` PUBLISH/PSUBSCRIBE 권한을 추가 확인한다. 기존 메시지/제어/marker/INFO server 권한도 필요하다. |
+| 키·플래그 | 음악 키는 메시지/서비스 인증 키와 분리한다. 영수증/tombstone의 구 키를 삭제하지 않는다. 모든 Task에 동일한 코드·키·플래그를 준비한다. |
+| 런타임 | 현재 Chat JAR의 검증된 chat-isolated 구성을 사용한다. 기존 monolith/prod 격리 가드를 우회하지 않는다. 실제 ECS profile·Core 내부 HTTPS/서비스 키 매핑은 클라우드 담당이 확인한다. |
+| 라우팅·캐시 | 공용 origin의 음악 REST는 Chat, 기존 auth는 Core, /ws는 WebSocket upgrade. Authorization·membership/view/expected_version·쿼리를 보존하고 음악 응답/인증 응답을 캐시하지 않는다. |
+| 미디어·기기 | 실제 origin/Referer·CSP script/frame·Permissions-Policy와 실제 iOS Safari/Android Chrome의 자동재생/복귀/음소거를 확인한다. Chrome 데스크톱만으로 승인하지 않는다. |
+| 부하·관측 | 1000개 실제 계정/연결의 음악 변경·snapshot/재연결·채팅 혼합, 합의한 지연/누락/DB·CPU·메모리 기준과 반복 결과를 확보한다. 기존 채팅 단독 수치를 음악 부하로 대체하지 않는다. |
+| 운영 책임 | staging 검증·관측/경보·중단/복구/롤백 담당 및 실행할 정확한 이미지 digest·JAR/FE artifact SHA를 남긴다. |
+
+공식 확인 근거: [YouTube IFrame API](https://developers.google.com/youtube/iframe_api_reference),
+[Chrome 자동재생 정책](https://developer.chrome.com/blog/autoplay/).
+iframe은 최소200×200을 유지하고 자동재생 차단을 정상 재생으로 표시하지 않는다. 재생 허용 버튼은 방 명령을 보내지 않는다.
+
+#### 반영 순서
+
+1. 이 문서의 운영 gate마다 담당자·증빙을 채운다. `pending`을 로컬 시험 통과만으로 `passed`로 바꾸지 않는다.
+2. 단일 migrator가 선행 DDL을 적용하고 validate한다. 기존 음악/참여 데이터와 영수증·구 키를 보존한다.
+3. 백엔드 코드/음악 ACL·키·Core 인증/참여·relay·lifecycle 의존성을 전체 Task에 준비한다. 음악 세 플래그는 false 유지한다.
+4. FE artifact를 배포하되 `VITE_CHAT_MUSIC_QUEUE_ENABLED`·`VITE_CHAT_MUSIC_PLAYER_ENABLED`는 false로 빌드한다.
+   Vite 변수는 build-time 값이다. 실행 컨테이너 환경만 바꿔 이미 빌드한 FE가 바뀐다고 가정하지 않는다.
+5. 검수 곡과 staging 결과를 확인한 뒤 Chat 라우팅을 제어하고 동일 구성으로 모든 Task의
+   `CHAT_MUSIC_QUEUE_ENABLED`/`CHAT_MUSIC_PLAYBACK_ENABLED`/`CHAT_MUSIC_EVENTS_ENABLED`를 함께 활성화한다.
+   부분 Task에만 플래그/키가 다른 상태로 요청을 받지 않는다. 기존 lifecycle/relay 준비가 먼저다.
+6. readiness·음악 서비스·신청 가능 곡을 확인한다. FE 두 플래그를 true로 새 빌드한 후보를 검증/반영한다.
+7. 서로 다른 계정의 신청/취소/일시정지/재개/건너뛰기·정지 입장·개인 음량·마지막 퇴장 smoke 후 관측한다.
+   실패하면 새 조작을 중단하고 아래 절차를 따른다. 일정/관측 기간·SLO 수치는 담당자가 합의해야 한다.
+
+#### 관측과 중단
+
+- readiness/musicRelay DOWN·음악 REST503/WS1013 증가, 음악 relay failure/rejected·Outbox pending/oldest age,
+  DB lock/transaction 시간·풀 포화, 사용자별 상태 version/epoch 불일치·수신 누락을 관찰한다.
+- 기존 private `/actuator/prometheus` 전용 토큰/내부 경로만 사용한다. 실제 scrape·경보 연결은 운영 gate다.
+  지표 label이나 로그에 사용자/방 ID·토큰·명령 본문·위치·실제 소스 근거를 추가하지 않는다.
+- 미디어 오류는 자동 전역 SKIP으로 덮지 않는다. 특정 영상 문제와 Core/Redis/DB 공통 장애를 구분한다.
+
+#### 롤백·전역 복구
+
+- 음악 진입/조작을 먼저 닫는다. FE 플래그를 내린 artifact로 되돌리고 해당 탭이 갱신됐는지 확인한다.
+  이미 열린 구 FE 세션이 남을 수 있으므로 FE 롤백만으로 서버 음악 중단이 끝났다고 보지 않는다.
+- Chat 라우팅/구 Task를 닫고 worker/전파가 멈춘 상태에서 동일한 음악 off 구성으로 재기동한다.
+  파괴적 down migration이나 큐/Outbox/영수증 삭제를 롤백으로 사용하지 않는다. 참여·음악 플래그 의존성을 지킨다.
+- Redis generation/marker가 유실되면 복원만으로 Task를 개방하지 않는다. 모든 구 Chat 종료를 확인한 담당자가
+  최신 Chat JAR의 `ChatRecoveryCommand`를 기존 README의 전용 환경변수로 실행한다.
+  `CHAT_RECOVERY_CONFIRM=chat-stopped`는 실제 라우팅/구 Task 종료 확인 후에만 설정한다.
+- 복구 CLI 성공·구 음악 Outbox 만료·새epoch/새 Task UUID·readiness 확인 후 라우팅을 연다.
+  FE는 새 연결/fresh snapshot을 확인한다. 구 영수증 재현 응답을 현재 재생으로 덮어쓰지 않는다.
+  복구 실패 시 닫힘을 유지하며 DB/Redis를 임의 초기화하지 않는다.
+
+운영 증빙용 읽기 전용 집계는 `api/chat-music-operations-check.sql`에 제공한다. 대상 환경을 확인한 담당자가 실행한다.
+DB 전역의 유효 소스 수는 해당 지역/사용자의 신청 가능 곡 수와 같지 않으므로 실제 requestable-music 응답도 확인해야 한다.
+이 SQL은 migration·권한 부여·정리·키 삭제를 하지 않으며 비밀값/메시지/사용자ID를 출력하지 않는다.
+
+### 10단계 최종 로컬 검증 결과
+
+2026-11-10 `20261110T011615Z` 실행은 `localVerificationPassed=true`,
+`operationalActivationAllowed=false`다. 증빙은 BE
+`build/chat-music-release-verification/20261110T011615Z/summary.json`과 단계 로그/XML에 있다.
+
+- BE 전체 977개: 954 통과·23 조건부 제외·실패0. 별도 음악 복구20개·참여49개 전부 통과.
+- FE 전체 994개: 987 통과·7 조건부 제외·실패0. 포맷/린트/채팅 타입/빌드 통과.
+- 실제 Core·두 Chat·MySQL/Redis·2계정3탭에서 공동 제어/타인 대기 곡 취소/정지 입장/개인 음량/채팅/마지막 퇴장 정리 통과.
+- 실제 STOMP30건·queue20건을 스키마/FE 파서로 검사하고 OpenAPI 참조82개·잘못된 이벤트3개 거부 확인.
+- 기존 복구 UI 브라우저 회귀 통과. 별도 실제 YouTube SDK/iframe1개/PLAYING 관측·오류/실패 요청0.
+  공식 데모·합성 방 상태의 smoke이며 운영 곡·물리 모바일 동시 청취 검증은 아니다.
+- BE 소스 SHA256 `b7193d22e0ce23835a1f9cf7ae44c33344575e2457ba48f3cd981edfa69fecb5`와 세 JAR manifest가 일치한다.
+  FE 소스 SHA256 `ad5983fc5cacb5b152795a3721b1383b450cd5900c07d891ffe081bdd965ae9d`도 실행 중 변경이 없었다.
+
+검수 곡·운영 migration/권한/ACL/키/라우팅·물리 모바일·1000연결/SLO·관측/복구 훈련·릴리스 승인 gate는 모두 pending이다.
+기본 플래그false를 유지하며 운영 활성화·DB/클라우드 변경·커밋·push·PR·배포는 수행하지 않았다.
