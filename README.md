@@ -179,6 +179,14 @@ Kakao 조회가 성공한 시점부터 위치 토큰의 유효시간은 300초�
 
 ### 음악 기록 상세·수정 API
 
+외부 iTunes 검색이 성공하면 페이지를 자르기 전에 후보 전체를 MySQL 작업 테이블에 접수합니다.
+백그라운드 작업자는 한국·미국 스토어 표기와 발매일을 기존 음악 카탈로그에 저장합니다.
+DB 조회는 한국 스토어 표기를 먼저 사용하고, 비어 있으면 미국 스토어 및 기존 표기를 사용합니다.
+작업을 접수하지 못하면 검색 API는 `503 music search storage unavailable`로 응답합니다.
+작업자는 기본 2개, 폴링 간격은 1초이며 `music.search-storage.workers`와
+`music.search-storage.poll-delay-ms`로 설정할 수 있습니다. 최대 세 번 시도하고 실패한 작업은
+[관리자 재투입 API](api/music-search-storage.openapi.yaml)로 다시 요청할 수 있습니다.
+
 인증된 사용자는 `GET /api/v1/music-records/{record_id}`로 본인 기록의 곡,
 지도 도트 ID, 시/도·시/군/구, 사용자 장소명, 감정 메모, 생성·수정 시각을 조회합니다.
 상세 응답의 `data.preview_url`은 저장된 곡의 미리 듣기 URL이며, 제공되지 않는 경우 `null`입니다.

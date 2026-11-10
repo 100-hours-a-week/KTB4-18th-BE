@@ -54,6 +54,7 @@ import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 
@@ -450,7 +451,8 @@ class MusicRecordApiDatabaseIntegrationTest {
         when(itunes.country()).thenReturn("KR");
         when(itunes.search(query)).thenReturn(List.of());
         MusicRecordService service = new MusicRecordService(musicRepository, itunes, locations, searchCursors,
-                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                mock(MusicSearchStorageService.class));
 
         var first = service.search(query, "ITUNES", null, 20);
         assertThat(first.items()).hasSize(20);

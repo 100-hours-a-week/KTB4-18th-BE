@@ -53,6 +53,24 @@ class SongRegistrationServiceTest {
     }
 
     @Test
+    void storedEnglishSongIsEnrichedFromTheKoreanSearchCandidateBeforeReturning() {
+        var service = service();
+        var names = new StorefrontNames("US title", "US artist", "한국 곡", "한국 가수", false);
+        var candidate = new MusicItem(null, "ITUNES", "1", "한국 곡", "한국 가수", null, null, null, false, names);
+        var stored = new MusicItem(1L, "ITUNES", "1", "US title", "US artist", null, null, null, false);
+        var localized = new MusicItem(1L, "ITUNES", "1", "한국 곡", "한국 가수", null, null, null, false);
+        cache.put("key", "KR", java.util.List.of(candidate));
+        when(repository.findMusic("ITUNES", "1")).thenReturn(Optional.of(stored), Optional.of(localized));
+
+        var response = service.register(new Request("1"));
+
+        assertThat(response.music()).isEqualTo(localized);
+        assertThat(response.created()).isFalse();
+        verify(repository).mergeStorefrontNames(candidate);
+        verify(itunes, never()).lookup(any());
+    }
+
+    @Test
     void trustedCandidateAvoidsLookupAndOnlyCommittedInsertIsCreated() {
         var service = service();
         cache.put("key", "KR", java.util.List.of(item(null, "1")));
