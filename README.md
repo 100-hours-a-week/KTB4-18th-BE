@@ -181,6 +181,7 @@ Kakao 조회가 성공한 시점부터 위치 토큰의 유효시간은 300초�
 
 인증된 사용자는 `GET /api/v1/music-records/{record_id}`로 본인 기록의 곡,
 지도 도트 ID, 시/도·시/군/구, 사용자 장소명, 감정 메모, 생성·수정 시각을 조회합니다.
+상세 응답의 `data.preview_url`은 저장된 곡의 미리 듣기 URL이며, 제공되지 않는 경우 `null`입니다.
 `PATCH /api/v1/music-records/{record_id}`는 변경된 필드만 받습니다.
 
 ```json

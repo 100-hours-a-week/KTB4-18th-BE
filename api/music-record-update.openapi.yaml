@@ -1,9 +1,33 @@
 openapi: 3.0.3
 info:
-  title: Music record update
+  title: Music record detail and update
   version: 1.0.0
 paths:
   /api/v1/music-records/{record_id}:
+    get:
+      operationId: getMusicRecordDetail
+      summary: 본인 음악 기록 상세 조회
+      description: 저장된 곡에 미리 듣기가 없으면 data.preview_url은 null이다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: record_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 본인 활성 기록 상세
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+        '401':
+          description: 인증되지 않음
+        '403':
+          description: 다른 사용자의 활성 기록
+        '404':
+          description: 기록이 없거나 삭제됨
     patch:
       operationId: updateMusicRecord
       summary: 본인 음악 기록의 곡 또는 메모 수정
@@ -126,6 +150,45 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    DetailResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message: { type: string }
+        data:
+          type: object
+          required: [record_id, music, map_dot_id, region, custom_place_name, emotion_memo, created_at, updated_at, preview_url]
+          properties:
+            record_id: { type: integer, format: int64 }
+            music:
+              type: object
+              required: [music_id, title, artist_name, album_cover_url]
+              properties:
+                music_id: { type: integer, format: int64 }
+                title: { type: string }
+                artist_name: { type: string }
+                album_cover_url: { type: string, nullable: true }
+            map_dot_id: { type: integer, format: int64 }
+            region:
+              type: object
+              required: [sido, sigungu]
+              properties:
+                sido:
+                  $ref: '#/components/schemas/RegionPart'
+                sigungu:
+                  $ref: '#/components/schemas/RegionPart'
+            custom_place_name: { type: string, nullable: true }
+            emotion_memo: { type: string, nullable: true }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time, nullable: true }
+            preview_url: { type: string, format: uri, nullable: true }
+    RegionPart:
+      type: object
+      required: [region_id, code, name]
+      properties:
+        region_id: { type: integer, format: int64 }
+        code: { type: string }
+        name: { type: string }
     SuccessResponse:
       type: object
       required: [message, data]

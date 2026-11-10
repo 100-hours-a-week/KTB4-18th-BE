@@ -2,6 +2,7 @@ package com.muse.meomuneum.music;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -139,6 +140,27 @@ class MusicMetadataMySqlIntegrationTest {
         mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.music.artist_name").value(ARTIST));
         assertThat(records.findMusic("ITUNES", "123").orElseThrow().artist_name()).isEqualTo(ARTIST);
+    }
+
+    @Test
+    void recordDetailExposesTheStoredPreviewOnlyForAnOwnedActiveRecord() throws Exception {
+        String previewUrl = "https://example.test/preview.m4a";
+        long musicId = records.upsertMusic(
+                new MusicItem(null, "ITUNES", "852", TITLE, ARTIST, null, previewUrl, null, false));
+        long legacyMusicId = records.findMusic("ITUNES", "1").orElseThrow().music_id();
+        var location = records.findLocation(1L, 2L, 1L).orElseThrow();
+        Instant now = Instant.now();
+        long recordId = records.saveRecord(1L, musicId, location, null, null, now);
+        long legacyRecordId = records.saveRecord(1L, legacyMusicId, location, null, null, now);
+
+        mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.preview_url").value(previewUrl));
+        mvc.perform(get("/api/v1/music-records/" + legacyRecordId)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.preview_url").value(nullValue()));
+        assertThat(records.findRecord(2L, recordId)).isEmpty();
+
+        assertThat(records.deleteRecord(1L, recordId, now)).isEqualTo(1);
+        mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isNotFound());
     }
 
     @Test
