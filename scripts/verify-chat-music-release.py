@@ -92,9 +92,14 @@ def main():
         for flag in ('CHAT_MUSIC_QUEUE_ENABLED', 'CHAT_MUSIC_PLAYBACK_ENABLED', 'CHAT_MUSIC_EVENTS_ENABLED'):
             if '${' + flag + ':false}' not in chat_config:
                 raise RuntimeError('Music flag default must remain false: ' + flag)
+            production = (ROOT / 'src/chat/resources/application-prod.yaml').read_text()
+            if '${' + flag + ':true}' not in production:
+                raise RuntimeError('Production Chat music flag must default true: ' + flag)
         for flag in ('VITE_CHAT_MUSIC_QUEUE_ENABLED', 'VITE_CHAT_MUSIC_PLAYER_ENABLED'):
             if flag + '=false' not in (frontend / '.env.example').read_text():
                 raise RuntimeError('Frontend flag default must remain false: ' + flag)
+            if flag + '=true' not in (frontend / '.env.production').read_text():
+                raise RuntimeError('Production frontend flag must default true: ' + flag)
         gates = json.loads((ROOT / 'api/chat-music-release-gates.json').read_text())['gates']
         if len({g['id'] for g in gates}) != len(gates):
             raise RuntimeError('Duplicate operational gate')

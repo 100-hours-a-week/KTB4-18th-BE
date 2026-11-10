@@ -1890,7 +1890,7 @@ GPS/로그인 저장 경계와 YouTube SDK만 합성이다. Core 인증 검사·
 | DB | 모든 선행 migration과 V20261108192420/20261109103259/20261109132852를 단일 migrator로 적용·validate한다. Chat의 음악 DML/잠금, 복구 계정의 음악 Outbox SELECT/UPDATE 권한과 풀/저장량을 확인한다. |
 | Redis | 기존 namespace/TLS/인증에 음악 `&<env>:chat:music:*` PUBLISH/PSUBSCRIBE 권한을 추가 확인한다. 기존 메시지/제어/marker/INFO server 권한도 필요하다. |
 | 키·플래그 | 음악 키는 메시지/서비스 인증 키와 분리한다. 영수증/tombstone의 구 키를 삭제하지 않는다. 모든 Task에 동일한 코드·키·플래그를 준비한다. |
-| 런타임 | 현재 Chat JAR의 검증된 chat-isolated 구성을 사용한다. 기존 monolith/prod 격리 가드를 우회하지 않는다. 실제 ECS profile·Core 내부 HTTPS/서비스 키 매핑은 클라우드 담당이 확인한다. |
+| 런타임 | 운영은 Chat JAR의 prod 프로필과 현재 기동 검사를 사용한다. chat-isolated는 격리 시험용이며 prod와 함께 사용하지 않는다. 실제 ECS profile·Core 내부 HTTPS/서비스 키 매핑을 확인한다. |
 | 라우팅·캐시 | 공용 origin의 음악 REST는 Chat, 기존 auth는 Core, /ws는 WebSocket upgrade. Authorization·membership/view/expected_version·쿼리를 보존하고 음악 응답/인증 응답을 캐시하지 않는다. |
 | 미디어·기기 | 실제 origin/Referer·CSP script/frame·Permissions-Policy와 실제 iOS Safari/Android Chrome의 자동재생/복귀/음소거를 확인한다. Chrome 데스크톱만으로 승인하지 않는다. |
 | 부하·관측 | 1000개 실제 계정/연결의 음악 변경·snapshot/재연결·채팅 혼합, 합의한 지연/누락/DB·CPU·메모리 기준과 반복 결과를 확보한다. 기존 채팅 단독 수치를 음악 부하로 대체하지 않는다. |
@@ -1956,3 +1956,54 @@ DB 전역의 유효 소스 수는 해당 지역/사용자의 신청 가능 곡 �
 
 검수 곡·운영 migration/권한/ACL/키/라우팅·물리 모바일·1000연결/SLO·관측/복구 훈련·릴리스 승인 gate는 모두 pending이다.
 기본 플래그false를 유지하며 운영 활성화·DB/클라우드 변경·커밋·push·PR·배포는 수행하지 않았다.
+
+
+### 운영 활성화 설정 변경 (2026-11-10 사용자 요청)
+
+기존 10단계 기록은 당시 검증 결과로 보존한다. 이후 사용자 요청으로 운영용 Chat 프로필과 FE 빌드의 음악 기능 기본값을 true로 변경했다. 실제 서버 적용·운영 gate 통과·검수 곡 등록은 별도이며 이 변경만으로 완료 표시하지 않는다.
+
+- Chat 전용 JAR의 `SPRING_PROFILES_ACTIVE=prod`에서 `CHAT_MUSIC_QUEUE_ENABLED`, `CHAT_MUSIC_PLAYBACK_ENABLED`, `CHAT_MUSIC_EVENTS_ENABLED`의 기본값은 true다. 공통/로컬 설정은 false를 유지한다. 운영 환경에 기존 false 값이 있으면 명시적으로 true로 바꿔야 한다.
+- FE `.env.production`에 `VITE_CHAT_MUSIC_QUEUE_ENABLED=true`, `VITE_CHAT_MUSIC_PLAYER_ENABLED=true`를 추가했다. 빌드 환경 또는 `.env.production.local`의 false 값은 파일 기본값을 덮어쓰므로 두 값 모두 true로 설정하고 `npm run build` 후 배포한다.
+- Core는 Core JAR, Chat은 Chat JAR를 사용한다. 기존 단일 앱의 prod 설정이나 chat-isolated+prod 조합으로 대체하지 않는다. prod 기동 가드는 유지한다.
+
+#### Chat 실행 환경에 주입할 값
+
+```dotenv
+SPRING_PROFILES_ACTIVE=prod
+CHAT_MUSIC_QUEUE_ENABLED=true
+CHAT_MUSIC_PLAYBACK_ENABLED=true
+CHAT_MUSIC_EVENTS_ENABLED=true
+CHAT_MUSIC_QUEUE_CAPACITY=100
+CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS=1000
+CHAT_RUNTIME_ENABLED=true
+CHAT_CORE_AUTH_ENABLED=true
+CHAT_AUTH_REDIS_ENABLED=true
+CHAT_REDIS_ENABLED=true
+CHAT_DISTRIBUTED_PRESENCE_ENABLED=true
+CHAT_MESSAGE_RELAY_ENABLED=true
+CHAT_CONTROL_EVENTS_ENABLED=true
+CHAT_LIFECYCLE_ENABLED=true
+CHAT_REDIS_SSL=true
+```
+
+다음 값은 실제 배포 자원/비밀 관리 시스템의 값을 넣는다. 아래 설명 문자열을 실제 값으로 주입하지 않는다.
+
+| 변수 | 주입할 값 |
+| --- | --- |
+| CHAT_MUSIC_KEYS | `music-v1:<32바이트 이상 난수의 base64>` 형태의 별도 음악 HMAC key ring. 신규 키 재료는 `openssl rand -base64 32`로 생성해 Secret에 보관한다. 모든 Chat Task에서 동일하게 사용하고 기존 영수증 키는 유지한다. JWT/위치/서비스/Redis/메시지 키를 재사용하지 않는다. |
+| CHAT_DB_URL / CHAT_DB_USERNAME / CHAT_DB_PASSWORD | migration 적용된 동일 서비스 schema의 실제 JDBC URL과 Chat 전용 DB 자격정보. 기존 값을 유지하고 환경을 바꾸지 않는다. |
+| CHAT_REDIS_HOST / CHAT_REDIS_PORT | 실제 Redis endpoint·port. port 기본6379이며 실제 TLS listener 값에 맞춘다. |
+| CHAT_REDIS_USERNAME / CHAT_REDIS_PASSWORD | 운영 Redis ACL 계정·비밀. prod는 default 계정을 허용하지 않는다. |
+| CHAT_REDIS_ENVIRONMENT | 기존 서비스의 운영 namespace. Core producer의 CORE_AUTH_REDIS_ENVIRONMENT와 동일하며 local/test/dev/staging을 사용하지 않는다. 기존 운영 namespace를 임의 변경하지 않는다. |
+| CORE_INTERNAL_BASE_URL | 실제 Core 내부 HTTPS origin. 경로 없는 주소이며 Chat에서 인증서 검증이 가능해야 한다. |
+| CORE_AUTH_SERVICE_TOKEN | Core의 CHAT_AUTH_SERVICE_TOKEN_CURRENT 또는 NEXT와 같은 전용 서비스 키(32~256자). |
+| CORE_AUTH_PRODUCER_IDS | 실제 Core의 CORE_AUTH_PRODUCER_ID allowlist. 여러 값은 쉼표로 구분한다. |
+| AUTH_JWT_SECRET / AUTH_JWT_ISSUER / AUTH_JWT_AUDIENCE / LOCATION_TOKEN_SECRET / AUTH_CORS_ALLOWED_ORIGINS | 기존 Core와 호환되는 서명·issuer/audience·위치 토큰과 실제 HTTPS 웹 origin. 기존 보안 설정을 유지한다. |
+| CHAT_MESSAGE_FINGERPRINT_KEYS | 기존 채팅 메시지 전용 HMAC ring. 음악 키와 별도이며 유효 영수증에 필요한 구 키를 유지한다. |
+| CHAT_METRICS_SERVICE_TOKEN | 내부 metrics scrape용 별도 토큰. 기존 관측 설정과 일치시킨다. |
+
+Core의 기존 `CORE_CHAT_AUTH_ENABLED=true`, `CORE_AUTH_REDIS_ENABLED=true`와 DB·Redis·서비스 키 설정도 준비돼 있어야 한다. 이 설정은 음악 전용 추가값이 아니라 기존 분산 채팅의 전제조건이다. migration은 단일 실행 주체로만 수행하며 모든 Core/Chat Task에 Flyway를 켜지 않는다.
+
+음악 Redis 채널 `&<운영namespace>:chat:music:*`의 PUBLISH/PSUBSCRIBE 권한, 선행 DDL, 검수된 신청 가능 곡이 필요하다. 키나 저장소 전제가 누락되면 기존 가드가 기동을 차단하며 이를 우회하지 않는다.
+
+적용 순서는 DDL·권한·키 준비 → 모든 Chat Task에 같은 설정 적용·재기동 → readiness와 음악 API 확인 → FE production 빌드·배포다. 끌 때는 FE 두 플래그와 BE 세 플래그를 false로 명시하고 재빌드/재기동한다. 데이터·영수증·구 키는 보존한다.
