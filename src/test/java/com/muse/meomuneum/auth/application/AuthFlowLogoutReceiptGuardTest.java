@@ -23,6 +23,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import com.muse.meomuneum.auth.config.AuthStateProperties;
+import com.muse.meomuneum.auth.directv2.repository.DirectAuthProjectionRepository;
 import com.muse.meomuneum.auth.exception.AuthFlowException;
 import com.muse.meomuneum.global.config.JwtProperties;
 
@@ -42,7 +43,8 @@ class AuthFlowLogoutReceiptGuardTest {
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", 1209600, 7776000, 10, 64, 16, 86400, 1, 100000, 300,
                 45);
         AuthFlowService service = new AuthFlowService(jdbc, transactionManager, properties, false, "Lax", true, 120,
-                new JwtProperties("issuer", "audience", "test-jwt-secret-with-at-least-32-bytes", 3600, 1209600));
+                new JwtProperties("issuer", "audience", "test-jwt-secret-with-at-least-32-bytes", 3600, 1209600),
+                mock(DirectAuthProjectionRepository.class));
         Instant now = Instant.now();
         String requestHash = hmac(service, "logout-request:" + FLOW_ID + ":8:" + OPERATION_ID);
 

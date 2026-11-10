@@ -145,6 +145,11 @@ public class DirectAuthLoginService {
 
     private Result finish(Claim claim, Tuple tuple, User user, String sid, String access, String refresh,
             String encrypted, LocalDateTime tokenExpiry) {
+        try {
+            users.requireActiveUserForSession(user.getId());
+        } catch (AuthenticationFailedException invalid) {
+            return finishInvalid(claim, tuple);
+        }
         long projectionGeneration = projections.lockAdmission(properties.globalSessionCapacity());
         var operation = operations.lockOwnedLogin(tuple.flowId(), tuple.operationId(), tuple.epoch(),
                 claim.flow().flowCookieGeneration(), claim.owner()).orElseThrow(

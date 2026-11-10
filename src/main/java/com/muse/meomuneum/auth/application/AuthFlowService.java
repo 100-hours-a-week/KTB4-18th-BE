@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -28,6 +29,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.muse.meomuneum.auth.config.AuthStateProperties;
+import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
+import com.muse.meomuneum.auth.directv2.repository.DirectAuthProjectionRepository;
 import com.muse.meomuneum.auth.exception.AuthFlowException;
 import com.muse.meomuneum.auth.exception.AuthStateUnavailableException;
 import com.muse.meomuneum.global.config.JwtProperties;
@@ -75,7 +78,11 @@ public class AuthFlowService implements AccessSessionAuthority {
         }
     }
 
+    private record SessionToRevoke(String sid, String cookieMode, LocalDateTime absoluteExpiry) {
+    }
+
     private final JdbcTemplate jdbc;
+    private final DirectAuthProjectionRepository projections;
     private final TransactionTemplate transactions;
     private final AuthStateProperties properties;
     private final boolean secureCookie;
@@ -89,8 +96,9 @@ public class AuthFlowService implements AccessSessionAuthority {
             @Value("${auth.cookie.same-site:Lax}") String sameSite,
             @Value("${auth.mutation-gate-open:false}") boolean mutationGateOpen,
             @Value("${auth.flow.bootstrap-requests-per-minute:120}") int bootstrapRequestsPerMinute,
-            JwtProperties jwtProperties) {
+            JwtProperties jwtProperties, DirectAuthProjectionRepository projections) {
         this.jdbc = jdbc;
+        this.projections = projections;
         this.transactions = new TransactionTemplate(transactionManager);
         this.properties = properties;
         this.secureCookie = secureCookie;
@@ -933,13 +941,19 @@ public class AuthFlowService implements AccessSessionAuthority {
                         SELECT DISTINCT flow_id FROM auth_browser_sessions
                         WHERE user_id = ? AND status = 'ACTIVE' ORDER BY flow_id
                         """, String.class, userId);
+                if (flowIds.isEmpty()) {
+                    return List.of();
+                }
+                long projectionGeneration = projections.lockGenerationForRevocation();
                 for (String flowId : flowIds) {
                     FlowRow flow = findFlowById(flowId, true);
-                    var activeSids = jdbc.queryForList("""
-                            SELECT sid FROM auth_browser_sessions
+                    var activeSessions = jdbc.query("""
+                            SELECT sid, refresh_cookie_mode, absolute_expires_at FROM auth_browser_sessions
                             WHERE flow_id = ? AND user_id = ? AND status = 'ACTIVE' ORDER BY sid FOR UPDATE
-                            """, String.class, flowId, userId);
-                    if (activeSids.isEmpty()) {
+                            """, (row, index) -> new SessionToRevoke(row.getString("sid"),
+                            row.getString("refresh_cookie_mode"),
+                            row.getObject("absolute_expires_at", LocalDateTime.class)), flowId, userId);
+                    if (activeSessions.isEmpty()) {
                         continue;
                     }
                     Instant now = Instant.now();
@@ -957,16 +971,21 @@ public class AuthFlowService implements AccessSessionAuthority {
                             WHERE flow_id = ? AND flow_epoch = ? AND active_session_sid IN
                                 (SELECT sid FROM auth_browser_sessions WHERE flow_id = ? AND user_id = ?)
                             """, nextEpoch, nextRevision, timestamp(now), flowId, flow.epoch(), flowId, userId);
-                    for (String sid : activeSids) {
-                        revoked.add(sid);
-                        insertOutbox(flowId, nextEpoch, nextRevision,
-                                "SESSION_REVOKED_" + sanitizeReason(reason), sid, now);
+                    String eventKind = "SESSION_REVOKED_" + sanitizeReason(reason);
+                    for (SessionToRevoke session : activeSessions) {
+                        if ("GENERATION_SCOPED".equals(session.cookieMode())) {
+                            projections.fenceRevocation(flowId, session.sid(), nextEpoch, nextRevision,
+                                    projectionGeneration, session.absoluteExpiry().plusDays(1), eventKind);
+                        } else {
+                            insertOutbox(flowId, nextEpoch, nextRevision, eventKind, session.sid(), now);
+                        }
+                        revoked.add(session.sid());
                     }
                 }
                 return List.copyOf(revoked);
             });
             return revokedSids == null ? List.of() : revokedSids;
-        } catch (DataAccessException exception) {
+        } catch (DataAccessException | DirectAuthFailure exception) {
             throw new AuthStateUnavailableException(exception);
         }
     }
