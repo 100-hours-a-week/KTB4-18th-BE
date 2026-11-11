@@ -32,6 +32,11 @@ public final class ChatMusicCommandStore {
     }
 
     public Result replay(Caller c, MusicTransaction tx, String id, String type, long target, long version) {
+        return replay(c, tx, id, type, target, version, null);
+    }
+
+    public Result replay(Caller c, MusicTransaction tx, String id, String type, long target, long version,
+            String candidate) {
         var rows = jdbc.query("""
                 SELECT key_id,fingerprint,http_status,result_body,expires_at FROM chat_music_command_receipts
                 WHERE environment=? AND user_id=? AND room_id=? AND command_id=?
@@ -41,7 +46,8 @@ public final class ChatMusicCommandStore {
             return null;
         }
         var old = rows.getFirst();
-        if (!keys.matches(old.key(), old.fingerprint(), fingerprintInput(c, tx, id, type, target, version))) {
+        if (!keys.matches(old.key(), old.fingerprint(), fingerprintInput(c, tx, id, type, target, version)
+                + (candidate == null ? "" : "|candidate|" + candidate))) {
             throw new ChatMusicException(409, "COMMAND_ID_CONFLICT");
         }
         if (!old.expiry().isAfter(tx.context().asOf())) {
@@ -61,6 +67,11 @@ public final class ChatMusicCommandStore {
 
     public void complete(Caller c, MusicTransaction tx, String id, String type, long target, long expectedVersion,
             long resultVersion, Result result) {
+        complete(c, tx, id, type, target, expectedVersion, resultVersion, result, null);
+    }
+
+    public void complete(Caller c, MusicTransaction tx, String id, String type, long target, long expectedVersion,
+            long resultVersion, Result result, String candidate) {
         jdbc.update("""
                 INSERT INTO chat_music_command_receipts(environment,user_id,room_id,command_id,auth_session_id,
                   membership_id,view_id,command_type,key_id,fingerprint,result_version,http_status,
@@ -69,7 +80,8 @@ public final class ChatMusicCommandStore {
                 """, tx.context().environment(), c.userId(), c.roomId(), id, c.sid(), c.membershipId(), c.viewId(),
                 type,
                 keys.activeId(),
-                keys.digest(keys.activeId(), fingerprintInput(c, tx, id, type, target, expectedVersion)),
+                keys.digest(keys.activeId(), fingerprintInput(c, tx, id, type, target, expectedVersion)
+                        + (candidate == null ? "" : "|candidate|" + candidate)),
                 resultVersion, result.status(), result.body());
     }
 
