@@ -73,6 +73,26 @@ class ChatMusicQueueControllerTest {
     }
 
     @Test
+    void regionalListCanSerializeUnregisteredVideoAndLegacyAvailabilityFlag() throws Exception {
+        var song = new java.util.LinkedHashMap<String, Object>();
+        song.put("music_id", 11L);
+        song.put("title", "지역 곡");
+        song.put("artist_name", "가수");
+        song.put("album_cover_url", null);
+        song.put("youtube_video_id", null);
+        song.put("duration_millis", null);
+        song.put("is_queueable", false);
+        song.put("sources", List.of("RECORDED"));
+        when(service.candidates(caller, "", 20, null)).thenReturn(Map.of("items", List.of(song)));
+        mvc.perform(get(ROOT + "/requestable-music").principal(auth).param("membership_id", "3")
+                .param("view_session_id", VIEW))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].youtube_video_id").isEmpty())
+                .andExpect(jsonPath("$.data.items[0].duration_millis").isEmpty())
+                .andExpect(jsonPath("$.data.items[0].is_queueable").value(false))
+                .andExpect(jsonPath("$.data.items[0].sources[0]").value("RECORDED"));
+    }
+
+    @Test
     void rejectsMissingHeaderDuplicateUnknownAndNonIntegerMusicIds() throws Exception {
         for (String body : List.of("{\"music_id\":11,\"music_id\":12}", "{\"music_id\":11,\"state\":\"PLAYING\"}",
                 "{\"music_id\":1.5}", "{\"music_id\":\"11\"}", "{\"music_id\":-1}")) {

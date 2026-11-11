@@ -2016,3 +2016,89 @@ Core의 기존 `CORE_CHAT_AUTH_ENABLED=true`, `CORE_AUTH_REDIS_ENABLED=true`와 
 음악 Redis 채널 `&<운영namespace>:chat:music:*`의 PUBLISH/PSUBSCRIBE 권한, 선행 DDL, 검수된 신청 가능 곡이 필요하다. 키나 저장소 전제가 누락되면 기존 가드가 기동을 차단하며 이를 우회하지 않는다.
 
 적용 순서는 DDL·권한·키 준비 → 모든 Chat Task에 같은 설정 적용·재기동 → readiness와 음악 API 확인 → FE production 빌드·배포다. 끌 때는 FE 두 플래그와 BE 세 플래그를 false로 명시하고 재빌드/재기동한다. 데이터·영수증·구 키는 보존한다.
+
+
+## 지역 곡·영상 선택 저장 기반 — 최소 P1 1단계 (2026-11-11)
+
+이 단계는 본인 지역 곡 탐색과 영상 선택의 저장 기반이다. YouTube 검색/선택 ADD/고정 영상으로의
+worker 전환은 2단계, FE 위치 전달/목록/영상선택 UI는 3단계다. 외부 호출·FE·운영 설정은 변경하지 않는다.
+
+### 출처와 검색
+
+- `GET /api/v1/chat-rooms/{room_id}/requestable-music`는 기존 활성 sid/member/view 권한을 유지한다.
+  본인의 동일 SIGUNGU 유효 기록 또는 본인의 COMPLETED 추천(CHATBOT TEXT/VOICE/IMAGE,
+  LOCATION SYSTEM)만 music_id로 중복 제거한다. 타인의 PUBLIC 기록도 이제 제외한다.
+- 목록은 영상이 없어도 곡을 반환한다. `youtube_video_id`/`duration_millis`는 null일 수 있고
+  `is_queueable`은 기존 music_id-only ADD에 유효 검수 소스가 있는지를 뜻한다. 새로운 영상 선택 승인과 다르다.
+  구 FE는 영상/길이를 필수로 파싱하므로 새 FE의 nullable 처리와 공동 적용해야 한다. 이 BE만 운영 반영하지 않는다.
+- 검색은 기본/한국어/미국 제목·가수의 부분 일치다. NFC·공백·대소문자를 정규화하고 서버 전체 대상에서
+  조회한다. 기존20곡 keyset·서명 cursor·5분 만료·no-store를 유지한다. 전체 결과 고정 snapshot은 아니다.
+- `RequestableMusicRepository.findProvenance`는 영상과 분리한 내부 출처 확인이다.
+  기존 `findSources`와 legacy ADD는 여전히 유효한 기존 검수 소스를 요구한다. 미검수 ADD를 허용하지 않는다.
+
+### 이미지 추천 지역 계약
+
+- 기존 multipart `POST /api/v1/recommendations/images`에 선택 문자열 `location_resolution_token`(최대4096)을
+  추가한다. 생략은 기존 지역 미상 추천을 유지하며, 제출 시 인증된 계정/sid·서명·만료·활성 지역/도트를 검사한다.
+  잘못된 토큰은 접수/이미지 복사/저장 전에400, 검증기 부재는503이다. 임의 region_id/map_dot_id는 거절한다.
+- 여러 개의 같은 multipart 필드·추가 파일/prompt도 거절한다. 외부 AI 요청에는 토큰·지역을 보내지 않는다.
+  DB에는 검증된 region_id/map_dot_id만 저장한다. 기존 TEXT/VOICE 위치 계약과 LOCATION 완료 보관을 재사용한다.
+  과거 region_id=NULL 추천을 소급하지 않으며 위치 없는 추천 자체를 차단하지 않는다.
+
+### 영상·후보·대기열 DDL
+
+`V20261111104317__create_music_video_selection_storage.sql`을 추가한다. 기존 SQL은 수정하지 않는다.
+두 로컬 migration 선택 목록에도 포함한다.
+
+- `music_video_sources`: (music_id,youtube_video_id)별 여러 소스. PLAYABLE/UNKNOWN/UNAVAILABLE와
+  공식 UNREVIEWED/CONFIRMED를 분리한다. 재생 검사만 통과한 후보를 공식 확인으로 표시하지 않는다.
+- `music_video_search_results`: 불변 READY/EMPTY 검색 캐시 batch, 메타데이터 지문/국가/정책 버전·TTL 인덱스.
+  PROCESSING/job/lease는 추가하지 않는다. 실패는 EMPTY로 저장하지 않는다. batch와 후보의 원자 저장/TTL 검사는2단계다.
+- `music_video_candidates`: 서버 UUID·검색 batch·음악·영상·순서·제목/채널/커버/길이.
+  복합 FK가 다른 곡의 batch/source 연결을 막고 rank/video 중복을 제한한다.
+- `music_queue_items.source_video_id/duration_millis`: 쌍/길이 CHECK와 영상별 소스 FK.
+  기존 ACTIVE는 playback의 실제 pin/길이를 복사한다. 이미 대표 영상이 바뀐 과거 pin은 UNKNOWN/UNREVIEWED로
+  식별만 보관하며 검증 시각을 만들지 않는다. 유효 검수 WAITING만 pin을 채우고 불명확 WAITING은 null로 보존한다.
+  큐 상태/순서·playback 상태/위치/버전·기존 검수/영수증/outbox를 변경하지 않는다.
+
+이 migration은 신규 선택 기능 활성화가 아니다. legacy 코드가 이후 만든 null pin과 기존 검수 도구의 변경은
+새 테이블에 자동 동기화하지 않는다. 2단계는 호환 writer·검수 변경 경로·고정 소스 재생을 연결하고,
+전환 시 기존 WAITING/ACTIVE를 다시 점검해야 한다. null pin 항목에 임의 영상을 넣지 않는다.
+
+### 소비자 계약·전환·검증
+
+- 기존 조회 계약: `api/chat-music-queue.openapi.json` 1.2.0.
+- 전체 기반/후속 계약: `api/chat-music-video-foundation.openapi.json`.
+  implemented-foundation과 planned-step-2를 구분한다. 새 영상 검색 POST는 동기200이며202/상태GET/폴링은 없다.
+  후보 ID 신청 body와 신규 오류는2단계 목표이고 이번에는 handler가 없다.
+- 배포는 migration 전 DB백업/DDL 잠금·공간·테이블 권한을 확인하고 DDL→호환 BE→nullable 대응 FE로 진행한다.
+  최초 새 소스 계약 활성화 때 구 worker 혼합을 금지한다. 운영 migration/권한/배포는 이번 작업에서 실행하지 않는다.
+- rollback 시 추가 테이블/컬럼을 자동 삭제하지 않는다. 기존 데이터/검수/영수증을 보존하고 호환 앱으로 복구한다.
+  새 영상 선택이 쓰이기 시작한 뒤에는 구 worker에 새 대기곡을 그대로 넘기지 않는다.
+- 로컬 개발 이슈: `api/issues/chat-music-video-foundation.md` (기존 ignore 정책 유지, 외부 번호 임의 생성 없음).
+- 재현: `./gradlew test --tests '*MusicCatalogMySqlTest' --tests '*MusicVideoStorageMySqlTest' --tests '*ChatMusicQueueMySqlTest' --tests '*ChatMusicQueueControllerTest' --tests '*ImageRecommendationServiceTests' --tests '*ImageRecommendationSecurityIntegrationTest' --tests '*RecommendationLocationAdmissionTest' --no-daemon`.
+  전체 회귀와 Spotless/Checkstyle main/core/chat/test, Core/Chat/기존 앱 JAR도 확인한다.
+- 초기 targeted42건은 신규 제약의 MySQL3819 예외 분류2건과 mock bean의 setter 주입9건이 실패했다.
+  생성자 주입·실제 제약명 검증으로 보완했다. 최초 XML은 `build/chat-music-video-foundation-verification/initial-targeted`에 보존한다.
+  최종 검증 결과와 한계는 아래 완료 기록 및 같은 디렉터리의 summary로 구분한다.
+
+
+최종 완료 검증: 기존 `python3 scripts/verify-backend.py`로 임시 MySQL/앱 환경을 격리하여
+`spotlessApply test spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest bootJar coreBootJar chatBootJar --no-daemon`
+실행을 완료했다. 전체1019개 중996통과·23기존조건부제외·실패0, 변경 관련7개 suite47건 전부통과/제외0이다.
+실제 MySQL9.7 upgrade/validate/재실행0건, ACTIVE의 기존 pin·PAUSED/위치/버전·검수 이력과
+불명확 WAITING 보존, 복합FK/중복순번/검증상태/만료 CHECK, 본인 출처·다국어검색·24곡페이지,
+이미지 sid 전달/중복·과대필드 거절/검증 후 지역저장을 확인했다.
+
+최초 환경 미격리 full994개는78실패·23제외였으며 원본을 `initial-full/`에 보존했다.
+기존 인증 테스트의 전용 MySQL 환경 누락과 앱 test DB 연결 실패가 있었고, 재생/relay의
+‘최신 migration은1개’ 가정도 확인했다. 해당 두 시험은 검증할 타이밍 migration 버전을 고정하고
+이후 현재 스키마로 migrate해 기존 검증을 유지했다. 두 번째 targeted의 PROCESSING 길이 오류도
+result_kind 길이와 명시 CHECK를 맞춰 보완했으며 원본 `second-targeted/`를 보존했다.
+
+증빙: `build/chat-music-video-foundation-verification/summary.json`, `final-full/`, `isolated-full.log`,
+`contracts.json`. OpenAPI2파일 JSON/로컬참조73개를 검사했고 전체 메타스키마 검증은 아니다.
+최종 소스 SHA256 `e9519537867978fdd544dd5a023bb5314c0ebde61664b215827563fd6e6e1c2a`와
+일반/Core/Chat 세 JAR manifest가 일치한다. 검증 당시 변경은 미커밋 상태였으며 manifest의 commit은 검증 당시 기반HEAD다.
+임시 MySQL은 기존 검증 스크립트가 종료 시 정리했다. FE는 변경하지 않았다.
+실제 YouTube 검색/선택 ADD·새 고정 영상 worker·실기기/1000연결·운영 DB/설정/배포·외부 이슈/PR/push는 수행하지 않았다.

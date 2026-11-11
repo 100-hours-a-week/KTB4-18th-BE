@@ -166,7 +166,7 @@ class ChatMusicQueueMySqlTest {
         assertThat((List<?>) search.get("items")).hasSize(1);
         assertThat((List<?>) apiA.candidates(caller, "missing", 20, null).get("items")).isEmpty();
         jdbc.update("UPDATE music_playback_sources SET status='UNAVAILABLE' WHERE music_id=?", music);
-        assertThat((List<?>) apiA.candidates(caller, "", 20, null).get("items")).isEmpty();
+        assertThat((List<?>) apiA.candidates(caller, "", 20, null).get("items")).hasSize(1);
         error(() -> apiA.add(caller, UUID.randomUUID().toString(), music), 409, "MUSIC_NOT_REQUESTABLE");
         assertThat(count("music_queue_items")).isZero();
         assertThat(count("chat_music_command_receipts")).isZero();
@@ -287,7 +287,7 @@ class ChatMusicQueueMySqlTest {
     }
 
     @Test
-    void publicRecordsAndOwnRecommendationsAreDeduplicatedWithoutLeakingPrivateRecords() {
+    void ownRecommendationsDoNotGainRecordedProvenanceFromAnotherUsersPublicRecord() {
         jdbc.update("DELETE FROM recommendation_items WHERE music_id=?", music);
         String dotCode = UUID.randomUUID().toString().substring(0, 16);
         jdbc.update("INSERT INTO map_dots(code,region_id,latitude,longitude) VALUES (?,?,37,127)", dotCode, region);
@@ -302,7 +302,7 @@ class ChatMusicQueueMySqlTest {
         var items = (List<?>) apiA.candidates(caller, "song", 20, null).get("items");
         assertThat(items).hasSize(1);
         assertThat(((java.util.Map<?, ?>) items.getFirst()).get("sources"))
-                .isEqualTo(List.of("RECORDED", "RECOMMENDED"));
+                .isEqualTo(List.of("RECOMMENDED"));
         jdbc.update("UPDATE music_records SET deleted_at=UTC_TIMESTAMP(6) WHERE music_id=?", music);
         jdbc.update("DELETE FROM recommendation_items WHERE music_id=?", music);
         error(() -> apiA.add(caller, UUID.randomUUID().toString(), music), 409, "MUSIC_NOT_REQUESTABLE");

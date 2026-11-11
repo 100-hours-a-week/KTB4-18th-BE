@@ -3,7 +3,7 @@
   "info": {
     "title": "Regional chat music queue API",
     "version": "1.2.0",
-    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards. Step 9: authorized queue reads reconcile elapsed playback and return additive current runtime epoch. Expired absence is cleared before join/claim; the original verified30s failure grace never grants reading rights."
+    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards. Step 9: authorized queue reads reconcile elapsed playback and return additive current runtime epoch. Expired absence is cleared before join/claim; the original verified30s failure grace never grants reading rights.\nVideo foundation: requestable-music now lists own regional provenance even without a reviewed video. Legacy ADD still requires its reviewed source. New video search/selection is step 2, not implemented by this change."
   },
   "paths": {
     "/api/v1/chat-rooms/{room_id}/requestable-music": {
@@ -80,7 +80,8 @@
           "503": {
             "$ref": "#/components/responses/Error503"
           }
-        }
+        },
+        "description": "Lists only the current user’s valid same-region records or completed CHATBOT TEXT/VOICE/IMAGE and LOCATION SYSTEM recommendations. No video is required to appear. Searches all stored title/artist locales, with normalized whitespace and case. Video and duration can be null. Current active sid/member/view authorization and signed cursor are required. Legacy ADD independently revalidates its reviewed source."
       }
     },
     "/api/v1/chat-rooms/{room_id}/queue-items": {
@@ -329,7 +330,8 @@
           "album_cover_url",
           "youtube_video_id",
           "duration_millis",
-          "sources"
+          "sources",
+          "is_queueable"
         ],
         "properties": {
           "music_id": {
@@ -349,13 +351,15 @@
             "nullable": true
           },
           "youtube_video_id": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "duration_millis": {
             "type": "integer",
             "format": "int64",
             "minimum": 1,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "nullable": true
           },
           "sources": {
             "type": "array",
@@ -368,6 +372,10 @@
                 "RECOMMENDED"
               ]
             }
+          },
+          "is_queueable": {
+            "type": "boolean",
+            "description": "Legacy music_id-only ADD has a currently valid reviewed source. This is not candidate-selection approval."
           }
         }
       },

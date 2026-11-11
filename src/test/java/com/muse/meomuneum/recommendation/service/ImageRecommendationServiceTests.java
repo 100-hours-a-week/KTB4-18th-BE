@@ -50,6 +50,57 @@ class ImageRecommendationServiceTests {
     private ImageStreamingRecommendationProvider imageProvider;
 
     @Test
+    void locatedImagePersistsVerifiedIdsWithoutForwardingTokenToImageProvider() throws Exception {
+        var context = mock(RecommendationLocationContext.class);
+        var service = service(context);
+        String sid = "22222222-2222-2222-2222-222222222222";
+        when(context.resolve("signed-location", 42L, sid))
+                .thenReturn(new com.muse.meomuneum.location.security.LocationResolutionClaims(
+                        42L, 1L, "parent", 2L, "region", 3L, Instant.now().plusSeconds(60), sid));
+        when(repository.createImageSession(any(), eq(42L), any(), eq(2L), eq(3L))).thenReturn(125L);
+        when(repository.completeImageSession(eq(125L), eq(CONVERSATION_KEY), any())).thenReturn(
+                new RecommendationResponse(125L, "COMPLETED", CONVERSATION_KEY, java.util.List.of(), Instant.now()));
+        when(imageProvider.recommend(any(), any())).thenReturn(java.util.List.of());
+        try {
+            var response = service.accept(new ImageRecommendationRequest(CONVERSATION_KEY, "IMAGE", "CHATBOT",
+                    "signed-location"), jpegFile(), 42L, sid);
+            assertThat(response.recommendation_id()).isEqualTo(125L);
+            verify(repository).createImageSession(eq(new ImageRecommendationRequest(CONVERSATION_KEY,
+                    "IMAGE", "CHATBOT")), eq(42L), any(), eq(2L), eq(3L));
+            verify(repository, never()).createImageSession(any(), any(), any());
+            // The internal command contains image bytes and UUIDs, never the location token.
+            verify(imageProvider).recommend(
+                    any(com.muse.meomuneum.recommendation.provider.ImageRecommendationCommand.class),
+                    any());
+        } finally {
+            service.stopWatchdog();
+        }
+    }
+
+    @Test
+    void invalidImageLocationFailsBeforeAdmissionImageCopyOrSessionPersistence() throws Exception {
+        var context = mock(RecommendationLocationContext.class);
+        var service = service(context);
+        when(context.resolve("invalid", 42L, "sid"))
+                .thenThrow(new RecommendationException(400, "invalid location resolution token"));
+        MultipartFile image = mock(MultipartFile.class);
+        when(image.isEmpty()).thenReturn(false);
+        when(image.getSize()).thenReturn(8L);
+        try {
+            assertThatThrownBy(() -> service.accept(new ImageRecommendationRequest(CONVERSATION_KEY,
+                    "IMAGE", "CHATBOT", "invalid"), image, 42L, "sid"))
+                    .isInstanceOf(RecommendationException.class)
+                    .extracting(error -> ((RecommendationException) error).getStatus()).isEqualTo(400);
+            verify(image, never()).getBytes();
+            verify(eventStream, never()).reserveImageCapacity();
+            verify(repository, never()).createImageSession(any(), any(), any(), any(), any());
+            verify(imageProvider, never()).recommend(any(), any());
+        } finally {
+            service.stopWatchdog();
+        }
+    }
+
+    @Test
     void createsImageSessionAfterValidatingJpegAndReturnsAcceptedResponse() throws Exception {
         when(repository.createImageSession(any(), eq(42L), any(Instant.class))).thenReturn(123L);
         when(providerHolder.getIfAvailable()).thenReturn(imageProvider);
@@ -171,9 +222,13 @@ class ImageRecommendationServiceTests {
     }
 
     private ImageRecommendationService service() {
+        return service(null);
+    }
+
+    private ImageRecommendationService service(RecommendationLocationContext context) {
         lenient().when(eventStream.reserveImageCapacity()).thenReturn(true);
         lenient().when(providerHolder.getIfAvailable()).thenReturn(imageProvider);
         return new ImageRecommendationService(repository, new RecommendationImageValidator(), eventStream,
-                new ImageRecommendationAdmission(), providerHolder, Runnable::run);
+                new ImageRecommendationAdmission(), providerHolder, Runnable::run, context);
     }
 }

@@ -1,0 +1,588 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Regional music video foundation and step 2 consumer contract",
+    "version": "1.0.0",
+    "description": "Foundation only. Regional list and optional image location are implemented; video search and selected ADD are TARGET contracts for step 2 and have no handler yet. Minimal P1 is synchronous: no 202/jobs/status GET/polling."
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/api/v1/chat-rooms/{room_id}/requestable-music": {
+      "get": {
+        "x-implementation-status": "implemented-foundation",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "view_session_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": ""
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result in the existing message/data envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionalPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "401": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "403": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "410": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "503": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          }
+        }
+      }
+    },
+    "/api/v1/recommendations/images": {
+      "post": {
+        "x-implementation-status": "implemented-foundation",
+        "description": "Optional multipart location token is bound to the authenticated user/sid. Omitted token preserves region-unknown admission; supplied invalid token fails before admission or persistence. No raw token, region IDs or location is sent to AI. No arbitrary region_id/map_dot_id/prompt/files, duplicate fields or duplicate image parts accepted.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "conversation_key",
+                  "input_type",
+                  "trigger_type",
+                  "image"
+                ],
+                "properties": {
+                  "conversation_key": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "input_type": {
+                    "const": "IMAGE"
+                  },
+                  "trigger_type": {
+                    "const": "CHATBOT"
+                  },
+                  "image": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "location_resolution_token": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Result in the existing message/data envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "message",
+                    "data"
+                  ],
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "recommendation_id",
+                        "status",
+                        "conversation_key"
+                      ],
+                      "properties": {
+                        "recommendation_id": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "status": {
+                          "const": "PROCESSING"
+                        },
+                        "conversation_key": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "401": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "413": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "415": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "429": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "503": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          }
+        }
+      }
+    },
+    "/api/v1/chat-rooms/{room_id}/music/{music_id}/video-searches": {
+      "post": {
+        "x-implementation-status": "planned-step-2",
+        "description": "Synchronous cache-or-provider result. Checks own regional provenance before lookup. Metadata fingerprint/country/policy-scoped immutable batches are shared in MySQL; no external call while holding a room lock. Initial maximum 10 candidates, positive TTL 1h, empty TTL 5m. Failure is not EMPTY. Search never writes music.youtube_video_id.",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "view_session_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "music_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result in the existing message/data envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "401": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "403": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "404": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "429": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "503": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          }
+        }
+      }
+    },
+    "/api/v1/chat-rooms/{room_id}/queue-items": {
+      "post": {
+        "x-implementation-status": "planned-step-2-selected-body",
+        "description": "Only legacy music_id-only ADD exists in step 1. Step 2 binds candidate to music, expiry and current provenance; revalidates source outside the room transaction, then atomically commits representative ID, immutable queue pin, receipt and outbox. Replay checks active participation but does not require an expired candidate/provider call to repeat an already committed request. Candidate changes alter the idempotency fingerprint. Old receipt bodies stay unchanged.",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "view_session_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "music_id",
+                  "candidate_id"
+                ],
+                "properties": {
+                  "music_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "candidate_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Committed queue item with selected source and fresh playback snapshot; original receipt is replayed unchanged."
+          },
+          "400": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "401": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "403": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "409": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "410": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "429": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "503": {
+            "description": "Existing message/data error envelope; never includes tokens or provider body."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "RegionalSong": {
+        "type": "object",
+        "required": [
+          "music_id",
+          "title",
+          "artist_name",
+          "album_cover_url",
+          "youtube_video_id",
+          "duration_millis",
+          "is_queueable",
+          "sources"
+        ],
+        "properties": {
+          "music_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "album_cover_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "youtube_video_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_millis": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "is_queueable": {
+            "type": "boolean",
+            "description": "Legacy reviewed-source availability only."
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "RECORDED",
+                "RECOMMENDED"
+              ]
+            }
+          }
+        }
+      },
+      "RegionalPage": {
+        "type": "object",
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "items",
+              "next_cursor"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RegionalSong"
+                }
+              },
+              "next_cursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "VideoCandidate": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "music_id",
+          "video_id",
+          "title",
+          "channel_id",
+          "channel_title",
+          "thumbnail_url",
+          "duration_millis",
+          "playback_status",
+          "official_status",
+          "expires_at"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "music_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "video_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{11}$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "channel_title": {
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_millis": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9999999999
+          },
+          "playback_status": {
+            "const": "PLAYABLE"
+          },
+          "official_status": {
+            "enum": [
+              "UNREVIEWED",
+              "CONFIRMED"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VideoPage": {
+        "type": "object",
+        "required": [
+          "message",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "music_id",
+              "items",
+              "expires_at"
+            ],
+            "properties": {
+              "music_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "items": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "$ref": "#/components/schemas/VideoCandidate"
+                }
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

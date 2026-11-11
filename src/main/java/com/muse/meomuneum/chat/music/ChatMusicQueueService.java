@@ -1,7 +1,6 @@
 package com.muse.meomuneum.chat.music;
 
 import java.nio.charset.StandardCharsets;
-import java.text.Normalizer;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -74,7 +73,7 @@ public class ChatMusicQueueService {
 
     public Map<String, Object> candidates(Caller caller, String query, int size, String cursor) {
         checkSize(size);
-        String normalized = Normalizer.normalize(query == null ? "" : query.strip(), Normalizer.Form.NFC);
+        String normalized = RequestableMusicRepository.normalizeQuery(query);
         if (normalized.length() > 100) {
             throw new ChatMusicException(400, "INVALID_QUERY");
         }

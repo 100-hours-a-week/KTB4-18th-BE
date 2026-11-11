@@ -39,7 +39,8 @@ public class ImageRecommendationController {
             @RequestPart("image") MultipartFile image, HttpServletRequest servletRequest,
             MultipartHttpServletRequest multipartRequest, Authentication authentication) {
         boolean unexpectedParameter = servletRequest.getParameterMap().keySet().stream()
-                .anyMatch(name -> !Set.of("conversation_key", "input_type", "trigger_type").contains(name));
+                .anyMatch(name -> !Set.of("conversation_key", "input_type", "trigger_type", "location_resolution_token")
+                        .contains(name) || servletRequest.getParameterValues(name).length != 1);
         var fileParts = multipartRequest.getMultiFileMap();
         boolean unexpectedFilePart = fileParts.size() != 1 || !fileParts.containsKey("image")
                 || fileParts.get("image").size() != 1;
@@ -47,7 +48,13 @@ public class ImageRecommendationController {
             throw new com.muse.meomuneum.recommendation.exception.RecommendationException(400,
                     "invalid image recommendation request");
         }
-        var accepted = service.accept(request, image, users.resolve(authentication));
+        String sid = authentication != null
+                && authentication.getDetails() instanceof com.muse.meomuneum.global.security.TokenClaims claims
+                        ? claims.sessionId()
+                        : null;
+        var accepted = request.location_resolution_token() == null
+                ? service.accept(request, image, users.resolve(authentication))
+                : service.accept(request, image, users.resolve(authentication), sid);
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body(new RecommendationController.ApiResponse<>("recommendation processing", accepted));
     }
