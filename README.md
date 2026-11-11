@@ -1333,6 +1333,11 @@ marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt
 - `POST /api/v1/recommendations`의 선택 필드 `location_resolution_token`으로 위치 문맥을 제출한다.
   현재 로그인 계정·sid로 발급된 서명·만료 유효 토큰과 활성 SIGUNGU/SIDO·도트를 검증한다.
   임의 `region_id`나 다른 sid의 토큰을 신뢰하지 않는다. 토큰 자체는 DB·AI 요청에 저장/전달하지 않는다.
+- 한 지도 격자에는 여러 행정구역이 포함될 수 있으므로, 토큰의 `map_dot_id`와 `region_id`를 각각
+  검증·저장한다. `map_dots.region_id`와 사용자 행정구역의 일치를 요구하거나 사용자 지역을 격자의
+  대표 지역으로 덮어쓰지 않는다. `map_dot_id`는 메인 지도 앨범 커버 표시 기준이고, `region_id`는
+  음악 기록과 지역 채팅의 곡 소속 기준이다. 격자 존재·활성 상태와 시도–시군구 계층·활성 상태,
+  토큰의 서명·만료·계정·sid 검증은 유지한다.
 - 필드 생략/null은 기존 TEXT/VOICE·게스트·지역 미상 흐름을 유지한다. 토큰을 제출하면 검증 실패를
   400으로 반환하며 지역을 조용히 생략하지 않는다. FE가 토큰을 보내는 변경은 이번 BE 작업 밖이다.
 - 위치 추천이 canonical `READY`로 발급될 때 같은 트랜잭션 안에서 `recommendation_sessions`에
