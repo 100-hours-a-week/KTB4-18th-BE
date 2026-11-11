@@ -45,6 +45,24 @@ class ChatMusicQueueControllerTest {
     }
 
     @Test
+    void selectedAddAcceptsBothPropertyOrdersAndVideoSearchUsesExistingEnvelope() throws Exception {
+        when(service.add(caller, COMMAND, 11, COMMAND))
+                .thenReturn(new ChatMusicQueueService.Result(201, "{\"data\":{\"music_id\":11}}"));
+        for (String body : List.of("{\"music_id\":11,\"candidate_id\":\"" + COMMAND + "\"}",
+                "{\"candidate_id\":\"" + COMMAND + "\",\"music_id\":11}")) {
+            mvc.perform(post(ROOT + "/queue-items").principal(auth).param("membership_id", "3")
+                    .param("view_session_id", VIEW).header("Idempotency-Key", COMMAND)
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isCreated()).andExpect(jsonPath("$.data.music_id").value(11));
+        }
+        when(service.videoSearch(caller, 11)).thenReturn(Map.of("music_id", 11, "items", List.of()));
+        mvc.perform(post(ROOT + "/music/11/video-searches").principal(auth).param("membership_id", "3")
+                .param("view_session_id", VIEW)).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.data.items").isEmpty());
+    }
+
+    @Test
     void exposesBothGetContractsWithNoStoreAndSnakeCaseEnvelope() throws Exception {
         when(service.candidates(caller, "song", 20, null)).thenReturn(Map.of("items", List.of()));
         when(service.queue(caller, 20, null)).thenReturn(Map.of("items", List.of(), "version", 2));

@@ -29,6 +29,7 @@ class ChatMusicPlaybackConfigurationTest {
                 .run(result -> assertThat(result).hasFailed());
         context.withPropertyValues("chat.music.playback.enabled=true")
                 .withBean(ChatMusicQueueService.class, () -> mock(ChatMusicQueueService.class))
+                .withBean(ChatMusicVideoService.class, () -> mock(ChatMusicVideoService.class))
                 .run(result -> assertThat(result).hasSingleBean(ChatMusicPlaybackService.class)
                         .hasSingleBean(ChatMusicPlaybackWorker.class));
     }
