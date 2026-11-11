@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -15,26 +17,40 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
 
 import com.muse.meomuneum.chat.region.domain.Region;
+import com.muse.meomuneum.global.security.TokenClaims;
 import com.muse.meomuneum.location.config.LocationTokenProperties;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos;
 import com.muse.meomuneum.locationrecommendation.repository.LocationRecommendationRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
+import com.muse.meomuneum.recommendation.controller.RecommendationController;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.ImageRecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
+import com.muse.meomuneum.recommendation.exception.RecommendationException;
+import com.muse.meomuneum.recommendation.exception.RecommendationExceptionHandler;
+import com.muse.meomuneum.recommendation.provider.RecommendationProvider;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
+import com.muse.meomuneum.recommendation.resolver.CurrentUserResolver;
+import com.muse.meomuneum.recommendation.service.RecommendationEventStream;
 import com.muse.meomuneum.recommendation.service.RecommendationLocationContext;
+import com.muse.meomuneum.recommendation.service.RecommendationService;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers
@@ -240,19 +256,108 @@ class MusicCatalogMySqlTest {
                 claims.sigunguRegionId(), claims.mapDotId());
         assertThat(jdbc.queryForObject("SELECT region_id FROM recommendation_sessions WHERE id=?", Long.class,
                 session)).isEqualTo(region);
-        assertThatThrownBy(() -> resolver.resolve(token, other, sid)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> resolver.resolve(token, user, UUID.randomUUID().toString()))
-                .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> resolver.resolve(token + "tampered", user, sid)).isInstanceOf(RuntimeException.class);
+        assertInvalidLocation(() -> resolver.resolve(token, other, sid));
+        assertInvalidLocation(() -> resolver.resolve(token, null, sid));
+        assertInvalidLocation(() -> resolver.resolve(token, user, null));
+        assertInvalidLocation(() -> resolver.resolve(token, user, UUID.randomUUID().toString()));
+        assertInvalidLocation(() -> resolver.resolve(token + "tampered", user, sid));
         var later = new LocationResolutionTokenProvider(new LocationTokenProperties("test-secret-".repeat(4)),
                 Clock.offset(Clock.systemUTC(), java.time.Duration.ofMinutes(6)));
-        assertThatThrownBy(() -> new RecommendationLocationContext(later, jdbc).resolve(token, user, sid))
-                .isInstanceOf(RuntimeException.class);
+        assertInvalidLocation(() -> new RecommendationLocationContext(later, jdbc).resolve(token, user, sid));
         jdbc.update("UPDATE regions SET is_active=FALSE WHERE id=?", region);
-        assertThatThrownBy(() -> resolver.resolve(token, user, sid)).isInstanceOf(RuntimeException.class);
+        assertInvalidLocation(() -> resolver.resolve(token, user, sid));
         long legacy = recommendations.createSession(request(), "guest", null, Instant.now());
         assertThat(jdbc.queryForObject("SELECT region_id FROM recommendation_sessions WHERE id=?", Long.class,
                 legacy)).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"TEXT", "VOICE"})
+    void sameMapDotKeepsDifferentUsersRecommendationsInTheirOwnRegions(String inputType) throws Exception {
+        long secondRegion = IDS.incrementAndGet();
+        jdbc.update("INSERT INTO regions (id,parent_id,code,name,level) VALUES (?,?,?,'second','SIGUNGU')",
+                secondRegion, parent, "r" + secondRegion);
+
+        long firstSession = admitSignedRecommendation(inputType, user, region);
+        long secondSession = admitSignedRecommendation(inputType, other, secondRegion);
+        assertThat(jdbc.queryForMap("SELECT region_id,map_dot_id FROM recommendation_sessions WHERE id=?",
+                firstSession)).containsEntry("region_id", region).containsEntry("map_dot_id", dot);
+        assertThat(jdbc.queryForMap("SELECT region_id,map_dot_id FROM recommendation_sessions WHERE id=?",
+                secondSession)).containsEntry("region_id", secondRegion).containsEntry("map_dot_id", dot);
+        assertThat(jdbc.queryForObject("SELECT region_id FROM map_dots WHERE id=?", Long.class, dot))
+                .isEqualTo(region);
+
+        recommendations.completeSession(firstSession, request(), List.of(track("" + user)));
+        recommendations.completeSession(secondSession, request(), List.of(track("" + user)));
+        assertThat(eligibility.findProvenance(user, region, music).orElseThrow().recommended()).isTrue();
+        assertThat(eligibility.findProvenance(other, secondRegion, music).orElseThrow().recommended()).isTrue();
+        assertThat(eligibility.findProvenance(user, secondRegion, music)).isEmpty();
+        assertThat(eligibility.findProvenance(other, region, music)).isEmpty();
+    }
+
+    @Test
+    void signedLocationStillRequiresActiveRegionHierarchyAndExistingActiveDot() {
+        var tokens = new LocationResolutionTokenProvider(new LocationTokenProperties("test-secret-".repeat(4)),
+                Clock.systemUTC());
+        String sid = UUID.randomUUID().toString();
+        String token = signedLocation(tokens, user, sid, region, dot);
+        var resolver = new RecommendationLocationContext(tokens, jdbc);
+
+        for (long id : List.of(parent, region)) {
+            jdbc.update("UPDATE regions SET is_active=FALSE WHERE id=?", id);
+            assertInvalidLocation(() -> resolver.resolve(token, user, sid));
+            jdbc.update("UPDATE regions SET is_active=TRUE WHERE id=?", id);
+        }
+        jdbc.update("UPDATE map_dots SET is_active=FALSE WHERE id=?", dot);
+        assertInvalidLocation(() -> resolver.resolve(token, user, sid));
+        jdbc.update("UPDATE map_dots SET is_active=TRUE WHERE id=?", dot);
+        String missingDot = signedLocation(tokens, user, sid, region, IDS.incrementAndGet());
+        assertInvalidLocation(() -> resolver.resolve(missingDot, user, sid));
+        String missingRegion = signedLocation(tokens, user, sid, IDS.incrementAndGet(), dot);
+        assertInvalidLocation(() -> resolver.resolve(missingRegion, user, sid));
+        jdbc.update("UPDATE regions SET parent_id=? WHERE id=?", region, region);
+        assertInvalidLocation(() -> resolver.resolve(token, user, sid));
+        jdbc.update("UPDATE regions SET parent_id=? WHERE id=?", parent, region);
+        jdbc.update("UPDATE regions SET code=CONCAT(code,'-changed') WHERE id=?", region);
+        assertInvalidLocation(() -> resolver.resolve(token, user, sid));
+    }
+
+    private long admitSignedRecommendation(String inputType, long owner, long area) throws Exception {
+        var tokens = new LocationResolutionTokenProvider(new LocationTokenProperties("test-secret-".repeat(4)),
+                Clock.systemUTC());
+        String sid = UUID.randomUUID().toString();
+        String token = signedLocation(tokens, owner, sid, area, dot);
+        var auth = UsernamePasswordAuthenticationToken.authenticated(owner, null, List.of());
+        auth.setDetails(new TokenClaims(owner, List.of("USER"), Instant.now().plusSeconds(300), sid, "jti"));
+        // Admission is synchronous; provider execution is outside this location regression.
+        var service = new RecommendationService(mock(RecommendationProvider.class), recommendations,
+                new SimpleMeterRegistry(), mock(RecommendationEventStream.class), task -> {
+                }, new RecommendationLocationContext(tokens, jdbc));
+        var mvc = MockMvcBuilders.standaloneSetup(new RecommendationController(service, new CurrentUserResolver()))
+                .setControllerAdvice(new RecommendationExceptionHandler()).build();
+        var request = new RecommendationRequest(inputType, "CHATBOT", UUID.randomUUID().toString(), "test", token);
+        var mapper = new ObjectMapper();
+        var result = mvc.perform(post("/api/v1/recommendations").principal(auth).contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(request))).andExpect(status().isAccepted()).andReturn();
+        return mapper.readTree(result.getResponse().getContentAsString()).path("data").path("recommendation_id")
+                .asLong();
+    }
+
+    private String signedLocation(LocationResolutionTokenProvider tokens, long owner, String sid, long area,
+            long mapDot) {
+        var sido = mock(Region.class);
+        when(sido.getId()).thenReturn(parent);
+        when(sido.getCode()).thenReturn("p" + parent);
+        var sigungu = mock(Region.class);
+        when(sigungu.getId()).thenReturn(area);
+        when(sigungu.getCode()).thenReturn("r" + area);
+        return tokens.issueForSession(owner, sid, sido, sigungu, mapDot).value();
+    }
+
+    private void assertInvalidLocation(Runnable action) {
+        assertThatThrownBy(action::run).isInstanceOf(RecommendationException.class)
+                .hasMessage("invalid location resolution token")
+                .extracting(exception -> ((RecommendationException) exception).getStatus()).isEqualTo(400);
     }
 
     @Test
