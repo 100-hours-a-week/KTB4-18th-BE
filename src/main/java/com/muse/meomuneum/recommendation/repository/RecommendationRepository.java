@@ -45,18 +45,26 @@ public class RecommendationRepository {
     }
 
     public long createImageSession(ImageRecommendationRequest request, Long userId, Instant now) {
+        return createImageSession(request, userId, now, null, null);
+    }
+
+    public long createImageSession(ImageRecommendationRequest request, Long userId, Instant now,
+            Long regionId, Long mapDotId) {
         var keys = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO recommendation_sessions
-                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at)
-                    VALUES (?, NULL, ?, ?, ?, NULL, 'PROCESSING', ?)
+                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at,
+                     region_id, map_dot_id)
+                    VALUES (?, NULL, ?, ?, ?, NULL, 'PROCESSING', ?, ?, ?)
                     """, new String[]{"id"});
             statement.setObject(1, userId);
             statement.setString(2, request.trigger_type());
             statement.setString(3, request.input_type());
             statement.setString(4, request.conversation_key());
             statement.setTimestamp(5, Timestamp.from(now));
+            statement.setObject(6, regionId);
+            statement.setObject(7, mapDotId);
             return statement;
         }, keys);
         Number generatedId = keys.getKey();
