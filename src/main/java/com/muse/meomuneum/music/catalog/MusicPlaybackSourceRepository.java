@@ -43,6 +43,20 @@ public final class MusicPlaybackSourceRepository {
                     at(verifiedAt.plusSeconds(review.validDays() * 86400L)), review.expectedVersion() + 1);
             jdbc.update("UPDATE music SET youtube_video_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",
                     video.id(), review.musicId());
+            jdbc.update(
+                    """
+                                  INSERT INTO music_video_sources(music_id,youtube_video_id,channel_id,
+                                  playback_status,official_status,
+                                    duration_millis,verified_at,valid_until,review_reference,reviewed_by)
+                                  VALUES (?,?,?,'PLAYABLE','CONFIRMED',?,?,?,?,?)
+                                  ON DUPLICATE KEY UPDATE channel_id=VALUES(channel_id),playback_status='PLAYABLE',
+                            official_status='CONFIRMED',operator_blocked=FALSE,duration_millis=VALUES(duration_millis),
+                                    verified_at=VALUES(verified_at),valid_until=VALUES(valid_until),
+                                    review_reference=VALUES(review_reference),reviewed_by=VALUES(reviewed_by),
+                                    version=version+1,updated_at=UTC_TIMESTAMP(6)
+                                  """,
+                    review.musicId(), video.id(), video.channelId(), video.durationMillis(), at(verifiedAt),
+                    at(verifiedAt.plusSeconds(review.validDays() * 86400L)), review.evidence(), review.reviewer());
         });
     }
 
@@ -54,6 +68,13 @@ public final class MusicPlaybackSourceRepository {
             lockAndCheck(musicId, expectedVersion);
             jdbc.update("UPDATE music_playback_sources SET status='UNAVAILABLE',version=version+1 WHERE music_id=?",
                     musicId);
+            jdbc.update("""
+                    UPDATE music_video_sources s JOIN music_playback_sources p
+                      ON p.music_id=s.music_id AND p.youtube_video_id=s.youtube_video_id
+                    SET s.playback_status='UNAVAILABLE',s.operator_blocked=TRUE,
+                      s.version=s.version+1,s.updated_at=UTC_TIMESTAMP(6)
+                    WHERE s.music_id=?
+                    """, musicId);
         });
     }
 

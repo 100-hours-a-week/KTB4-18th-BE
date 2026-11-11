@@ -25,6 +25,17 @@ public final class ChatMusicPlaybackService {
     private final ChatMusicStateRepository states;
     private final ChatMusicCommandStore commands;
     private final ObjectMapper json = new ObjectMapper();
+    private ChatMusicVideoService videos;
+
+    public void setVideoService(ChatMusicVideoService service) {
+        videos = service;
+    }
+
+    public void prepareRoom(long room) {
+        if (videos != null) {
+            videos.prepareRoom(room);
+        }
+    }
 
     public ChatMusicPlaybackService(JdbcTemplate jdbc, ChatMusicStateRepository states,
             ChatMusicCommandStore commands) {
@@ -40,6 +51,36 @@ public final class ChatMusicPlaybackService {
                 """, Long.class).isEmpty()) {
             throw new IllegalStateException("Playback activation requires consistent pinned active state");
         }
+        jdbc.update("""
+                INSERT IGNORE INTO music_video_sources(music_id,youtube_video_id,duration_millis)
+                SELECT q.music_id,p.source_video_id,p.duration_millis FROM playback_states p
+                JOIN music_queue_items q ON q.id=p.current_queue_item_id AND q.room_id=p.chat_room_id
+                WHERE p.state<>'IDLE' AND p.source_video_id IS NOT NULL
+                """);
+        jdbc.update("""
+                UPDATE music_queue_items q JOIN playback_states p
+                  ON p.current_queue_item_id=q.id AND p.chat_room_id=q.room_id
+                SET q.source_video_id=p.source_video_id,q.duration_millis=p.duration_millis
+                WHERE q.status='PLAYING' AND p.state<>'IDLE'
+                """);
+        // A stopped-worker cutover only: legacy writers may have appended after the foundation migration.
+        jdbc.update("""
+                INSERT IGNORE INTO music_video_sources(music_id,youtube_video_id,channel_id,playback_status,
+                  official_status,duration_millis,verified_at,valid_until,review_reference,reviewed_by)
+                SELECT music_id,youtube_video_id,channel_id,'PLAYABLE','CONFIRMED',duration_millis,
+                  verified_at,valid_until,review_reference,reviewed_by FROM music_playback_sources
+                WHERE status='VERIFIED' AND verified_at<=UTC_TIMESTAMP(6) AND valid_until>UTC_TIMESTAMP(6)
+                """);
+        jdbc.update(
+                """
+                        UPDATE music_queue_items q JOIN music m ON m.id=q.music_id
+                        JOIN music_playback_sources p ON p.music_id=q.music_id AND BINARY
+                        p.youtube_video_id=BINARY m.youtube_video_id
+                        JOIN music_video_sources s ON s.music_id=q.music_id AND s.youtube_video_id=p.youtube_video_id
+                        SET q.source_video_id=p.youtube_video_id,q.duration_millis=p.duration_millis
+                        WHERE q.status='WAITING' AND q.source_video_id IS NULL AND p.status='VERIFIED'
+                          AND p.verified_at<=UTC_TIMESTAMP(6) AND p.valid_until>UTC_TIMESTAMP(6)
+                        """);
     }
 
     public Result control(ChatParticipationService participation, Caller c, String id, String action,
@@ -49,6 +90,18 @@ public final class ChatMusicPlaybackService {
                 || expectedVersion < 0 || expectedVersion > MAX_NUMBER
                 || (currentItem != null && (currentItem <= 0 || currentItem > MAX_NUMBER))) {
             throw new ChatMusicException(400, "INVALID_PLAYBACK_COMMAND");
+        }
+        if (videos != null && !action.equals("PAUSE")) {
+            Result replay = participation.musicTransaction(c.userId(), c.sid(), c.roomId(), c.membershipId(),
+                    c.viewId(), tx -> {
+                        states.lockRoom(c.roomId());
+                        return commands.replay(c, tx, id, action, currentItem == null ? 0 : currentItem,
+                                expectedVersion);
+                    });
+            if (replay != null) {
+                return replay;
+            }
+            videos.prepareRoom(c.roomId(), !action.equals("RESUME"));
         }
         return participation.musicTransaction(c.userId(), c.sid(), c.roomId(), c.membershipId(), c.viewId(), tx -> {
             Snapshot state = lock(c.roomId());
@@ -144,8 +197,11 @@ public final class ChatMusicPlaybackService {
         }
         long music = jdbc.queryForObject("SELECT music_id FROM music_queue_items WHERE room_id=? AND id=?",
                 Long.class, room, s.item());
-        var source = reviewedSource(music);
-        if (source == null || !source.video().equals(s.video())) {
+        var source = pinnedSource(music, s.video(), s.duration());
+        if (source.pending()) {
+            throw new ChatMusicException(503, "VIDEO_VERIFICATION_REQUIRED");
+        }
+        if (source.source() == null) {
             throw new ChatMusicException(409, "MUSIC_UNAVAILABLE");
         }
         long remaining = s.duration() - positionMillis(s);
@@ -165,14 +221,23 @@ public final class ChatMusicPlaybackService {
     }
 
     private Change start(long room, LocalDateTime now) {
-        var items = jdbc.queryForList("""
-                SELECT id,music_id FROM music_queue_items WHERE room_id=? AND status='WAITING'
-                ORDER BY sequence_no LIMIT 20 FOR UPDATE
-                """, room);
+        var items = jdbc.queryForList(
+                """
+                        SELECT id,music_id,source_video_id,duration_millis FROM music_queue_items WHERE
+                        room_id=? AND status='WAITING'
+                        ORDER BY sequence_no LIMIT 20 FOR UPDATE
+                        """,
+                room);
         Change change = Change.NONE;
         for (var item : items) {
             long id = ((Number) item.get("id")).longValue();
-            Source source = reviewedSource(((Number) item.get("music_id")).longValue());
+            var checked = pinnedSource(((Number) item.get("music_id")).longValue(),
+                    (String) item.get("source_video_id"),
+                    item.get("duration_millis") == null ? null : ((Number) item.get("duration_millis")).longValue());
+            if (checked.pending()) {
+                return change; // Preserve FIFO and retry outside locks; never substitute a representative video.
+            }
+            Source source = checked.source();
             if (source == null) {
                 jdbc.update("UPDATE music_queue_items SET status='CANCELED',finished_at=? WHERE id=? AND room_id=?",
                         now, id, room);
@@ -191,17 +256,34 @@ public final class ChatMusicPlaybackService {
         return change;
     }
 
-    private Source reviewedSource(long music) {
-        // Admission provenance is not re-evaluated after a successful ADD; catalog registration shares this lock.
+    private CheckedSource pinnedSource(long music, String video, Long duration) {
+        if (video == null || duration == null) {
+            return new CheckedSource(null, false);
+        }
         jdbc.queryForList("SELECT id FROM music WHERE id=? FOR SHARE", music);
-        var sources = jdbc.query("""
-                SELECT ps.youtube_video_id,ps.duration_millis FROM music m
-                JOIN music_playback_sources ps ON ps.music_id=m.id
-                WHERE m.id=? AND BINARY ps.youtube_video_id=BINARY m.youtube_video_id AND ps.status='VERIFIED'
-                  AND ps.playback_country='KR' AND ps.verified_at<=UTC_TIMESTAMP(6)
-                  AND ps.valid_until>UTC_TIMESTAMP(6) AND ps.duration_millis BETWEEN 1 AND 9999999999
-                """, (r, i) -> new Source(r.getString(1), r.getLong(2)), music);
-        return sources.isEmpty() ? null : sources.getFirst();
+        if (jdbc.queryForObject(
+                """
+                        SELECT COUNT(*) FROM music_playback_sources WHERE music_id=? AND youtube_video_id=? AND
+                        status='UNAVAILABLE'
+                        """,
+                Long.class, music, video) > 0) {
+            return new CheckedSource(null, false);
+        }
+        int maximumAge = videos == null ? 0 : videos.verificationMaxAgeSeconds();
+        var rows = jdbc.query("""
+                SELECT playback_status,verified_at<=UTC_TIMESTAMP(6) AND valid_until>UTC_TIMESTAMP(6)
+                  AND (?=0 OR verified_at>TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6))) fresh,
+                  operator_blocked
+                FROM music_video_sources WHERE music_id=? AND youtube_video_id=? FOR SHARE
+                """,
+                (r, i) -> new CheckedSource("PLAYABLE".equals(r.getString(1)) && r.getBoolean(2) && !r.getBoolean(3)
+                        ? new Source(video, duration)
+                        : null, !r.getBoolean(2) && !r.getBoolean(3)),
+                maximumAge, -maximumAge, music, video);
+        return rows.isEmpty() ? new CheckedSource(null, true) : rows.getFirst();
+    }
+
+    private record CheckedSource(Source source, boolean pending) {
     }
 
     private void finish(long room, Snapshot s, String status) {
