@@ -30,6 +30,7 @@ import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos;
 import com.muse.meomuneum.locationrecommendation.repository.LocationRecommendationRepository;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
 import com.muse.meomuneum.recommendation.dto.TrackData;
+import com.muse.meomuneum.recommendation.dto.request.ImageRecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 import com.muse.meomuneum.recommendation.service.RecommendationLocationContext;
@@ -118,7 +119,7 @@ class MusicCatalogMySqlTest {
         assertThat(eligibility.findSources(user, region, music)).isEmpty();
         assertThat(eligibility.findSources(other, region, music).orElseThrow().recorded()).isTrue();
         jdbc.update("INSERT INTO user_settings (user_id,map_visibility) VALUES (?,'PUBLIC')", other);
-        assertThat(eligibility.findSources(user, region, music).orElseThrow().recorded()).isTrue();
+        assertThat(eligibility.findSources(user, region, music)).isEmpty();
         jdbc.update("UPDATE music_records SET deleted_at=UTC_TIMESTAMP(6) WHERE id=?", record);
         assertThat(eligibility.findSources(user, region, music)).isEmpty();
         long session = session(user, region);
@@ -129,11 +130,80 @@ class MusicCatalogMySqlTest {
         assertThat(eligibility.findSources(other, region, music)).isEmpty();
         jdbc.update("UPDATE music_records SET deleted_at=NULL WHERE id=?", record);
         var both = eligibility.findSources(user, region, music).orElseThrow();
-        assertThat(both.recorded()).isTrue();
+        assertThat(both.recorded()).isFalse();
         assertThat(both.recommended()).isTrue();
         assertThat(eligibility.findSources(user, parent, music)).isEmpty();
         jdbc.update("UPDATE users SET deleted_at=UTC_TIMESTAMP() WHERE id=?", user);
         assertThat(eligibility.findSources(user, region, music)).isEmpty();
+    }
+
+    @Test
+    void ownUnregisteredSongsAreListedWithLocalizedSearchAndNoLegacyAdmission() {
+        jdbc.update("INSERT INTO music_records(user_id,music_id,map_dot_id,region_id) VALUES (?,?,?,?)",
+                user, music, dot, region);
+        jdbc.update("UPDATE music SET title_ko='네온',artist_name_ko='밤 가수',title_us='Neon Light',"
+                + "artist_name_us='Night Singer' WHERE id=?", music);
+        assertThat(eligibility.findProvenance(user, region, music).orElseThrow().recorded()).isTrue();
+        assertThat(eligibility.findSources(user, region, music)).isEmpty();
+        for (String query : List.of("", "NEON LIGHT", "neonlight", "밤　가수", "네온", "NIGHT SINGER")) {
+            var rows = eligibility.search(user, region, query, 0, 21);
+            assertThat(rows).as(query).hasSize(1);
+            assertThat(rows.getFirst().get("title")).isEqualTo("네온");
+            assertThat(rows.getFirst().get("youtube_video_id")).isNull();
+            assertThat(rows.getFirst().get("sources")).isEqualTo(List.of("RECORDED"));
+        }
+        assertThat(eligibility.search(user, region, "%", 0, 21)).isEmpty();
+        assertThat(eligibility.search(user, region, "", music, 21)).isEmpty();
+        assertThat(eligibility.search(other, region, "", 0, 21)).isEmpty();
+        assertThat(eligibility.search(user, parent, "", 0, 21)).isEmpty();
+        jdbc.update("UPDATE music_records SET deleted_at=UTC_TIMESTAMP(6) WHERE user_id=?", user);
+        assertThat(eligibility.search(user, region, "", 0, 21)).isEmpty();
+    }
+
+    @Test
+    void allCompletedRecommendationInputsKeepOwnRegionAndDeduplicateProvenance() {
+        for (String input : List.of("TEXT", "VOICE")) {
+            var request = new RecommendationRequest(input, "CHATBOT", UUID.randomUUID().toString(), "test");
+            long id = recommendations.createSession(request, null, user, Instant.now(), region, dot);
+            assertThat(eligibility.search(user, region, "", 0, 21)).hasSize(input.equals("TEXT") ? 0 : 1);
+            recommendations.completeSession(id, request, List.of(track("" + user)));
+        }
+        var image = new ImageRecommendationRequest(UUID.randomUUID().toString(), "IMAGE", "CHATBOT");
+        long id = recommendations.createImageSession(image, user, Instant.now(), region, dot);
+        recommendations.completeImageSession(id, image.conversation_key(), List.of(track("" + user)));
+        assertThat(jdbc.queryForMap("SELECT region_id,map_dot_id FROM recommendation_sessions WHERE id=?", id))
+                .containsEntry("region_id", region).containsEntry("map_dot_id", dot);
+        assertThat(eligibility.search(user, region, "", 0, 21)).hasSize(1);
+        assertThat(eligibility.search(other, region, "", 0, 21)).isEmpty();
+        long legacy = recommendations.createImageSession(image, other, Instant.now());
+        recommendations.completeImageSession(legacy, image.conversation_key(), List.of(track("" + user)));
+        assertThat(eligibility.search(other, region, "", 0, 21)).isEmpty();
+        jdbc.update("INSERT INTO music_records(user_id,music_id,map_dot_id,region_id) VALUES (?,?,?,?)",
+                user, music, dot, region);
+        assertThat(eligibility.search(user, region, "", 0, 21).getFirst().get("sources"))
+                .isEqualTo(List.of("RECORDED", "RECOMMENDED"));
+        jdbc.update("UPDATE recommendation_sessions SET status='FAILED' WHERE user_id=?", user);
+        jdbc.update("DELETE FROM music_records WHERE user_id=?", user);
+        assertThat(eligibility.search(user, region, "", 0, 21)).isEmpty();
+    }
+
+    @Test
+    void keysetPagesReachEveryEligibleSongAndIgnoreUnknownRecommendationTriggers() {
+        for (int n = 0; n < 24; n++) {
+            long song = recommendations.saveMusic(track(user + "-" + n));
+            jdbc.update("INSERT INTO music_records(user_id,music_id,map_dot_id,region_id) VALUES (?,?,?,?)",
+                    user, song, dot, region);
+        }
+        var first = eligibility.search(user, region, "", 0, 20);
+        long after = ((Number) first.getLast().get("music_id")).longValue();
+        var last = eligibility.search(user, region, "", after, 20);
+        assertThat(first).hasSize(20);
+        assertThat(last).hasSize(4);
+        assertThat(last).allSatisfy(row -> assertThat(((Number) row.get("music_id")).longValue()).isGreaterThan(after));
+        long id = session(other, region);
+        recommendations.completeSession(id, request(), List.of(track("" + user)));
+        jdbc.update("UPDATE recommendation_sessions SET trigger_type='UNKNOWN' WHERE id=?", id);
+        assertThat(eligibility.search(other, region, "", 0, 21)).isEmpty();
     }
 
     @Test

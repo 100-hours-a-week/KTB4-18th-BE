@@ -89,13 +89,15 @@ class ChatMusicRelayMySqlTest {
         String stable = "SELECT chat_room_id,state,version,next_sequence_no,position_seconds,state_changed_at,"
                 + "created_at,updated_at FROM playback_states ORDER BY chat_room_id";
         var before = jdbc.queryForList(stable);
-        var latest = Flyway.configure().dataSource(source).load();
+        var latest = Flyway.configure().dataSource(source).target("20261109132852").load();
         assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
         latest.validate();
         assertThat(latest.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForList(stable)).isEqualTo(before);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM playback_states WHERE source_video_id IS NOT NULL "
                 + "OR duration_millis IS NOT NULL OR due_at IS NOT NULL", Long.class)).isZero();
+        // Keep the one-migration assertion fixed; subsequent domain tests use the current schema.
+        Flyway.configure().dataSource(source).load().migrate();
     }
 
     @BeforeEach
