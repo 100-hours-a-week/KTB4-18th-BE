@@ -29,12 +29,13 @@ public class RecommendationLocationContext {
         } catch (LocationException exception) {
             throw invalid();
         }
+        // A map dot can span multiple regions; its representative region is not the user's region.
         boolean active = Boolean.TRUE.equals(jdbc.queryForObject("""
                 SELECT EXISTS(SELECT 1 FROM regions g JOIN regions p ON p.id=g.parent_id
                 WHERE g.id=? AND g.code=? AND p.id=? AND p.code=? AND g.level='SIGUNGU' AND p.level='SIDO'
                 AND g.is_active=TRUE AND p.is_active=TRUE
                 AND (? IS NULL OR EXISTS(SELECT 1 FROM map_dots d WHERE d.id=?
-                    AND d.region_id=g.id AND d.is_active=TRUE)))
+                    AND d.is_active=TRUE)))
                 """, Boolean.class, claims.sigunguRegionId(), claims.sigunguCode(), claims.sidoRegionId(),
                 claims.sidoCode(), claims.mapDotId(), claims.mapDotId()));
         if (!active) {
