@@ -3,10 +3,15 @@ package com.muse.meomuneum.chat.music;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -51,6 +56,294 @@ class ChatMusicQueueMySqlTest {
     private String environment;
     private long music;
     private long region;
+    private ChatMusicVideoService videoService;
+
+    private ChatMusicVideoService videos(ChatMusicQueueService api, ChatParticipationService task,
+            ChatMusicVideoProvider provider) {
+        var result = new ChatMusicVideoService(jdbc, task, new RequestableMusicRepository(jdbc), provider,
+                new ChatMusicVideoBudget(jdbc), 3600, 300, 300);
+        api.setVideoService(result);
+        if (api == apiA) {
+            videoService = result;
+        }
+        return result;
+    }
+
+    private ChatMusicVideoProvider provider() {
+        var provider = mock(ChatMusicVideoProvider.class);
+        when(provider.search("Synthetic song", "Synthetic artist")).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return List.of(
+                    new ChatMusicVideoProvider.Video("ABCDEFGHIJK", "channel", "Video A", "Channel", null, 180000),
+                    new ChatMusicVideoProvider.Video("LMNOPQRSTUV", "channel", "Video B", "Channel", null, 200000));
+        });
+        return provider;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> videoItems(Map<String, Object> page) {
+        return (List<Map<String, Object>>) page.get("items");
+    }
+
+    private ChatMusicPlaybackService playback() {
+        var result = new ChatMusicPlaybackService(jdbc,
+                new ChatMusicStateRepository(jdbc, new DataSourceTransactionManager(source)),
+                new ChatMusicCommandStore(jdbc, keys, 0));
+        result.setVideoService(videoService);
+        apiA.setPlaybackService(result);
+        apiB.setPlaybackService(result);
+        return result;
+    }
+
+    @Test
+    void sharedCandidatesSelectExactPinsAndReplayEvenAfterExpiryOrProviderLoss() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        videos(apiB, taskB, provider);
+        jdbc.update("UPDATE music SET youtube_video_id=NULL WHERE id=?", music);
+        var page = apiA.videoSearch(caller, music);
+        assertThat(jdbc.queryForObject("SELECT youtube_video_id FROM music WHERE id=?", String.class, music)).isNull();
+        assertThat(apiB.videoSearch(caller, music)).isEqualTo(page);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
+        var items = videoItems(page);
+        assertThat(items).hasSize(2);
+        assertThat(items.getFirst()).containsEntry("official_status", "UNREVIEWED").containsEntry("video_id",
+                "ABCDEFGHIJK");
+        String a = (String) items.getFirst().get("candidate_id");
+        String b = (String) items.getLast().get("candidate_id");
+        var playback = playback();
+        String command = UUID.randomUUID().toString();
+        var receipt = apiB.add(caller, command, music, a);
+        assertThat(receipt.status()).isEqualTo(201);
+        apiA.add(other, UUID.randomUUID().toString(), music, b);
+        var snapshot = apiA.queue(caller, 20, null);
+        assertThat(snapshot).containsEntry("source_video_id", "ABCDEFGHIJK").containsEntry("duration_millis", 180000L);
+        assertThat(jdbc.queryForObject("SELECT youtube_video_id FROM music WHERE id=?", String.class, music))
+                .isEqualTo("LMNOPQRSTUV");
+        assertThat(videoItems(snapshot).getFirst()).containsEntry("youtube_video_id", "LMNOPQRSTUV")
+                .containsEntry("duration_millis", 200000L);
+        long current = ((Number) snapshot.get("current_queue_item_id")).longValue();
+        playback.control(taskA, caller, UUID.randomUUID().toString(), "PAUSE", current, 2);
+        playback.control(taskA, caller, UUID.randomUUID().toString(), "RESUME", current, 3);
+        assertThat(apiA.queue(caller, 20, null)).containsEntry("source_video_id", "ABCDEFGHIJK");
+        jdbc.update("""
+                UPDATE playback_states SET state_changed_at=TIMESTAMPADD(SECOND,-181,UTC_TIMESTAMP(6)),
+                  due_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) WHERE chat_room_id=?
+                """, caller.roomId());
+        assertThat(apiA.queue(caller, 20, null)).containsEntry("source_video_id", "LMNOPQRSTUV")
+                .containsEntry("duration_millis", 200000L);
+        var restored = playback();
+        restored.validateStorage();
+        assertThat(apiB.queue(caller, 20, null)).containsEntry("source_video_id", "LMNOPQRSTUV");
+        jdbc.update("UPDATE music_video_search_results SET created_at=TIMESTAMPADD(HOUR,-2,UTC_TIMESTAMP(6)),"
+                + "expires_at=TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6)) WHERE id=?", page.get("search_id"));
+        apiA.setVideoService(null);
+        assertThat(apiA.add(caller, command, music, a)).isEqualTo(receipt);
+        assertThat(apiB.queue(caller, 20, null)).containsEntry("source_video_id", "LMNOPQRSTUV");
+        error(() -> apiA.add(caller, command, music, b), 409, "COMMAND_ID_CONFLICT");
+        assertThat(count("music_queue_items")).isEqualTo(2);
+    }
+
+    @Test
+    void expiredWrongSongAndRevokedProvenanceDoNotEnqueue() {
+        videos(apiA, taskA, provider());
+        var page = apiA.videoSearch(caller, music);
+        String candidate = (String) videoItems(page).getFirst().get("candidate_id");
+        error(() -> apiA.add(caller, UUID.randomUUID().toString(), music, UUID.randomUUID().toString()), 400,
+                "INVALID_CANDIDATE");
+        jdbc.update("UPDATE music_video_search_results SET created_at=TIMESTAMPADD(HOUR,-2,UTC_TIMESTAMP(6)),"
+                + "expires_at=TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6)) WHERE id=?", page.get("search_id"));
+        error(() -> apiA.add(caller, UUID.randomUUID().toString(), music, candidate), 410, "CANDIDATE_EXPIRED");
+        jdbc.update("UPDATE recommendation_sessions SET status='FAILED' WHERE user_id=?", caller.userId());
+        error(() -> apiA.videoSearch(caller, music), 409, "MUSIC_NOT_REQUESTABLE");
+        assertThat(count("music_queue_items")).isZero();
+    }
+
+    @Test
+    void transientMetadataFailurePreservesWaitingAndConfirmedUnavailableAdvancesWithoutChangingPins() {
+        var provider = provider();
+        var videos = videos(apiA, taskA, provider);
+        var items = videoItems(apiA.videoSearch(caller, music));
+        String a = (String) items.getFirst().get("candidate_id");
+        apiA.add(caller, UUID.randomUUID().toString(), music, a);
+        apiA.add(caller, UUID.randomUUID().toString(), music, (String) items.getLast().get("candidate_id"));
+        jdbc.update("UPDATE music_video_sources SET verified_at=TIMESTAMPADD(HOUR,-2,UTC_TIMESTAMP(6)),"
+                + "valid_until=TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)) "
+                + "WHERE music_id=? AND youtube_video_id='ABCDEFGHIJK'",
+                music);
+        when(provider.verify("ABCDEFGHIJK")).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            throw new ChatMusicException(503, "VIDEO_SEARCH_UNAVAILABLE");
+        });
+        playback();
+        videos.prepareRoom(caller.roomId());
+        assertThat(apiA.queue(caller, 20, null)).containsEntry("state", "IDLE");
+        assertThat(count("music_queue_items")).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_queue_items WHERE room_id=? AND status='WAITING'",
+                Long.class, caller.roomId())).isEqualTo(2);
+        doReturn(null).when(provider).verify("ABCDEFGHIJK");
+        videos.prepare(caller, music, a);
+        assertThat(apiA.queue(caller, 20, null)).containsEntry("state", "PLAYING").containsEntry("source_video_id",
+                "LMNOPQRSTUV");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_queue_items WHERE room_id=? AND status='CANCELED'",
+                Long.class, caller.roomId())).isEqualTo(1);
+    }
+
+    @Test
+    void metadataChangeDuringExternalSearchCannotPublishOldCacheAndEmptyIsNotFailure() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        when(provider.search("Synthetic song", "Synthetic artist")).thenAnswer(invocation -> {
+            jdbc.update("UPDATE music SET title='Changed title' WHERE id=?", music);
+            return List.of();
+        });
+        error(() -> apiA.videoSearch(caller, music), 409, "MUSIC_METADATA_CHANGED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_video_search_results WHERE music_id=?", Long.class,
+                music)).isZero();
+        when(provider.search("Changed title", "Synthetic artist")).thenReturn(List.of());
+        assertThat(videoItems(apiA.videoSearch(caller, music))).isEmpty();
+        assertThat(apiA.videoSearch(caller, music)).containsEntry("result_kind", "EMPTY");
+        verify(provider, times(1)).search("Changed title", "Synthetic artist");
+    }
+
+    @Test
+    void verificationRefreshUsesFiveMinutesAndDoesNotOverwriteConcurrentSourceDecision() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        var item = videoItems(apiA.videoSearch(caller, music)).getFirst();
+        jdbc.update("UPDATE music_video_sources SET verified_at=TIMESTAMPADD(MINUTE,-6,UTC_TIMESTAMP(6)),"
+                + "valid_until=TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)) WHERE music_id=?", music);
+        when(provider.verify("ABCDEFGHIJK")).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            jdbc.update(
+                    "UPDATE music_video_sources SET playback_status='UNAVAILABLE',version=version+1 WHERE music_id=?",
+                    music);
+            return new ChatMusicVideoProvider.Video("ABCDEFGHIJK", "channel", "A", "Channel", null, 999000);
+        });
+        error(() -> apiA.add(caller, UUID.randomUUID().toString(), music, (String) item.get("candidate_id")), 409,
+                "VIDEO_UNAVAILABLE");
+        assertThat(count("music_queue_items")).isZero();
+        assertThat(jdbc.queryForObject("SELECT youtube_video_id FROM music WHERE id=?", String.class, music))
+                .isEqualTo("abcdefghijk");
+    }
+
+    @Test
+    void selectedSourceRepresentativeAndReceiptRollBackTogetherOnOutboxFailure() {
+        videos(apiA, taskA, provider());
+        String candidate = (String) videoItems(apiA.videoSearch(caller, music)).getFirst().get("candidate_id");
+        jdbc.execute("CREATE TRIGGER selected_outbox_failure BEFORE INSERT ON chat_music_outbox "
+                + "FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'");
+        try {
+            assertThatThrownBy(() -> apiA.add(caller, UUID.randomUUID().toString(), music, candidate))
+                    .isInstanceOf(RuntimeException.class);
+            assertThat(count("music_queue_items")).isZero();
+            assertThat(count("chat_music_command_receipts")).isZero();
+            assertThat(jdbc.queryForObject("SELECT youtube_video_id FROM music WHERE id=?", String.class, music))
+                    .isEqualTo("abcdefghijk");
+        } finally {
+            jdbc.execute("DROP TRIGGER selected_outbox_failure");
+        }
+    }
+
+    @Test
+    void concurrentSelectionsKeepBothQueuePinsAndOneAggregateOrder() throws Exception {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        videos(apiB, taskB, provider);
+        var items = videoItems(apiA.videoSearch(caller, music));
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var gate = new CountDownLatch(1);
+            var first = executor.submit(() -> {
+                gate.await();
+                return apiA.add(caller, UUID.randomUUID().toString(), music,
+                        (String) items.getFirst().get("candidate_id"));
+            });
+            var second = executor.submit(() -> {
+                gate.await();
+                return apiB.add(other, UUID.randomUUID().toString(), music,
+                        (String) items.getLast().get("candidate_id"));
+            });
+            gate.countDown();
+            assertThat(first.get(10, TimeUnit.SECONDS).status()).isEqualTo(201);
+            assertThat(second.get(10, TimeUnit.SECONDS).status()).isEqualTo(201);
+        }
+        assertThat(jdbc.queryForList("SELECT source_video_id FROM music_queue_items WHERE room_id=?", String.class,
+                caller.roomId())).containsExactlyInAnyOrder("ABCDEFGHIJK", "LMNOPQRSTUV");
+        assertThat(jdbc.queryForList("SELECT sequence_no FROM music_queue_items WHERE room_id=? ORDER BY sequence_no",
+                Long.class, caller.roomId())).containsExactly(1L, 2L);
+        assertThat(count("chat_music_command_receipts")).isEqualTo(2);
+        assertThat(version()).isEqualTo(2);
+    }
+
+    @Test
+    void operatorBlockSurvivesRepresentativeReplacementAndCannotBeUndoneByRefresh() {
+        var provider = provider();
+        var videos = videos(apiA, taskA, provider);
+        String candidate = (String) videoItems(apiA.videoSearch(caller, music)).getFirst().get("candidate_id");
+        jdbc.update("""
+                UPDATE music_video_sources SET operator_blocked=TRUE,playback_status='UNAVAILABLE',version=version+1,
+                  verified_at=TIMESTAMPADD(HOUR,-2,UTC_TIMESTAMP(6)),valid_until=TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6))
+                WHERE music_id=? AND youtube_video_id='ABCDEFGHIJK'
+                """, music);
+        videos.prepare(caller, music, candidate);
+        error(() -> apiA.add(caller, UUID.randomUUID().toString(), music, candidate), 409, "VIDEO_UNAVAILABLE");
+        verify(provider, times(0)).verify("ABCDEFGHIJK");
+        assertThat(count("music_queue_items")).isZero();
+    }
+
+    @Test
+    void stoppedWorkerCutoverPinsKnownLegacyWaitingAndRestoresActualActivePin() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        jdbc.update("UPDATE music_queue_items SET source_video_id=NULL,duration_millis=NULL WHERE room_id=?",
+                caller.roomId());
+        var playback = playback();
+        playback.validateStorage();
+        assertThat(jdbc.queryForObject("SELECT source_video_id FROM music_queue_items WHERE room_id=?", String.class,
+                caller.roomId())).isEqualTo("abcdefghijk");
+        apiA.queue(caller, 20, null);
+        jdbc.update("UPDATE music SET youtube_video_id='ZYXWVUTSRQP' WHERE id=?", music);
+        jdbc.update("UPDATE music_queue_items SET source_video_id=NULL,duration_millis=NULL WHERE room_id=?",
+                caller.roomId());
+        playback.validateStorage();
+        assertThat(jdbc.queryForObject("SELECT source_video_id FROM music_queue_items WHERE room_id=?", String.class,
+                caller.roomId())).isEqualTo("abcdefghijk");
+        assertThat(apiA.queue(caller, 20, null)).containsEntry("source_video_id", "abcdefghijk");
+    }
+
+    @Test
+    void legacyAdmissionCannotOverrideNewerUnavailabilityOrOperatorBlock() {
+        apiA.add(caller, UUID.randomUUID().toString(), music);
+        jdbc.update("UPDATE music_video_sources SET playback_status='UNAVAILABLE' WHERE music_id=?", music);
+        error(() -> apiA.add(caller, UUID.randomUUID().toString(), music), 409, "MUSIC_NOT_REQUESTABLE");
+        jdbc.update("UPDATE music_video_sources SET playback_status='PLAYABLE',operator_blocked=TRUE "
+                + "WHERE music_id=?", music);
+        error(() -> apiB.add(caller, UUID.randomUUID().toString(), music), 409, "MUSIC_NOT_REQUESTABLE");
+        assertThat(count("music_queue_items")).isEqualTo(1);
+        assertThat(count("chat_music_command_receipts")).isEqualTo(1);
+    }
+
+    @Test
+    void historicalUnknownPinCanBeFoundAndSelectedWithoutInventingOfficialReview() {
+        jdbc.update("INSERT INTO music_video_sources(music_id,youtube_video_id) VALUES (?,'ABCDEFGHIJK')", music);
+        var provider = provider();
+        when(provider.verify("ABCDEFGHIJK")).thenReturn(
+                new ChatMusicVideoProvider.Video("ABCDEFGHIJK", "channel", "Video A", "Channel", null, 180000));
+        videos(apiA, taskA, provider);
+        var item = videoItems(apiA.videoSearch(caller, music)).getFirst();
+        assertThat(item).containsEntry("channel_id", "channel").containsEntry("official_status", "UNREVIEWED");
+        assertThat(apiA.add(caller, UUID.randomUUID().toString(), music, (String) item.get("candidate_id")).status())
+                .isEqualTo(201);
+        verify(provider).verify("ABCDEFGHIJK");
+    }
+
+    @Test
+    void sharedAccountAndProviderBudgetCannotBeBypassedByAnotherTask() {
+        var first = new ChatMusicVideoBudget(jdbc);
+        var second = new ChatMusicVideoBudget(jdbc);
+        String scope = "test-" + UUID.randomUUID();
+        first.reserve(scope, 86400, 1);
+        error(() -> second.reserve(scope, 86400, 1), 429, "VIDEO_REQUEST_RATE_LIMITED");
+    }
 
     @BeforeAll
     static void migrate() {
@@ -314,7 +607,8 @@ class ChatMusicQueueMySqlTest {
         long item = jdbc.queryForObject("SELECT id FROM music_queue_items WHERE room_id=?", Long.class,
                 caller.roomId());
         jdbc.update("UPDATE music_queue_items SET status='PLAYING',started_at=UTC_TIMESTAMP(6) WHERE id=?", item);
-        jdbc.update("UPDATE playback_states SET state='PAUSED',current_queue_item_id=?,position_seconds=3.25 "
+        jdbc.update("UPDATE playback_states SET state='PAUSED',current_queue_item_id=?,position_seconds=3.25,"
+                + "source_video_id='abcdefghijk',duration_millis=120000 "
                 + "WHERE chat_room_id=?", item, caller.roomId());
         var snapshot = apiA.queue(other, 20, null);
         assertThat(snapshot.get("state")).isEqualTo("PAUSED");

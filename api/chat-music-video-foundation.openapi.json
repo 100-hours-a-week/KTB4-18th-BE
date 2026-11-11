@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Regional music video foundation and step 2 consumer contract",
-    "version": "1.0.0",
-    "description": "Foundation only. Regional list and optional image location are implemented; video search and selected ADD are TARGET contracts for step 2 and have no handler yet. Minimal P1 is synchronous: no 202/jobs/status GET/polling."
+    "title": "Regional music video search and selection API",
+    "version": "1.1.0",
+    "description": "Regional provenance and synchronous YouTube candidate search/selected ADD are implemented. No 202/jobs/status GET/polling. Official embed playback only; metadata verification does not certify official recording ownership or actual browser playback."
   },
   "security": [
     {
@@ -206,8 +206,8 @@
     },
     "/api/v1/chat-rooms/{room_id}/music/{music_id}/video-searches": {
       "post": {
-        "x-implementation-status": "planned-step-2",
-        "description": "Synchronous cache-or-provider result. Checks own regional provenance before lookup. Metadata fingerprint/country/policy-scoped immutable batches are shared in MySQL; no external call while holding a room lock. Initial maximum 10 candidates, positive TTL 1h, empty TTL 5m. Failure is not EMPTY. Search never writes music.youtube_video_id.",
+        "x-implementation-status": "implemented-step-2",
+        "description": "Synchronous cache-or-provider result. Checks own regional provenance before lookup. Metadata fingerprint/country/policy-scoped immutable batches are shared in MySQL; no external call while holding a room lock. Initial maximum 10 candidates, positive TTL 1h, empty TTL 5m. Failure is not EMPTY. Search never writes music.youtube_video_id. Account limit 10/minute including cache hits. Shared provider budget 60 calls/minute, configurable search/detail daily budgets. Per-task concurrency defaults 2; each HTTP call has a 4s whole-body deadline and 256KiB body cap. Disabled returns 503 VIDEO_SEARCH_DISABLED; provider failures return 503 VIDEO_SEARCH_UNAVAILABLE or VIDEO_PROVIDER_BUSY; no empty cache is written on failure.",
         "parameters": [
           {
             "name": "room_id",
@@ -277,14 +277,17 @@
           },
           "503": {
             "description": "Existing message/data error envelope; never includes tokens or provider body."
+          },
+          "409": {
+            "description": "MUSIC_NOT_REQUESTABLE or MUSIC_METADATA_CHANGED; current source authorization is required even for cache hits."
           }
         }
       }
     },
     "/api/v1/chat-rooms/{room_id}/queue-items": {
       "post": {
-        "x-implementation-status": "planned-step-2-selected-body",
-        "description": "Only legacy music_id-only ADD exists in step 1. Step 2 binds candidate to music, expiry and current provenance; revalidates source outside the room transaction, then atomically commits representative ID, immutable queue pin, receipt and outbox. Replay checks active participation but does not require an expired candidate/provider call to repeat an already committed request. Candidate changes alter the idempotency fingerprint. Old receipt bodies stay unchanged.",
+        "x-implementation-status": "implemented-step-2",
+        "description": "Legacy music_id-only ADD remains supported for currently reviewed sources. Selected ADD binds candidate to music, expiry and current provenance; revalidates source outside the room transaction, then atomically commits representative ID, immutable queue pin, receipt and outbox. Replay checks active participation but does not require an expired candidate/provider call to repeat an already committed request. Candidate changes alter the idempotency fingerprint. Old receipt bodies stay unchanged. Candidate mismatch is 400 INVALID_CANDIDATE; expiry is 410 CANDIDATE_EXPIRED; confirmed unavailable is 409 VIDEO_UNAVAILABLE; stale/unverified source is 503 VIDEO_VERIFICATION_REQUIRED. Representative changes never reinterpret existing pins.",
         "parameters": [
           {
             "name": "room_id",
@@ -333,8 +336,7 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "music_id",
-                  "candidate_id"
+                  "music_id"
                 ],
                 "properties": {
                   "music_id": {
@@ -560,7 +562,9 @@
             "required": [
               "music_id",
               "items",
-              "expires_at"
+              "expires_at",
+              "search_id",
+              "result_kind"
             ],
             "properties": {
               "music_id": {
@@ -578,6 +582,16 @@
               "expires_at": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "search_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "result_kind": {
+                "enum": [
+                  "READY",
+                  "EMPTY"
+                ]
               }
             }
           }

@@ -13,6 +13,7 @@ import com.muse.meomuneum.chat.participation.ChatParticipationService;
 public class ChatMusicPlaybackConfiguration {
     @Bean
     public ChatMusicPlaybackService chatMusicPlaybackService(JdbcTemplate jdbc, ChatMusicStateRepository states,
+            ChatMusicVideoService videos,
             @Value("${chat.music.keys:}") String keys,
             @Value("${chat.music.queue.command-interval-millis:1000}") int interval) {
         if (interval < 0 || interval > 60_000) {
@@ -21,6 +22,7 @@ public class ChatMusicPlaybackConfiguration {
         var service = new ChatMusicPlaybackService(jdbc, states,
                 new ChatMusicCommandStore(jdbc, new ChatMusicKeys(keys), interval));
         service.validateStorage();
+        service.setVideoService(videos);
         return service;
     }
 

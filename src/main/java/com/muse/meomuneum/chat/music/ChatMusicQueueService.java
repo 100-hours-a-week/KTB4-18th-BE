@@ -27,6 +27,19 @@ public class ChatMusicQueueService {
     private final int capacity;
     private final ChatMusicCommandStore commands;
     private ChatMusicPlaybackService playback;
+    private ChatMusicVideoService videos;
+
+    public void setVideoService(ChatMusicVideoService service) {
+        videos = service;
+    }
+
+    public Map<String, Object> videoSearch(Caller caller, long music) {
+        positive(music);
+        if (videos == null) {
+            throw new ChatMusicException(503, "VIDEO_SEARCH_DISABLED");
+        }
+        return videos.search(caller, music);
+    }
 
     public ChatMusicQueueService(JdbcTemplate jdbc, ChatParticipationService participation,
             ChatMusicStateRepository states, RequestableMusicRepository catalog, ChatMusicKeys keys,
@@ -103,12 +116,16 @@ public class ChatMusicQueueService {
                     if (page.version() != -1 && page.version() != state.version()) {
                         throw new ChatMusicException(409, "QUEUE_CHANGED");
                     }
-                    var items = jdbc.queryForList("""
-                            SELECT q.id queue_item_id,q.music_id,q.added_by_user_id,q.sequence_no,q.status,
-                              m.title,m.artist_name,m.album_cover_url,m.youtube_video_id
-                            FROM music_queue_items q JOIN music m ON m.id=q.music_id
-                            WHERE q.room_id=? AND q.status='WAITING' AND q.sequence_no>? ORDER BY q.sequence_no LIMIT ?
-                            """, caller.roomId(), page.last(), size + 1);
+                    var items = jdbc.queryForList(
+                            """
+                                    SELECT q.id queue_item_id,q.music_id,q.added_by_user_id,q.sequence_no,q.status,
+                                      m.title,m.artist_name,m.album_cover_url,q.source_video_id
+                                      youtube_video_id,q.duration_millis
+                                    FROM music_queue_items q JOIN music m ON m.id=q.music_id
+                                    WHERE q.room_id=? AND q.status='WAITING' AND q.sequence_no>? ORDER BY
+                                    q.sequence_no LIMIT ?
+                                    """,
+                            caller.roomId(), page.last(), size + 1);
                     var result = paginated(items, size, scope, state.version(), now, "sequence_no");
                     result.put("epoch", tx.context().epoch());
                     result.put("version", state.version());
@@ -128,7 +145,7 @@ public class ChatMusicQueueService {
     private Map<String, Object> current(long room, long item) {
         return jdbc.queryForMap("""
                 SELECT q.id queue_item_id,q.music_id,q.added_by_user_id,q.sequence_no,q.status,
-                  m.title,m.artist_name,m.album_cover_url,m.youtube_video_id
+                  m.title,m.artist_name,m.album_cover_url,q.source_video_id youtube_video_id,q.duration_millis
                 FROM music_queue_items q JOIN music m ON m.id=q.music_id WHERE q.room_id=? AND q.id=?
                 """, room, item);
     }
@@ -136,6 +153,26 @@ public class ChatMusicQueueService {
     public Result add(Caller caller, String commandId, long musicId) {
         positive(musicId);
         return command(caller, commandId, "ADD", musicId, -1);
+    }
+
+    public Result add(Caller caller, String commandId, long musicId, String candidate) {
+        positive(musicId);
+        uuid(commandId);
+        uuid(candidate);
+        // Replays require a currently authorized participant but do not depend on expired candidates/provider health.
+        Result replay = participation.musicTransaction(caller.userId(), caller.sid(), caller.roomId(),
+                caller.membershipId(), caller.viewId(), tx -> {
+                    states.lockRoom(caller.roomId());
+                    return commands.replay(caller, tx, commandId, "ADD", musicId, -1, candidate);
+                });
+        if (replay != null) {
+            return replay;
+        }
+        if (videos == null) {
+            throw new ChatMusicException(503, "VIDEO_SEARCH_DISABLED");
+        }
+        videos.prepare(caller, musicId, candidate);
+        return command(caller, commandId, "ADD", musicId, -1, candidate);
     }
 
     public Result cancel(Caller caller, String commandId, long itemId, long expectedVersion) {
@@ -147,11 +184,16 @@ public class ChatMusicQueueService {
     }
 
     private Result command(Caller c, String commandId, String type, long target, long expectedVersion) {
+        return command(c, commandId, type, target, expectedVersion, null);
+    }
+
+    private Result command(Caller c, String commandId, String type, long target, long expectedVersion,
+            String candidate) {
         uuid(commandId);
         return participation.musicTransaction(c.userId(), c.sid(), c.roomId(), c.membershipId(), c.viewId(), tx -> {
             var context = tx.context();
             var state = states.lockRoom(c.roomId());
-            Result replay = commands.replay(c, tx, commandId, type, target, expectedVersion);
+            Result replay = commands.replay(c, tx, commandId, type, target, expectedVersion, candidate);
             if (replay != null) {
                 return replay;
             }
@@ -161,7 +203,7 @@ public class ChatMusicQueueService {
             }
             long item;
             if (type.equals("ADD")) {
-                item = append(c, target, state.nextSequenceNo());
+                item = append(c, target, state.nextSequenceNo(), candidate);
             } else {
                 if (state.version() != expectedVersion) {
                     throw new ChatMusicException(409, "VERSION_CONFLICT");
@@ -200,7 +242,7 @@ public class ChatMusicQueueService {
                     ? json.writeValueAsString(Map.of("message", "music queued", "data", data))
                     : "{}";
             Result result = new Result(status, body);
-            commands.complete(c, tx, commandId, type, target, expectedVersion, version, result);
+            commands.complete(c, tx, commandId, type, target, expectedVersion, version, result, candidate);
             if (playback != null) {
                 playback.events(tx, version, new ChatMusicPlaybackService.Change(true, playbackChange.playback()),
                         type);
@@ -211,21 +253,52 @@ public class ChatMusicQueueService {
         });
     }
 
-    private long append(Caller c, long music, long sequence) {
+    private long append(Caller c, long music, long sequence, String candidate) {
         if (jdbc.queryForObject("SELECT COUNT(*) FROM music_queue_items WHERE room_id=? AND status='WAITING'",
                 Long.class, c.roomId()) >= capacity) {
             throw new ChatMusicException(409, "QUEUE_FULL");
         }
         // The catalog registration tool locks this same music row before replacing a verified source.
-        if (jdbc.queryForList("SELECT id FROM music WHERE id=? FOR SHARE", music).isEmpty()) {
+        if (jdbc.queryForList("SELECT id FROM music WHERE id=? FOR UPDATE", music).isEmpty()) {
             throw new ChatMusicException(409, "MUSIC_NOT_REQUESTABLE");
         }
         long region = jdbc.queryForObject("SELECT region_id FROM chat_rooms WHERE id=?", Long.class, c.roomId());
-        if (catalog.findSources(c.userId(), region, music).isEmpty()) {
+        if ((candidate == null
+                ? catalog.findSources(c.userId(), region, music)
+                : catalog.findProvenance(c.userId(), region, music)).isEmpty()) {
             throw new ChatMusicException(409, "MUSIC_NOT_REQUESTABLE");
         }
-        jdbc.update("INSERT INTO music_queue_items(room_id,music_id,added_by_user_id,sequence_no) VALUES (?,?,?,?)",
-                c.roomId(), music, c.userId(), sequence);
+        ChatMusicVideoService.Selection selected;
+        if (candidate != null) {
+            selected = videos.selection(music, candidate);
+            jdbc.update("UPDATE music SET youtube_video_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?", selected.video(),
+                    music);
+        } else {
+            // Transition compatibility: pin the reviewed legacy source even when it was registered after migration.
+            jdbc.update("""
+                    INSERT IGNORE INTO music_video_sources(music_id,youtube_video_id,channel_id,playback_status,
+                      official_status,duration_millis,verified_at,valid_until,review_reference,reviewed_by)
+                    SELECT music_id,youtube_video_id,channel_id,'PLAYABLE','CONFIRMED',duration_millis,
+                      verified_at,valid_until,review_reference,reviewed_by FROM music_playback_sources WHERE music_id=?
+                    """, music);
+            selected = jdbc.queryForObject(
+                    "SELECT youtube_video_id,duration_millis FROM music_playback_sources WHERE music_id=?",
+                    (r, i) -> new ChatMusicVideoService.Selection(r.getString(1), r.getLong(2)), music);
+            var available = jdbc.queryForObject("""
+                    SELECT playback_status='PLAYABLE' AND operator_blocked=FALSE FROM music_video_sources
+                    WHERE music_id=? AND youtube_video_id=? FOR SHARE
+                    """, Boolean.class, music, selected.video());
+            if (!Boolean.TRUE.equals(available)) {
+                throw new ChatMusicException(409, "MUSIC_NOT_REQUESTABLE");
+            }
+        }
+        jdbc.update(
+                """
+                        INSERT INTO music_queue_items(room_id,music_id,added_by_user_id,sequence_no,
+                        source_video_id,duration_millis)
+                        VALUES (?,?,?,?,?,?)
+                        """,
+                c.roomId(), music, c.userId(), sequence, selected.video(), selected.duration());
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
     }
 

@@ -1,7 +1,11 @@
 package com.muse.meomuneum.chat.music;
 
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -24,6 +28,13 @@ public final class ChatMusicPlaybackWorker implements AutoCloseable {
     });
     private final AtomicBoolean running = new AtomicBoolean();
     private long afterRoom;
+    private final Set<Long> refreshing = ConcurrentHashMap.newKeySet();
+    private final ThreadPoolExecutor metadata = new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(20), task -> {
+                Thread thread = new Thread(task, "chat-music-video-metadata");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
 
     public ChatMusicPlaybackWorker(JdbcTemplate jdbc, ChatParticipationService participation,
             ChatMusicPlaybackService playback) {
@@ -59,6 +70,7 @@ public final class ChatMusicPlaybackWorker implements AutoCloseable {
                     break;
                 }
                 try {
+                    prepare(room);
                     participation.systemMusicTransaction(room, tx -> {
                         playback.reconcile(tx);
                         return null;
@@ -79,5 +91,28 @@ public final class ChatMusicPlaybackWorker implements AutoCloseable {
     @Override
     public void close() {
         scheduler.shutdownNow();
+        metadata.shutdownNow();
+    }
+
+    private void prepare(long room) {
+        if (!refreshing.add(room)) {
+            return;
+        }
+        try {
+            metadata.execute(() -> {
+                try {
+                    if (participation.available()) {
+                        playback.prepareRoom(room);
+                    }
+                } catch (RuntimeException unavailable) {
+                    LOG.warn("event=chat_music_metadata_refresh_failed failure={}",
+                            unavailable.getClass().getSimpleName());
+                } finally {
+                    refreshing.remove(room);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException full) {
+            refreshing.remove(room);
+        }
     }
 }

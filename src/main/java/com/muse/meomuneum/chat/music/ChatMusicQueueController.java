@@ -26,6 +26,10 @@ import com.muse.meomuneum.global.security.TokenClaims;
 @ConditionalOnProperty(name = "chat.music.queue.enabled", havingValue = "true")
 public class ChatMusicQueueController {
     private static final Pattern ADD = Pattern.compile("\\s*\\{\\s*\"music_id\"\\s*:\\s*([1-9][0-9]{0,15})\\s*}\\s*");
+    private static final String MUSIC = "\"music_id\"\\s*:\\s*([1-9][0-9]{0,15})";
+    private static final String CANDIDATE = "\"candidate_id\"\\s*:\\s*\"([0-9a-f-]{36})\"";
+    private static final Pattern SELECTED_ADD = Pattern.compile("\\s*\\{\\s*(?:" + MUSIC + "\\s*,\\s*" + CANDIDATE
+            + "|" + CANDIDATE + "\\s*,\\s*" + MUSIC + ")\\s*}\\s*");
     private final ChatMusicQueueService service;
 
     public ChatMusicQueueController(ChatMusicQueueService service) {
@@ -52,12 +56,27 @@ public class ChatMusicQueueController {
                 service.queue(caller(auth, roomId, member, view), size, cursor)));
     }
 
+    @PostMapping("/music/{musicId}/video-searches")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> videoSearch(@PathVariable long roomId,
+            @PathVariable long musicId, @RequestParam("membership_id") long member,
+            @RequestParam("view_session_id") String view, Authentication auth) {
+        return ResponseEntity.ok().header("Cache-Control", "no-store")
+                .body(ApiResponse.of("music video candidates retrieved",
+                        service.videoSearch(caller(auth, roomId, member, view), musicId)));
+    }
+
     @PostMapping(value = "/queue-items", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> add(@PathVariable long roomId, @RequestParam("membership_id") long member,
             @RequestParam("view_session_id") String view, @RequestHeader("Idempotency-Key") String command,
             @RequestBody String body, Authentication auth) {
         var caller = caller(auth, roomId, member, view);
-        // A single numeric property is the complete contract: reject duplicates and ignored command fields.
+        // Exact contracts reject duplicate properties, unknown fields, coercions and trailing documents.
+        var selected = SELECTED_ADD.matcher(body.length() > 4096 ? "" : body);
+        if (selected.matches()) {
+            return response(service.add(caller, command,
+                    Long.parseLong(selected.group(1) == null ? selected.group(4) : selected.group(1)),
+                    selected.group(2) == null ? selected.group(3) : selected.group(2)));
+        }
         var match = ADD.matcher(body.length() > 4096 ? "" : body);
         if (!match.matches()) {
             throw new ChatMusicException(400, "INVALID_ADD_REQUEST");
