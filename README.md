@@ -2098,7 +2098,110 @@ result_kind 길이와 명시 CHECK를 맞춰 보완했으며 원본 `second-targ
 
 증빙: `build/chat-music-video-foundation-verification/summary.json`, `final-full/`, `isolated-full.log`,
 `contracts.json`. OpenAPI2파일 JSON/로컬참조73개를 검사했고 전체 메타스키마 검증은 아니다.
+
 최종 소스 SHA256 `e9519537867978fdd544dd5a023bb5314c0ebde61664b215827563fd6e6e1c2a`와
 일반/Core/Chat 세 JAR manifest가 일치한다. 검증 당시 변경은 미커밋 상태였으며 manifest의 commit은 검증 당시 기반HEAD다.
 임시 MySQL은 기존 검증 스크립트가 종료 시 정리했다. FE는 변경하지 않았다.
 실제 YouTube 검색/선택 ADD·새 고정 영상 worker·실기기/1000연결·운영 DB/설정/배포·외부 이슈/PR/push는 수행하지 않았다.
+
+## 지역 음악 영상 검색·선택 신청·고정 재생 — 최소 P1 2단계
+
+작업 브랜치 `feature/chat-music-video-queue`. 아래 내용이 위 1단계의 미구현 예고를 대체한다.
+FE 신청 창·위치 전달·화면 경계 개선은 3단계이며 이번 변경에 포함하지 않는다.
+
+### 처리 구조와 계약
+
+- `POST /api/v1/chat-rooms/{room_id}/music/{music_id}/video-searches`는 기존 Bearer 인증과
+  `membership_id`, `view_session_id`를 사용한다. 본인의 해당 지역 기록·완료 추천과 현재 CONNECTED 참여를
+  캐시 조회 전과 외부 검색 후 다시 검사한다. 다른 사람의 공개 기록은 검색 권한이 아니다.
+- 곡의 저장된 표시 제목·가수로 공식 YouTube Data API `search.list`를 한 번 호출하고,
+  최대 10개 ID를 `videos.list` 한 번으로 검사한다. 공개·처리 완료·임베드 허용·KR 허용·비라이브·
+  비연령 제한·양의 확정 길이만 후보로 저장한다. 자동 결과의 공식 확인은 UNREVIEWED다.
+  다운로드·음원 추출·중앙 오디오 스트리밍은 구현하지 않는다.
+- `ChatMusicVideoService`는 짧은 권한 TX → 잠금 없는 HTTP → 권한·곡 메타데이터 재확인 TX로 나뉜다.
+  후보 batch는 MySQL에 불변 저장하며 곡의 다국어 메타데이터 SHA-256/국가/정책 버전으로 캐시를 구분한다.
+  이전 검색이 바뀐 곡의 캐시를 덮어쓰지 않는다. 다른 Chat Task에서 같은 후보를 조회·신청할 수 있다.
+- 응답은 동기 200 `{message,data}`이며 data는 `search_id`, `music_id`, `result_kind`, `expires_at`, `items`다.
+  후보는 `candidate_id`, `music_id`, `video_id`, 제목·채널·썸네일·길이·PLAYABLE 및 공식 확인 상태·만료를 포함한다.
+  정상 후보 없음은 EMPTY+빈 items이고, 네트워크·쿼터·응답 오류는 EMPTY로 캐시하지 않는다.
+  202/job/상태 GET/폴링·언어 대체 자동 검색·사전 검색은 없다.
+- 새 FE는 기존 `POST .../queue-items`에 `{music_id,candidate_id}`와 `Idempotency-Key`를 보낸다.
+  후보 관계·만료·메타데이터 지문, 현재 참여·출처·정원, 영상 최신 검증을 확인한다.
+  성공 TX에서만 대표 `music.youtube_video_id`를 갱신하고 선택 영상/길이를 대기열에 고정한다.
+  큐·버전·영수증·outbox와 대표 ID 갱신은 함께 commit/rollback한다. 검색만으로 대표 ID를 바꾸지 않는다.
+- 후보 ID가 바뀌면 같은 명령 UUID는 COMMAND_ID_CONFLICT다. 성공 영수증 재현은 현재 참여가 필요하지만
+  만료 후보·provider 장애에 의존하지 않으며 과거 playback 응답으로 현재 상태를 복원하지 않는다.
+  기존 music_id-only ADD와 기존 영수증은 유지하되 현재 유효한 legacy 검수 소스가 있어야 신규 신청된다.
+  영상별 최신 사용 불가·운영자 차단을 과거 legacy 검수로 덮어쓰지 않는다.
+- 재생·다음 곡·재개·복구·대기열 조회는 대표 영상 대신 항목의 영상/길이를 사용한다.
+  시작 전 검증이 오래되면 WAITING/FIFO를 보존하고 별도 bounded metadata executor에서 재검증한다.
+  확정 불가/운영자 차단은 WAITING을 CANCELED 처리하고 다음 곡으로 넘어간다.
+  외부 일시 오류는 취소/영상 자동 교체 없이 보존하며 Task별 최대 1024개 backoff(60초)와 공유 호출 예산을 적용한다.
+  재개 시 재확인되지 않으면 PAUSED를 유지하고 503을 반환한다. 진행 중인 곡의 pin/길이를 바꾸지 않는다.
+  기존 전원 퇴장 취소·장애 복구·30초 유예·개인 음량·자동 합류 정책을 유지한다.
+
+### 설정과 호출 제한
+
+Chat/일반 앱 모두 아래 환경변수를 해석한다. 서버의 비밀 저장소에서 키를 주입하고 FE에 전달하지 않는다.
+
+```dotenv
+CHAT_MUSIC_VIDEO_SEARCH_ENABLED=true
+CHAT_MUSIC_VIDEO_SEARCH_API_KEY=<server-side YouTube Data API key>
+CHAT_MUSIC_VIDEO_SEARCH_CONCURRENCY=2
+CHAT_MUSIC_VIDEO_SEARCH_DAILY_SEARCH_BUDGET=75
+CHAT_MUSIC_VIDEO_SEARCH_DAILY_DETAILS_BUDGET=500
+CHAT_MUSIC_VIDEO_SEARCH_POSITIVE_SECONDS=3600
+CHAT_MUSIC_VIDEO_SEARCH_EMPTY_SECONDS=300
+CHAT_MUSIC_VIDEO_SEARCH_VERIFICATION_SECONDS=300
+```
+
+저장소 기본값은 검색 false다. 기존 queue/playback/events 설정을 함께 유지해야 한다.
+true인데 키가 없거나 형식이 잘못되면 기동 때 거절한다. 외부 일시 장애는 일반 채팅 readiness를 내리지 않는다.
+캐시 조회 포함 계정당 10회/분, provider 전체 60 HTTP 호출/분과 종류별 일일 예산을 MySQL에 공유한다.
+일일 예산은 UTC 고정 창이고 실제 Google 프로젝트의 잔여 quota를 계산하는 기능이 아니다.
+외부 HTTP는 Task당 동시성 제한, 호출당 전체 body 4초·256KiB·redirect 금지다. 검색은 최대 2회 호출이다.
+TTL 설정은 정상 최대3600초/빈 최대300초/검증 최대300초이며 더 짧게 조정할 수 있다.
+신규 예산 테이블의 오래된 window는 요청 시 100행씩 정리한다. 만료 후보는 조회·신청에 사용하지 않는다.
+
+오류는 기존 `{message,data:{code}}`와 no-store를 사용한다.
+400 INVALID_CANDIDATE, 410 CANDIDATE_EXPIRED, 409 MUSIC_NOT_REQUESTABLE/MUSIC_METADATA_CHANGED/
+VIDEO_UNAVAILABLE, 429 VIDEO_REQUEST_RATE_LIMITED(+Retry-After),
+503 VIDEO_SEARCH_DISABLED/VIDEO_SEARCH_UNAVAILABLE/VIDEO_PROVIDER_BUSY/VIDEO_VERIFICATION_REQUIRED를 구분한다.
+API 키·provider 원문·요청 URI는 반환하거나 원인 예외로 보존하지 않는다.
+정확한 공개 계약은 `api/chat-music-queue.openapi.json` 1.3.0 및
+`api/chat-music-video-foundation.openapi.json` 1.1.0이다.
+
+### DB·worker 전환과 복구
+
+- 추가 migration은 `V20261111114715__create_music_video_request_limits.sql`과
+  `V20261111131732__add_music_video_operator_block.sql`이다. 기존 적용 SQL은 수정하지 않았다.
+  Core migration 실행 역할과 Chat 런타임 역할을 구분한다. Chat은 신규 테이블 SELECT/INSERT/UPDATE와
+  예산 테이블 DELETE 권한이 필요하다. 후보/search batch는 런타임에서 UPDATE하지 않는다.
+- 운영 검수 도구는 영상별 소스도 같은 TX에서 갱신한다. 명시적인 사용 불가는 operator_blocked로 남기므로
+  대표 영상을 바꾸거나 자동 재검증해도 해제되지 않는다. 같은 영상의 명시적 재검수만 해제한다.
+  자동 확인은 기존 공식 검수 근거를 덮어쓰지 않는다.
+- 최초 전환은 DDL 적용 → 기존 writer/worker 중지 → 새 BE로 단일 버전 전환 → 새 FE → 선택 흐름 활성화다.
+  1단계의 nullable 목록을 처리하지 못하는 구 FE와 함께 운영하지 않는다. 구/신 worker 혼합은 금지한다.
+  기동 검사는 그 사이 legacy writer가 만든 WAITING 중 현재 유효 검수 근거가 있는 항목만 pin하며,
+  ACTIVE는 실제 playback pin을 보존한다. 근거 없는 WAITING은 임의 영상으로 채우지 않고 정상 취소 전이한다.
+  이 작업은 중지된 writer를 전제로 하며 일반적인 다중 버전 rolling 전환을 보장하지 않는다.
+- 장애 시 검색 flag를 끄면 신규 검색/선택을 막을 수 있다. 기존 고정 대기곡은 유효 검증 기간에만 시작하며
+  재검증이 필요한 항목은 키/설정 복구 전까지 보존한다. 일반 채팅과 진행 중 playback은 유지한다.
+  rollback 때 추가 DDL/영수증/검수 이력을 삭제하지 않는다. 새 선택 대기곡을 구 worker에 그대로 넘기지 않는다.
+- 로컬 이슈: `api/issues/chat-music-video-queue.md` (기존 ignore 유지).
+  재현: `python3 scripts/verify-backend.py`와 `python3 scripts/verify-backend.py chatMusicRecoveryTest`.
+  실제 키를 사용한 YouTube 후보/브라우저 재생, FE 창/키보드, 운영 DB 적용·권한·배포·1000연결은
+  이번 단계의 로컬 DB/HTTP fixture 회귀와 구분하여 후속 확인한다.
+
+검증 완료: 최종 소스를 고정한 `python3 scripts/verify-backend.py spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest test bootJar coreBootJar chatBootJar chatMusicRecoveryTest --console=plain` 실행이 통과했다.
+전체1037건 중1014통과·23기존조건부제외·실패0, 음악 관련89건 모두통과, 별도 실제 서버 복구20건 모두통과다.
+실제 MySQL의 공유 후보/동시 선택·UUID 충돌/응답 재현·만료/권한·대표/큐/outbox rollback,
+고정 영상의 재개·다음 곡·기동 전환/복원, 일시 오류 보존/확정 불가 취소·운영자 차단·legacy 우회 거부를 확인했다.
+HTTP fixture는 검색/상세 조회·필터·중복 ID·빈 응답/403·과대/잘못된 응답·키 비노출을 확인한다.
+실제 Core/두 Chat/Redis의 기존 장애·재연결 복구도 통과했으며 실제 YouTube 후보/브라우저 재생을 검증한 것은 아니다.
+초기 targeted43건 중1건은 Mockito 재설정 오류, 최초 full1034건 중4건은 설정 mock 의존성2건과
+과거 PAUSED fixture에 pin이 없던 영향2건이었다. production 가드를 완화하지 않고 fixture를 보완했고 원본을 보존했다.
+증빙은 `build/chat-music-video-queue-verification/summary.json`, `final-full/`, `final-recovery/`,
+`final-run.log`, `artifacts.json`, `contracts.json`이다. JSON/로컬참조73개 확인은 전체 OpenAPI 메타스키마 검증과 다르다.
+소스 SHA256 `13f6311408ddc0063dfe79b51bbbfb733c1ea4bf1f319545df9418b3f8fcd7e0`와 세 JAR manifest가 일치한다.
+임시 MySQL은 스크립트가 정리했다. 검증 당시 변경은 미커밋 상태였으며 manifest의 commit은 검증 당시 기반 HEAD다. push/PR·운영 DB/설정/배포는 실행하지 않았다.

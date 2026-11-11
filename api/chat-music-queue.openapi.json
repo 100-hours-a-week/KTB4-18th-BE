@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Regional chat music queue API",
-    "version": "1.2.0",
-    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards. Step 9: authorized queue reads reconcile elapsed playback and return additive current runtime epoch. Expired absence is cleared before join/claim; the original verified30s failure grace never grants reading rights.\nVideo foundation: requestable-music now lists own regional provenance even without a reviewed video. Legacy ADD still requires its reviewed source. New video search/selection is step 2, not implemented by this change."
+    "version": "1.3.0",
+    "description": "Step 4. Runtime defaults disabled. Playback control and outbox publishing are later steps. Every request requires a current CONNECTED view with matching JWT sid; no listen opt-in. Response field names and replay/retention contracts are described in README. Step 5 adds optional pinned playback snapshot fields and auto-start on ADD when CHAT_MUSIC_PLAYBACK_ENABLED=true. An old receipt still replays the original result; query latest state afterwards. Step 9: authorized queue reads reconcile elapsed playback and return additive current runtime epoch. Expired absence is cleared before join/claim; the original verified30s failure grace never grants reading rights.\nVideo foundation: requestable-music now lists own regional provenance even without a reviewed video. Legacy ADD still requires its reviewed source. Synchronous video search and selected ADD are implemented in api/chat-music-video-foundation.openapi.json. Queue video ID and duration are immutable per enqueue; representative changes do not affect playback."
   },
   "paths": {
     "/api/v1/chat-rooms/{room_id}/requestable-music": {
@@ -240,6 +240,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 9007199254740991
+                  },
+                  "candidate_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Required for new selection flow; omission is reviewed-legacy-source compatibility only. Included in idempotency fingerprint."
                   }
                 }
               },
@@ -248,7 +253,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Selected video metadata is verified outside room locks. Current participation/provenance, candidate relationship/expiry/metadata and source are rechecked inside ADD. Representative ID, pinned queue source/duration, receipt and outbox commit atomically. Replays retain original response and do not restore playback state. Legacy admission also rejects newer per-video unavailability and explicit operator blocks."
       }
     },
     "/api/v1/chat-rooms/{room_id}/queue-items/{queue_item_id}": {
@@ -436,6 +442,12 @@
           },
           "youtube_video_id": {
             "type": "string",
+            "nullable": true
+          },
+          "duration_millis": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9999999999,
             "nullable": true
           }
         }
