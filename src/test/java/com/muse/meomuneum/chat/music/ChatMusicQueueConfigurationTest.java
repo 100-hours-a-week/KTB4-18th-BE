@@ -11,6 +11,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
 
@@ -46,8 +47,15 @@ class ChatMusicQueueConfigurationTest {
                 .withBean(ChatMusicStateRepository.class, () -> mock(ChatMusicStateRepository.class));
         enabled.run(result -> assertThat(result).hasFailed());
         enabled.withPropertyValues("chat.music.video-search.api-key=synthetic_secret")
-                .run(result -> assertThat(result).hasSingleBean(ChatMusicVideoService.class)
-                        .hasSingleBean(ChatMusicQueueService.class));
+                .run(result -> {
+                    assertThat(result).hasSingleBean(ChatMusicVideoService.class)
+                            .hasSingleBean(ChatMusicQueueService.class);
+                    Object provider = ReflectionTestUtils.getField(result.getBean(ChatMusicVideoService.class),
+                            "provider");
+                    assertThat(provider).isNotNull();
+                    assertThat(ReflectionTestUtils.getField(provider, "searchDaily")).isEqualTo(100);
+                    assertThat(ReflectionTestUtils.getField(provider, "detailsDaily")).isEqualTo(10000);
+                });
     }
 
     private JdbcTemplate jdbc() {

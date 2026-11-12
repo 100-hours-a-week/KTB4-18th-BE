@@ -35,8 +35,8 @@ public class ChatMusicQueueConfiguration {
             @Value("${chat.music.video-search.enabled:false}") boolean enabled,
             @Value("${chat.music.video-search.api-key:}") String key,
             @Value("${chat.music.video-search.concurrency:2}") int concurrency,
-            @Value("${chat.music.video-search.daily-search-budget:75}") int searches,
-            @Value("${chat.music.video-search.daily-details-budget:500}") int details,
+            @Value("${chat.music.video-search.daily-search-budget:100}") int searches,
+            @Value("${chat.music.video-search.daily-details-budget:10000}") int details,
             @Value("${chat.music.video-search.positive-seconds:3600}") int positive,
             @Value("${chat.music.video-search.empty-seconds:300}") int empty,
             @Value("${chat.music.video-search.verification-seconds:300}") int verification) {
