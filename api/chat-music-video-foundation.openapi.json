@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Regional music video search and selection API",
-    "version": "1.1.0",
-    "description": "Regional provenance and synchronous YouTube candidate search/selected ADD are implemented. No 202/jobs/status GET/polling. Official embed playback only; metadata verification does not certify official recording ownership or actual browser playback."
+    "version": "1.2.0",
+    "description": "Regional provenance and synchronous YouTube candidate search/selected ADD are implemented. No 202/jobs/status GET/polling. Official embed playback only; metadata verification does not certify official recording ownership or actual browser playback. Saved candidate IDs are revalidated and republished before considering a new keyword search. Maximum 50 candidates per batch."
   },
   "security": [
     {
@@ -207,7 +207,7 @@
     "/api/v1/chat-rooms/{room_id}/music/{music_id}/video-searches": {
       "post": {
         "x-implementation-status": "implemented-step-2",
-        "description": "Synchronous cache-or-provider result. Checks own regional provenance before lookup. Metadata fingerprint/country/policy-scoped immutable batches are shared in MySQL; no external call while holding a room lock. Initial maximum 10 candidates, positive TTL 1h, empty TTL 5m. Failure is not EMPTY. Search never writes music.youtube_video_id. Account limit 10/minute including cache hits. Shared provider budget 60 calls/minute, configurable search/detail daily budgets. Per-task concurrency defaults 2; each HTTP call has a 4s whole-body deadline and 256KiB body cap. Disabled returns 503 VIDEO_SEARCH_DISABLED; provider failures return 503 VIDEO_SEARCH_UNAVAILABLE or VIDEO_PROVIDER_BUSY; no empty cache is written on failure.",
+        "description": "Synchronous saved-candidate-first lookup. Current participant and own regional provenance are checked before cache/ID lookup and again before publication. Recent verified batches are reused. For expired/stale candidates, up to 50 distinct saved IDs from the same metadata fingerprint/KR/policy are verified in one videos.list call, then new immutable search/candidate IDs and expiry are issued. If there is no saved candidate history for different metadata, legacy representative/source IDs are also eligible for revalidation. Only no saved IDs or a successful details response confirming no usable saved video allows search.list(maxResults=50), followed by one details batch. Temporary details errors never fall back to keyword search or become EMPTY. Operator decisions and newer verification versions take precedence; concurrent completed batch is reused. Search never changes music.youtube_video_id or existing queue pins. Default shared daily search/details budgets are 100/10000; account 10/minute and provider 60/minute remain. Positive selection TTL 1h, empty TTL 5m, metadata reuse max5m. External calls are outside room locks; 4s per HTTP call, overall external lookup deadline 8s, 256KiB/partial fields/no redirect. New FE accepting 50 must precede exposing 50-item responses; no jobs/polling.",
         "parameters": [
           {
             "name": "room_id",
@@ -574,7 +574,7 @@
               },
               "items": {
                 "type": "array",
-                "maxItems": 10,
+                "maxItems": 50,
                 "items": {
                   "$ref": "#/components/schemas/VideoCandidate"
                 }

@@ -3,6 +3,7 @@ package com.muse.meomuneum.chat.music;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.net.InetSocketAddress;
@@ -34,6 +35,8 @@ class YouTubeMusicVideoProviderTest {
     private YouTubeMusicVideoProvider provider;
     private final AtomicReference<String> response = new AtomicReference<>("{\"items\":[" + VIDEO + "]}");
     private final AtomicInteger status = new AtomicInteger(200);
+    private final AtomicReference<String> searchResponse = new AtomicReference<>(
+            "{\"items\":[{\"id\":{\"videoId\":\"ABCDEFGHIJK\"}},{\"id\":{\"videoId\":\"ABCDEFGHIJK\"}}]}");
     private final List<String> queries = new ArrayList<>();
 
     @BeforeEach
@@ -42,7 +45,7 @@ class YouTubeMusicVideoProviderTest {
         server.createContext("/", exchange -> {
             queries.add(exchange.getRequestURI().getRawQuery());
             String body = exchange.getRequestURI().getPath().endsWith("search")
-                    ? "{\"items\":[{\"id\":{\"videoId\":\"ABCDEFGHIJK\"}},{\"id\":{\"videoId\":\"ABCDEFGHIJK\"}}]}"
+                    ? searchResponse.get()
                     : response.get();
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(status.get(), bytes.length);
@@ -62,12 +65,56 @@ class YouTubeMusicVideoProviderTest {
     }
 
     @Test
+    void fetchesAndBatchVerifiesAllFiftySearchResultsWithBoundedMetadataFields() {
+        var ids = java.util.stream.IntStream.range(0, 50).mapToObj(i -> String.format("%011d", i)).toList();
+        searchResponse.set("{\"items\":[" + ids.stream().map(id -> "{\"id\":{\"videoId\":\"" + id + "\"}}")
+                .collect(java.util.stream.Collectors.joining(",")) + "]}");
+        response.set("{\"items\":[" + ids.stream().map(id -> VIDEO.replace("ABCDEFGHIJK", id))
+                .collect(java.util.stream.Collectors.joining(",")) + "]}");
+        assertThat(provider.search("Song", "Artist").stream().map(ChatMusicVideoProvider.Video::id))
+                .containsExactlyElementsOf(ids);
+        assertThat(queries).hasSize(2);
+        assertThat(queries.getFirst()).contains("maxResults=50", "fields=");
+        assertThat(queries.getLast()).contains("fields=");
+        verify(budget).reserve("provider-day-search", 86400, 75);
+        verify(budget).reserve("provider-day-videos", 86400, 500);
+    }
+
+    @Test
+    void expiredLookupDeadlineDoesNotDispatchHttpRequest() {
+        assertThatThrownBy(() -> provider.search("Song", "Artist", System.nanoTime() - 1))
+                .isInstanceOf(ChatMusicException.class);
+        assertThat(queries).isEmpty();
+    }
+
+    @Test
+    void revalidatesMultipleStoredIdsWithOneDetailsCallAndNoSearch() {
+        var videos = provider.verifyAll(List.of("ABCDEFGHIJK", "LMNOPQRSTUV", "ABCDEFGHIJK"));
+        assertThat(videos).hasSize(1);
+        assertThat(videos.getFirst().id()).isEqualTo("ABCDEFGHIJK");
+        assertThat(queries).hasSize(1);
+        assertThat(queries.getFirst()).contains("id=ABCDEFGHIJK,LMNOPQRSTUV");
+        verify(budget, times(0)).reserve("provider-day-search", 86400, 75);
+        verify(budget, times(1)).reserve("provider-day-videos", 86400, 500);
+    }
+
+    @Test
+    void invalidOrOversizedIdBatchDoesNotDispatchExternalRequests() {
+        assertThatThrownBy(() -> provider.verifyAll(java.util.Collections.nCopies(51, "ABCDEFGHIJK")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> provider.verifyAll(List.of("https://youtube.com")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(provider.verifyAll(List.of())).isEmpty();
+        assertThat(queries).isEmpty();
+    }
+
+    @Test
     void searchesOnceThenBatchVerifiesDeduplicatedVideosWithKrAndEmbedFilters() {
         var result = provider.search("곡 제목", "Artist");
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().durationMillis()).isEqualTo(180000);
         assertThat(queries).hasSize(2);
-        assertThat(queries.getFirst()).contains("type=video", "maxResults=10", "regionCode=KR", "videoEmbeddable=true",
+        assertThat(queries.getFirst()).contains("type=video", "maxResults=50", "regionCode=KR", "videoEmbeddable=true",
                 "videoSyndicated=true");
         assertThat(queries.getLast()).contains("part=snippet,contentDetails,status", "id=ABCDEFGHIJK");
         verify(budget).reserve("provider-day-search", 86400, 75);

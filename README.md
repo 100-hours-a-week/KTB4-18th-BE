@@ -2153,8 +2153,8 @@ Chat/일반 앱 모두 아래 환경변수를 해석한다. 서버의 비밀 저
 CHAT_MUSIC_VIDEO_SEARCH_ENABLED=true
 CHAT_MUSIC_VIDEO_SEARCH_API_KEY=<server-side YouTube Data API key>
 CHAT_MUSIC_VIDEO_SEARCH_CONCURRENCY=2
-CHAT_MUSIC_VIDEO_SEARCH_DAILY_SEARCH_BUDGET=75
-CHAT_MUSIC_VIDEO_SEARCH_DAILY_DETAILS_BUDGET=500
+CHAT_MUSIC_VIDEO_SEARCH_DAILY_SEARCH_BUDGET=100
+CHAT_MUSIC_VIDEO_SEARCH_DAILY_DETAILS_BUDGET=10000
 CHAT_MUSIC_VIDEO_SEARCH_POSITIVE_SECONDS=3600
 CHAT_MUSIC_VIDEO_SEARCH_EMPTY_SECONDS=300
 CHAT_MUSIC_VIDEO_SEARCH_VERIFICATION_SECONDS=300
@@ -2210,3 +2210,57 @@ HTTP fixture는 검색/상세 조회·필터·중복 ID·빈 응답/403·과대/
 `final-run.log`, `artifacts.json`, `contracts.json`이다. JSON/로컬참조73개 확인은 전체 OpenAPI 메타스키마 검증과 다르다.
 소스 SHA256 `13f6311408ddc0063dfe79b51bbbfb733c1ea4bf1f319545df9418b3f8fcd7e0`와 세 JAR manifest가 일치한다.
 임시 MySQL은 스크립트가 정리했다. 검증 당시 변경은 미커밋 상태였으며 manifest의 commit은 검증 당시 기반 HEAD다. push/PR·운영 DB/설정/배포는 실행하지 않았다.
+
+
+## 검색 한도 대응: 저장 영상 재사용·최대50개 후보
+
+`fix/chat-music-video-reuse` 후속 변경이 위 초기 10개/새 검색 중심 설명보다 우선한다.
+앱 일일 검색·상세 예산 기본값과 예시는 각각100/10000으로 올렸다. Chat/일반 앱 YAML과 Java 기본값이 같다.
+배포 환경에 기존75/500을 명시했다면 해당 환경변수도100/10000으로 변경하고 Chat을 재기동해야 한다.
+Google 실제 잔여 할당량을 늘리거나 사용 횟수를 초기화하는 변경은 아니다. 계정10회/분·provider60회/분은 유지한다.
+
+- 최초 새 검색은 `search.list(maxResults=50)` 한 번과 `videos.list` 한 번으로 재생 가능한 후보를 모두 저장한다.
+  결과가50개보다 적거나 재생 불가 영상이 있으면 실제 후보 수는 줄어든다. 다음 검색 페이지는 자동 조회하지 않는다.
+- 저장된 후보는 선택 유효기간이 끝나도 ID 발견 이력으로 활용한다. 같은 곡/다국어 메타 지문/KR/정책의
+  최근 최대50개 고유 ID를 한 번에 상세 조회한다. 일부가 누락돼도 과거 원본 후보를 삭제하지 않아 이후 재확인할 수 있다.
+  최근5분 검증·정상 상태를 갖는 캐시는 재사용하고, 후보1시간 TTL이 남아도 검증이 오래됐으면 재검증한다.
+- 과거 대표 영상/영상별 소스만 있는 곡도 상세 조회부터 시작한다. 다른 메타 지문 이력이 있으면 이를 섞지 않는다.
+  대소문자가 다른 영상 ID는 별개로 유지한다. 기존 공식 검수 근거는 보존하고 자동 후보를 공식 확인으로 만들지 않는다.
+- 재검증 성공 시 새 후보 batch/UUID·최대1시간 유효기간을 발급한다. 만료된 원 후보는 그대로 만료 상태이며,
+  원 신청 영수증 재현·대표 ID 갱신 시점·큐 영상/길이 pin·현재 참여/본인 출처 검사는 유지한다.
+- 저장 ID 없음 또는 성공한 상세 조회에서 저장 영상 모두 불가가 확정된 경우에만 새 검색을 수행한다.
+  상세 조회 timeout/오류/예산 소진은 저장 데이터를 보존하고 오류로 반환한다. 실패를 EMPTY로 캐시하지 않는다.
+  전부 불가 후 새 검색까지 정상 빈 결과인 경우에만 기존5분 EMPTY cache를 만든다.
+- 외부 호출은 DB/방 잠금 밖에서 수행한다. 소스 버전·수정 시각과 운영자 차단을 확인해 늦은 응답의 덮어쓰기를 막고,
+  다른 Task가 이미 발급한 정상 최신 batch는 재사용한다. 대표/기존 큐 pin을 검색으로 변경하지 않는다.
+- 검증1회 → 새 검색1회 → 상세1회까지 이어질 수 있으므로 전체 외부 조회는8초 deadline을 공유한다.
+  개별 HTTP 상한4초·256KiB를 유지하며, 50개 응답이 설명/태그 때문에 과대해지지 않도록 필요한 fields만 요청한다.
+- 기존10개 후보를50개로 채우기 위한 자동 재검색은 하지 않는다. **새 키워드 검색부터 최대50개**이며,
+  기존 후보는 정상적으로 재사용해 검색 할당량을 절약한다.
+
+### 적용·호환성
+
+1. `V20261112212227__expand_music_video_candidates_to_fifty.sql`을 적용한다.
+   기존 후보와 길이 제약을 유지하고 rank 상한만10→50으로 확장한다. 기존 적용 SQL은 수정하지 않는다.
+2. 후보50개를 허용하는 FE `fix/chat-music-video-reuse`를 먼저 배포한다. 구 FE는11개 이상을 잘못된 응답으로 거절한다.
+3. 새 BE와100/10000 환경변수를 배포한다. Core migration 역할과 Chat의 기존 소스/후보/예산 쓰기 권한을 유지한다.
+4. 저장 후보 재사용으로 search 호출이 증가하지 않는지, 상세·검색 예산과429/503, 최대50개·마지막 후보 신청을 확인한다.
+
+rollback 때 새 후보/영수증/검수 이력을 삭제하거나 rank 제약을10으로 줄이지 않는다.
+새 FE는10개 응답도 수용한다. 50개 batch가 존재하는 상태에서는 구10개 parser FE로 함께 되돌리지 않는다.
+공개 경로·body·응답 필드·오류 코드는 유지하며 `api/chat-music-video-foundation.openapi.json`은1.2.0이다.
+로컬 이슈는 `api/issues/chat-music-video-reuse.md`이며 원격 이슈·PR·운영 적용은 별도다.
+
+
+### 이번 변경 검증 결과
+
+- Spotless·Checkstyle(main/core/chat/test), 전체 테스트1059건 중1036통과·23기존조건부제외·실패0,
+  별도 실제 서버 복구20건 모두통과, 일반/Core/Chat JAR 빌드가 통과했다.
+- MySQL에서 기존 rank10→50 migration·재실행·51거부, 저장 후보50개 보존/일괄 재검증,
+  검색 예산 소진 중 재사용·오류 시 보존·동시성/권한/큐 pin 회귀를 확인했다.
+- 실제 서비스/DB가 생성한50개 응답을 FE parser가 전부 수용했고 마지막 영상 ID까지 확인했다.
+  로컬 HTTP fixture Chrome320×568/390×844/1280×900에서50번째 후보 선택·스크롤·창 경계를 확인했다.
+- 증빙: `build/music-video-reuse-verification/summary.json`, `final-full/`, `final-recovery/`,
+  `candidate-page-50.json`. 소스 SHA256 `c17ff110909bcf928d59bfc018c8eca925d5998f60ff4a4e909bc224b341fd81`와 세 JAR manifest가 일치한다.
+- OpenAPI JSON 구문·로컬 참조4개를 확인했다. 전체 메타스키마 검증이나 실제 Google 호출 검증은 아니다.
+  운영 DB·환경변수·배포·실 YouTube 재생·1000연결은 실행하지 않았다. 검증 당시 변경은 미커밋 상태였으며 이후 사용자 요청으로 목적별 커밋을 생성했다.

@@ -2,8 +2,13 @@ package com.muse.meomuneum.chat.music;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -71,6 +76,8 @@ class ChatMusicQueueMySqlTest {
 
     private ChatMusicVideoProvider provider() {
         var provider = mock(ChatMusicVideoProvider.class);
+        when(provider.verifyAll(anyList())).thenReturn(List.of());
+        when(provider.search(anyString(), anyString(), anyLong())).thenCallRealMethod();
         when(provider.search("Synthetic song", "Synthetic artist")).thenAnswer(invocation -> {
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
             return List.of(
@@ -326,14 +333,14 @@ class ChatMusicQueueMySqlTest {
     void historicalUnknownPinCanBeFoundAndSelectedWithoutInventingOfficialReview() {
         jdbc.update("INSERT INTO music_video_sources(music_id,youtube_video_id) VALUES (?,'ABCDEFGHIJK')", music);
         var provider = provider();
-        when(provider.verify("ABCDEFGHIJK")).thenReturn(
-                new ChatMusicVideoProvider.Video("ABCDEFGHIJK", "channel", "Video A", "Channel", null, 180000));
+        when(provider.verifyAll(anyList())).thenReturn(List.of(
+                new ChatMusicVideoProvider.Video("ABCDEFGHIJK", "channel", "Video A", "Channel", null, 180000)));
         videos(apiA, taskA, provider);
         var item = videoItems(apiA.videoSearch(caller, music)).getFirst();
         assertThat(item).containsEntry("channel_id", "channel").containsEntry("official_status", "UNREVIEWED");
         assertThat(apiA.add(caller, UUID.randomUUID().toString(), music, (String) item.get("candidate_id")).status())
                 .isEqualTo(201);
-        verify(provider).verify("ABCDEFGHIJK");
+        verify(provider).verifyAll(anyList());
     }
 
     @Test
@@ -343,6 +350,295 @@ class ChatMusicQueueMySqlTest {
         String scope = "test-" + UUID.randomUUID();
         first.reserve(scope, 86400, 1);
         error(() -> second.reserve(scope, 86400, 1), 429, "VIDEO_REQUEST_RATE_LIMITED");
+    }
+
+    private void expireVideoBatches() {
+        jdbc.update("UPDATE music_video_search_results SET created_at=TIMESTAMPADD(HOUR,-2,UTC_TIMESTAMP(6)),"
+                + "expires_at=TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6)) WHERE music_id=?", music);
+        jdbc.update("UPDATE music_video_sources SET verified_at=TIMESTAMPADD(HOUR,-2,UTC_TIMESTAMP(6)),"
+                + "valid_until=TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6)) WHERE music_id=?", music);
+    }
+
+    private List<ChatMusicVideoProvider.Video> savedVideos() {
+        return List.of(new ChatMusicVideoProvider.Video("ABCDEFGHIJK", "channel", "Updated A", "Channel", null, 190000),
+                new ChatMusicVideoProvider.Video("LMNOPQRSTUV", "channel", "Updated B", "Channel", null, 210000));
+    }
+
+    @Test
+    void expiredCandidatesSurviveSearchQuotaWithOneSharedBatchVerificationAndNewIds() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        videos(apiB, taskB, provider);
+        var first = apiA.videoSearch(caller, music);
+        String candidate = (String) videoItems(first).getFirst().get("candidate_id");
+        String command = UUID.randomUUID().toString();
+        var receipt = apiA.add(caller, command, music, candidate);
+        expireVideoBatches();
+        var limiter = new ChatMusicVideoBudget(jdbc);
+        for (int i = 0; i < 100; i++) {
+            limiter.reserve("provider-day-search", 86400, 100);
+        }
+        doThrow(new ChatMusicException(429, "VIDEO_REQUEST_RATE_LIMITED")).when(provider)
+                .search("Synthetic song", "Synthetic artist");
+        when(provider.verifyAll(List.of("ABCDEFGHIJK", "LMNOPQRSTUV"))).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return savedVideos();
+        });
+        clearInvocations(provider);
+        var reused = apiB.videoSearch(caller, music);
+        assertThat(reused.get("search_id")).isNotEqualTo(first.get("search_id"));
+        assertThat(videoItems(reused)).hasSize(2);
+        var newCandidate = videoItems(reused).getFirst();
+        assertThat(newCandidate).containsEntry("title", "Updated A").containsEntry("duration_millis", 190000L);
+        assertThat(newCandidate.get("candidate_id")).isNotEqualTo(candidate);
+        assertThat(apiA.videoSearch(other, music)).isEqualTo(reused);
+        verify(provider, times(1)).verifyAll(List.of("ABCDEFGHIJK", "LMNOPQRSTUV"));
+        verify(provider, times(0)).search("Synthetic song", "Synthetic artist");
+        error(() -> apiA.add(caller, UUID.randomUUID().toString(), music, candidate), 410, "CANDIDATE_EXPIRED");
+        assertThat(apiB.add(caller, command, music, candidate)).isEqualTo(receipt);
+        apiB.add(other, UUID.randomUUID().toString(), music, (String) newCandidate.get("candidate_id"));
+        assertThat(
+                jdbc.queryForList("SELECT duration_millis FROM music_queue_items WHERE room_id=? ORDER BY sequence_no",
+                        Long.class, caller.roomId()))
+                .containsExactly(180000L, 190000L);
+        assertThat(jdbc.queryForObject(
+                "SELECT request_count FROM music_video_request_limits WHERE scope_key='provider-day-search'",
+                Integer.class)).isEqualTo(100);
+    }
+
+    @Test
+    void allFiftyDiscoveredCandidatesAreRetainedAndRevalidatedInOneBatch() throws java.io.IOException {
+        var provider = provider();
+        var fifty = java.util.stream.IntStream.range(0, 50)
+                .mapToObj(i -> new ChatMusicVideoProvider.Video(String.format("%011d", i), "channel", "Video " + i,
+                        "Channel", null, 100000))
+                .toList();
+        when(provider.search("Synthetic song", "Synthetic artist")).thenReturn(fifty);
+        videos(apiA, taskA, provider);
+        assertThat(videoItems(apiA.videoSearch(caller, music))).hasSize(50);
+        expireVideoBatches();
+        var ids = fifty.stream().map(ChatMusicVideoProvider.Video::id).toList();
+        when(provider.verifyAll(ids)).thenReturn(fifty);
+        clearInvocations(provider);
+        var reused = apiA.videoSearch(caller, music);
+        assertThat(videoItems(reused)).hasSize(50);
+        var evidence = java.nio.file.Path.of("build/music-video-reuse-verification/candidate-page-50.json");
+        java.nio.file.Files.createDirectories(evidence.getParent());
+        java.nio.file.Files.writeString(evidence, new tools.jackson.databind.ObjectMapper().writeValueAsString(reused));
+        verify(provider).verifyAll(ids);
+        verify(provider, times(0)).search("Synthetic song", "Synthetic artist");
+        assertThat(
+                jdbc.queryForObject("SELECT COUNT(*) FROM music_video_candidates WHERE music_id=?", Long.class, music))
+                .isEqualTo(100);
+    }
+
+    @Test
+    void omittedVideoRemainsDiscoverableForLaterReverificationWithoutFreshSearch() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenReturn(List.of(savedVideos().getFirst()));
+        assertThat(videoItems(apiA.videoSearch(caller, music))).hasSize(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT playback_status FROM music_video_sources WHERE music_id=? AND youtube_video_id='LMNOPQRSTUV'",
+                String.class, music)).isEqualTo("UNAVAILABLE");
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenReturn(savedVideos());
+        assertThat(videoItems(apiA.videoSearch(caller, music))).hasSize(2);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
+        verify(provider, times(2)).verifyAll(List.of("ABCDEFGHIJK", "LMNOPQRSTUV"));
+    }
+
+    @Test
+    void transientBatchFailurePreservesHistoryAndDoesNotFallBackToSearchOrEmpty() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        var before = jdbc.queryForList("SELECT * FROM music_video_sources WHERE music_id=?", music);
+        when(provider.verifyAll(List.of("ABCDEFGHIJK", "LMNOPQRSTUV")))
+                .thenThrow(new ChatMusicException(503, "VIDEO_SEARCH_UNAVAILABLE"));
+        error(() -> apiA.videoSearch(caller, music), 503, "VIDEO_SEARCH_UNAVAILABLE");
+        assertThat(jdbc.queryForList("SELECT * FROM music_video_sources WHERE music_id=?", music)).isEqualTo(before);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_video_search_results WHERE music_id=?", Long.class,
+                music)).isEqualTo(1);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
+    }
+
+    @Test
+    void confirmedAllUnavailableAllowsNewSearchAndPreservesPinnedQueueSource() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        var original = apiA.videoSearch(caller, music);
+        apiA.add(caller, UUID.randomUUID().toString(), music,
+                (String) videoItems(original).getFirst().get("candidate_id"));
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenReturn(List.of());
+        when(provider.search("Synthetic song", "Synthetic artist")).thenReturn(List.of(
+                new ChatMusicVideoProvider.Video("ZYXWVUTSRQP", "channel", "Replacement", "Channel", null, 140000)));
+        var replacement = videoItems(apiA.videoSearch(caller, music));
+        assertThat(replacement).hasSize(1);
+        assertThat(replacement.getFirst()).containsEntry("video_id", "ZYXWVUTSRQP");
+        assertThat(jdbc.queryForObject("SELECT source_video_id FROM music_queue_items WHERE room_id=?", String.class,
+                caller.roomId()))
+                .isEqualTo("ABCDEFGHIJK");
+        assertThat(jdbc.queryForObject(
+                "SELECT playback_status FROM music_video_sources WHERE music_id=? AND youtube_video_id='ABCDEFGHIJK'",
+                String.class, music)).isEqualTo("UNAVAILABLE");
+    }
+
+    @Test
+    void metadataChangeDuringBatchVerificationCannotPublishOrReuseOldFingerprint() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            jdbc.update("UPDATE music SET title='New title' WHERE id=?", music);
+            return savedVideos();
+        });
+        error(() -> apiA.videoSearch(caller, music), 409, "MUSIC_METADATA_CHANGED");
+        when(provider.search("New title", "Synthetic artist")).thenReturn(List.of(savedVideos().getFirst()));
+        clearInvocations(provider);
+        assertThat(videoItems(apiA.videoSearch(caller, music))).hasSize(1);
+        verify(provider).search("New title", "Synthetic artist");
+        verify(provider, times(0)).verifyAll(anyList());
+    }
+
+    @Test
+    void provenanceRevokedDuringBatchVerificationCannotPublishCandidates() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenAnswer(invocation -> {
+            jdbc.update("UPDATE recommendation_sessions SET status='FAILED' WHERE user_id=?", caller.userId());
+            return savedVideos();
+        });
+        error(() -> apiA.videoSearch(caller, music), 409, "MUSIC_NOT_REQUESTABLE");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_video_search_results WHERE music_id=?", Long.class,
+                music)).isEqualTo(1);
+    }
+
+    @Test
+    void operatorBlockDuringBatchVerificationIsPreservedWhileOtherVideosRemainSelectable() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenAnswer(invocation -> {
+            jdbc.update(
+                    "UPDATE music_video_sources SET operator_blocked=TRUE,playback_status='UNAVAILABLE',"
+                            + "version=version+1 "
+                            + "WHERE music_id=? AND youtube_video_id='ABCDEFGHIJK'",
+                    music);
+            return savedVideos();
+        });
+        var items = videoItems(apiA.videoSearch(caller, music));
+        assertThat(items).hasSize(1);
+        assertThat(items.getFirst()).containsEntry("video_id", "LMNOPQRSTUV");
+        assertThat(jdbc.queryForObject(
+                "SELECT operator_blocked FROM music_video_sources WHERE music_id=? AND youtube_video_id='ABCDEFGHIJK'",
+                Boolean.class, music)).isTrue();
+    }
+
+    @Test
+    void concurrentTaskReverificationUsesImmutableWinningBatch() throws Exception {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        videos(apiB, taskB, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        var arrived = new CountDownLatch(2);
+        when(provider.verifyAll(anyList())).thenAnswer(invocation -> {
+            arrived.countDown();
+            assertThat(arrived.await(5, TimeUnit.SECONDS)).isTrue();
+            return savedVideos();
+        });
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> apiA.videoSearch(caller, music));
+            var second = executor.submit(() -> apiB.videoSearch(other, music));
+            assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(second.get(10, TimeUnit.SECONDS));
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_video_search_results WHERE music_id=?", Long.class,
+                music)).isEqualTo(2);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
+    }
+
+    @Test
+    void legacyRepresentativeCanBeRevalidatedWithoutAnyNewSearch() {
+        var provider = provider();
+        when(provider.verifyAll(List.of("abcdefghijk"))).thenReturn(List.of(
+                new ChatMusicVideoProvider.Video("abcdefghijk", "synthetic", "Legacy", "Channel", null, 120000)));
+        videos(apiA, taskA, provider);
+        var items = videoItems(apiA.videoSearch(caller, music));
+        assertThat(items).hasSize(1);
+        assertThat(items.getFirst()).containsEntry("video_id", "abcdefghijk").containsEntry("official_status",
+                "CONFIRMED");
+        verify(provider, times(0)).search("Synthetic song", "Synthetic artist");
+    }
+
+    @Test
+    void unexpiredBatchWithOldSourceVerificationUsesDetailsRatherThanNewSearch() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        var original = apiA.videoSearch(caller, music);
+        jdbc.update("UPDATE music_video_sources SET verified_at=TIMESTAMPADD(MINUTE,-6,UTC_TIMESTAMP(6)),"
+                + "valid_until=TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)) WHERE music_id=?", music);
+        when(provider.verifyAll(anyList())).thenReturn(savedVideos());
+        var refreshed = apiA.videoSearch(caller, music);
+        assertThat(refreshed.get("search_id")).isNotEqualTo(original.get("search_id"));
+        assertThat(videoItems(refreshed)).hasSize(2);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
+    }
+
+    @Test
+    void newerAvailabilityDecisionCannotBeOverwrittenByLateBatchResult() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        long version = jdbc.queryForObject("SELECT version FROM music_video_sources WHERE music_id=? "
+                + "AND youtube_video_id='ABCDEFGHIJK'", Long.class, music);
+        when(provider.verifyAll(anyList())).thenAnswer(invocation -> {
+            jdbc.update("UPDATE music_video_sources SET playback_status='UNAVAILABLE',version=version+1 "
+                    + "WHERE music_id=? AND youtube_video_id='ABCDEFGHIJK'", music);
+            return savedVideos();
+        });
+        error(() -> apiA.videoSearch(caller, music), 503, "VIDEO_VERIFICATION_REQUIRED");
+        assertThat(jdbc.queryForObject("SELECT version FROM music_video_sources WHERE music_id=? "
+                + "AND youtube_video_id='ABCDEFGHIJK'", Long.class, music)).isEqualTo(version + 1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_video_search_results WHERE music_id=?", Long.class,
+                music)).isEqualTo(1);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
+    }
+
+    @Test
+    void allUnavailableAndFreshSearchEmptyProducesNormalEmptyCache() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        apiA.videoSearch(caller, music);
+        expireVideoBatches();
+        when(provider.verifyAll(anyList())).thenReturn(List.of());
+        when(provider.search("Synthetic song", "Synthetic artist")).thenReturn(List.of());
+        assertThat(apiA.videoSearch(caller, music)).containsEntry("result_kind", "EMPTY");
+        assertThat(videoItems(apiA.videoSearch(caller, music))).isEmpty();
+        verify(provider, times(2)).search("Synthetic song", "Synthetic artist");
+    }
+
+    @Test
+    void matchingEmptyHistoryDoesNotPreventLegacyRepresentativeReuse() {
+        var provider = provider();
+        videos(apiA, taskA, provider);
+        when(provider.search("Synthetic song", "Synthetic artist")).thenReturn(List.of());
+        assertThat(apiA.videoSearch(caller, music)).containsEntry("result_kind", "EMPTY");
+        expireVideoBatches();
+        when(provider.verifyAll(List.of("abcdefghijk"))).thenReturn(List.of(
+                new ChatMusicVideoProvider.Video("abcdefghijk", "synthetic", "Legacy", "Channel", null, 120000)));
+        assertThat(videoItems(apiA.videoSearch(caller, music))).hasSize(1);
+        verify(provider, times(1)).search("Synthetic song", "Synthetic artist");
     }
 
     @BeforeAll
