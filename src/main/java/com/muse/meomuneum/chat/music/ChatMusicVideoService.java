@@ -4,15 +4,20 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.muse.meomuneum.chat.music.ChatMusicQueueService.Caller;
+import com.muse.meomuneum.chat.music.ChatMusicVideoProvider.Video;
 import com.muse.meomuneum.chat.participation.ChatParticipationService;
 import com.muse.meomuneum.music.catalog.RequestableMusicRepository;
 
@@ -49,52 +54,169 @@ public final class ChatMusicVideoService {
         var metadata = authorized(caller, music, () -> metadata(music, false));
         requireEnabled();
         budget.reserve("account-" + caller.userId(), 60, 10);
-        var cached = authorized(caller, music, () -> {
-            if (!metadata(music, false).equals(metadata)) {
-                throw new ChatMusicException(409, "MUSIC_METADATA_CHANGED");
-            }
-            return cached(music, metadata.fingerprint());
-        });
-        if (cached != null) {
-            return cached;
+        long deadline = System.nanoTime() + 8_000_000_000L;
+        var lookup = authorized(caller, music, () -> lookup(music, metadata));
+        if (lookup.cached() != null) {
+            return lookup.cached();
         }
-        // Two bounded HTTP calls at most, with no database transaction held.
-        var videos = provider.search(metadata.title(), metadata.artist());
-        if (videos.size() > 10) {
+        if (!lookup.ids().isEmpty()) {
+            // Expiration ends candidate selection, not our knowledge of the discovered video IDs.
+            var verified = provider.verifyAll(lookup.ids());
+            var reused = publish(caller, music, lookup, verified, lookup.ids(), false);
+            if (reused != null) {
+                return reused;
+            }
+            // Only successful metadata responses confirming no usable saved video permit a new search.
+        }
+        var fresh = authorized(caller, music, () -> lookup(music, metadata));
+        if (fresh.cached() != null) {
+            return fresh.cached();
+        }
+        var videos = provider.search(metadata.title(), metadata.artist(), deadline);
+        return publish(caller, music, fresh, videos, List.of(), true);
+    }
+
+    private Lookup lookup(long music, Metadata expected) {
+        if (!metadata(music, false).equals(expected)) {
+            throw new ChatMusicException(409, "MUSIC_METADATA_CHANGED");
+        }
+        var cached = cached(music, expected.fingerprint());
+        if (cached != null) {
+            return new Lookup(expected, null, List.of(), Map.of(), cached);
+        }
+        // Keep up to fifty distinct IDs, including candidates omitted from a later verification batch.
+        var ids = jdbc.queryForList("""
+                SELECT c.youtube_video_id FROM music_video_candidates c
+                JOIN music_video_search_results r ON r.id=c.search_id AND r.music_id=c.music_id
+                WHERE r.music_id=? AND r.metadata_fingerprint=? AND r.policy_version=1 AND r.playback_country='KR'
+                GROUP BY c.youtube_video_id
+                ORDER BY MAX(r.created_at) DESC,MIN(c.rank_no),c.youtube_video_id LIMIT 50
+                """, String.class, music, expected.fingerprint());
+        if (ids.isEmpty() && jdbc.queryForObject(
+                "SELECT COUNT(*) FROM music_video_search_results WHERE music_id=? AND metadata_fingerprint<>?",
+                Long.class, music, expected.fingerprint()) == 0) {
+            // Legacy catalog/pins have no search fingerprint. Never mix a known different metadata history.
+            ids = jdbc.queryForList("""
+                    SELECT id FROM (
+                      SELECT s.youtube_video_id id,0 priority,s.updated_at seen FROM music_video_sources s
+                      JOIN music m ON m.id=s.music_id WHERE s.music_id=?
+                        AND BINARY s.youtube_video_id=BINARY m.youtube_video_id
+                      UNION ALL
+                      SELECT CONVERT(m.youtube_video_id USING ascii) COLLATE ascii_bin,0,UTC_TIMESTAMP(6)
+                        FROM music m WHERE m.id=?
+                        AND m.youtube_video_id REGEXP '^[A-Za-z0-9_-]{11}$'
+                      UNION ALL
+                      SELECT youtube_video_id,1,updated_at FROM music_video_sources WHERE music_id=?
+                    ) known GROUP BY id ORDER BY MIN(priority),MAX(seen) DESC,id LIMIT 50
+                    """, String.class, music, music, music);
+        }
+        Map<String, Long> versions = new LinkedHashMap<>();
+        for (String id : ids) {
+            var rows = jdbc.queryForList(
+                    "SELECT version FROM music_video_sources WHERE music_id=? AND youtube_video_id=?",
+                    Long.class, music, id);
+            versions.put(id, rows.isEmpty() ? null : rows.getFirst());
+        }
+        return new Lookup(expected, jdbc.queryForObject("SELECT UTC_TIMESTAMP(6)", LocalDateTime.class),
+                List.copyOf(ids), versions, null);
+    }
+
+    private Map<String, Object> publish(Caller caller, long music, Lookup lookup, List<Video> videos,
+            List<String> verifiedIds, boolean allowEmpty) {
+        if (videos == null || videos.size() > ChatMusicVideoProvider.MAX_CANDIDATES
+                || videos.stream().anyMatch(Objects::isNull)
+                || videos.stream().map(Video::id).distinct().count() != videos.size()
+                || (!verifiedIds.isEmpty() && videos.stream().anyMatch(v -> !verifiedIds.contains(v.id())))) {
             throw new ChatMusicException(503, "VIDEO_PROVIDER_UNAVAILABLE");
         }
         return authorized(caller, music, () -> {
-            if (!metadata(music, true).equals(metadata)) {
+            if (!metadata(music, true).equals(lookup.metadata())) {
                 throw new ChatMusicException(409, "MUSIC_METADATA_CHANGED");
             }
-            String id = UUID.randomUUID().toString();
+            var winner = cached(music, lookup.metadata().fingerprint());
+            if (winner != null) {
+                return winner;
+            }
+            Map<String, Video> found = new LinkedHashMap<>();
+            videos.forEach(v -> found.put(v.id(), v));
+            var checked = new LinkedHashSet<>(verifiedIds);
+            checked.addAll(found.keySet());
+            List<Video> usable = new ArrayList<>();
+            for (String id : checked.stream().sorted().toList()) {
+                var video = found.get(id);
+                var versions = jdbc.query("""
+                        SELECT version,updated_at FROM music_video_sources
+                        WHERE music_id=? AND youtube_video_id=? FOR UPDATE
+                        """, (r, i) -> new SourceVersion(r.getLong(1), r.getObject(2, LocalDateTime.class)), music, id);
+                if (manuallyDisabled(music, id)) {
+                    continue;
+                }
+                if (!versions.isEmpty()) {
+                    var current = versions.getFirst();
+                    Long expected = lookup.versions().get(id);
+                    if ((lookup.versions().containsKey(id)
+                            ? !Objects.equals(expected, current.version())
+                            : current.updated().isAfter(lookup.startedAt()))) {
+                        throw new ChatMusicException(503, "VIDEO_VERIFICATION_REQUIRED");
+                    }
+                    if (jdbc.update("""
+                            UPDATE music_video_sources SET playback_status=?,channel_id=COALESCE(?,channel_id),
+                              duration_millis=COALESCE(?,duration_millis),verified_at=UTC_TIMESTAMP(6),
+                              valid_until=TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6)),version=version+1,
+                              updated_at=UTC_TIMESTAMP(6) WHERE music_id=? AND youtube_video_id=? AND version=?
+                              AND operator_blocked=FALSE AND version<9007199254740991
+                            """, video == null ? "UNAVAILABLE" : "PLAYABLE", video == null ? null : video.channelId(),
+                            video == null ? null : video.durationMillis(), verificationSeconds, music, id,
+                            current.version()) != 1) {
+                        throw new ChatMusicException(503, "VIDEO_VERIFICATION_REQUIRED");
+                    }
+                } else if (video != null) {
+                    var reviews = jdbc.queryForList("""
+                            SELECT review_reference,reviewed_by FROM music_playback_sources
+                            WHERE music_id=? AND BINARY youtube_video_id=BINARY ? AND channel_id=?
+                            """, music, id, video.channelId());
+                    var review = reviews.isEmpty() ? null : reviews.getFirst();
+                    jdbc.update("""
+                            INSERT INTO music_video_sources(music_id,youtube_video_id,channel_id,playback_status,
+                              duration_millis,verified_at,valid_until,official_status,review_reference,reviewed_by)
+                            VALUES (?,?,?,'PLAYABLE',?,UTC_TIMESTAMP(6),TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6)),?,?,?)
+                            """, music, id, video.channelId(), video.durationMillis(), verificationSeconds,
+                            review == null ? "UNREVIEWED" : "CONFIRMED",
+                            review == null ? null : review.get("review_reference"),
+                            review == null ? null : review.get("reviewed_by"));
+                }
+                if (video != null) {
+                    usable.add(video);
+                }
+            }
+            if (usable.isEmpty() && !allowEmpty) {
+                return null;
+            }
+            // Preserve provider/discovery ordering, independently of the deterministic source lock order.
+            usable.sort(java.util.Comparator.comparingInt(v -> videos.indexOf(v)));
+            String search = UUID.randomUUID().toString();
             jdbc.update("""
                     INSERT INTO music_video_search_results(id,music_id,metadata_fingerprint,policy_version,
                       result_kind,expires_at) VALUES (?,?,?,1,?,TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6)))
-                    """, id, music, metadata.fingerprint(), videos.isEmpty() ? "EMPTY" : "READY",
-                    videos.isEmpty() ? emptySeconds : positiveSeconds);
+                    """, search, music, lookup.metadata().fingerprint(), usable.isEmpty() ? "EMPTY" : "READY",
+                    usable.isEmpty() ? emptySeconds : positiveSeconds);
             int rank = 0;
-            for (var video : videos) {
-                // An older concurrent search must never replace a later verification or a manual decision.
-                jdbc.update("""
-                        INSERT IGNORE INTO music_video_sources(music_id,youtube_video_id,channel_id,playback_status,
-                          duration_millis,verified_at,valid_until)
-                        VALUES (?,?,?,'PLAYABLE',?,UTC_TIMESTAMP(6),TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6)))
-                        """, music, video.id(), video.channelId(), video.durationMillis(), verificationSeconds);
-                // Historical active pins may have no channel metadata. Fill the display field without
-                // overwriting a later availability decision or inventing an official review.
-                jdbc.update("""
-                        UPDATE music_video_sources SET channel_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6)
-                        WHERE music_id=? AND youtube_video_id=? AND channel_id IS NULL AND version<9007199254740991
-                        """, video.channelId(), music, video.id());
+            for (var video : usable) {
                 jdbc.update("""
                         INSERT INTO music_video_candidates(id,search_id,music_id,youtube_video_id,rank_no,title,
                           channel_title,thumbnail_url,duration_millis) VALUES (?,?,?,?,?,?,?,?,?)
-                        """, UUID.randomUUID().toString(), id, music, video.id(), ++rank, video.title(),
+                        """, UUID.randomUUID().toString(), search, music, video.id(), ++rank, video.title(),
                         video.channelTitle(), video.thumbnailUrl(), video.durationMillis());
             }
-            return result(id);
+            return result(search);
         });
+    }
+
+    private record Lookup(Metadata metadata, LocalDateTime startedAt, List<String> ids, Map<String, Long> versions,
+            Map<String, Object> cached) {
+    }
+
+    private record SourceVersion(long version, LocalDateTime updated) {
     }
 
     /** Preflight only. Successful receipt replay is checked by the queue BEFORE this method. */
@@ -240,16 +362,25 @@ public final class ChatMusicVideoService {
 
     private Map<String, Object> cached(long music, String fingerprint) {
         var ids = jdbc.queryForList("""
-                SELECT id FROM music_video_search_results WHERE music_id=? AND metadata_fingerprint=?
-                  AND policy_version=1 AND playback_country='KR' AND expires_at>UTC_TIMESTAMP(6)
-                ORDER BY created_at DESC,id DESC LIMIT 1
-                """, String.class, music, fingerprint);
+                SELECT r.id FROM music_video_search_results r WHERE r.music_id=? AND r.metadata_fingerprint=?
+                  AND r.policy_version=1 AND r.playback_country='KR' AND r.expires_at>UTC_TIMESTAMP(6)
+                  AND (r.result_kind='EMPTY' OR NOT EXISTS(
+                    SELECT 1 FROM music_video_candidates c JOIN music_video_sources s
+                      ON s.music_id=c.music_id AND s.youtube_video_id=c.youtube_video_id
+                    WHERE c.search_id=r.id AND (s.playback_status<>'PLAYABLE' OR s.operator_blocked=TRUE
+                      OR s.verified_at IS NULL OR s.valid_until<=UTC_TIMESTAMP(6) OR s.verified_at>UTC_TIMESTAMP(6)
+                      OR s.verified_at<=TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(6))
+                      OR EXISTS(SELECT 1 FROM music_playback_sources p WHERE p.music_id=s.music_id
+                        AND p.youtube_video_id=s.youtube_video_id AND p.status='UNAVAILABLE'))))
+                ORDER BY r.created_at DESC,r.id DESC LIMIT 1 FOR SHARE
+                """, String.class, music, fingerprint, -verificationSeconds);
         return ids.isEmpty() ? null : result(ids.getFirst());
     }
 
     private Map<String, Object> result(String search) {
         var row = jdbc.queryForMap(
-                "SELECT id search_id,music_id,result_kind,expires_at FROM music_video_search_results WHERE id=?",
+                "SELECT id search_id,music_id,result_kind,expires_at FROM music_video_search_results "
+                        + "WHERE id=? FOR SHARE",
                 search);
         row.put("expires_at", ((LocalDateTime) row.get("expires_at")).toInstant(ZoneOffset.UTC).toString());
         var items = jdbc.queryForList(
@@ -259,7 +390,7 @@ public final class ChatMusicVideoService {
                           s.channel_id,'PLAYABLE' playback_status,s.official_status FROM music_video_candidates
                           c JOIN music_video_sources s
                           ON s.music_id=c.music_id AND s.youtube_video_id=c.youtube_video_id
-                        WHERE c.search_id=? ORDER BY c.rank_no
+                        WHERE c.search_id=? ORDER BY c.rank_no FOR SHARE
                         """,
                 search);
         items.forEach(item -> item.put("expires_at", row.get("expires_at")));

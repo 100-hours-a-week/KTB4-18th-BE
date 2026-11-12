@@ -57,8 +57,14 @@ public final class YouTubeMusicVideoProvider implements ChatMusicVideoProvider {
 
     @Override
     public List<Video> search(String title, String artist) {
-        var result = request("search", "part=snippet&type=video&maxResults=10&regionCode=KR"
-                + "&videoEmbeddable=true&videoSyndicated=true&q=" + encode(title + " " + artist));
+        return search(title, artist, System.nanoTime() + 8_000_000_000L);
+    }
+
+    @Override
+    public List<Video> search(String title, String artist, long deadlineNanos) {
+        var result = request("search", "part=snippet&type=video&maxResults=50&regionCode=KR"
+                + "&videoEmbeddable=true&videoSyndicated=true&fields=" + encode("items(id/videoId)")
+                + "&q=" + encode(title + " " + artist), deadlineNanos);
         var ids = new LinkedHashSet<String>();
         for (var item : result.path("items")) {
             String id = item.path("id").path("videoId").asText("");
@@ -69,7 +75,28 @@ public final class YouTubeMusicVideoProvider implements ChatMusicVideoProvider {
         if (ids.isEmpty()) {
             return List.of();
         }
-        var details = request("videos", "part=snippet,contentDetails,status&id=" + String.join(",", ids));
+        return verifyAll(List.copyOf(ids), deadlineNanos);
+    }
+
+    @Override
+    public List<Video> verifyAll(List<String> videoIds) {
+        return verifyAll(videoIds, System.nanoTime() + 4_000_000_000L);
+    }
+
+    private List<Video> verifyAll(List<String> videoIds, long deadlineNanos) {
+        if (videoIds == null || videoIds.size() > MAX_CANDIDATES || videoIds.stream()
+                .anyMatch(id -> id == null || !id.matches("[A-Za-z0-9_-]{11}"))) {
+            throw new IllegalArgumentException("Invalid video identifiers");
+        }
+        var ids = new LinkedHashSet<>(videoIds);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        var details = request("videos", "part=snippet,contentDetails,status&id=" + String.join(",", ids)
+                + "&fields=" + encode("items(id,snippet(channelId,title,channelTitle,liveBroadcastContent),"
+                        + "contentDetails(duration,regionRestriction,contentRating/ytRating),"
+                        + "status(privacyStatus,uploadStatus,embeddable))"),
+                deadlineNanos);
         List<Video> videos = new ArrayList<>();
         for (String id : ids) {
             for (var item : details.path("items")) {
@@ -78,6 +105,7 @@ public final class YouTubeMusicVideoProvider implements ChatMusicVideoProvider {
                     if (video != null) {
                         videos.add(video);
                     }
+                    break;
                 }
             }
         }
@@ -86,16 +114,8 @@ public final class YouTubeMusicVideoProvider implements ChatMusicVideoProvider {
 
     @Override
     public Video verify(String videoId) {
-        if (!videoId.matches("[A-Za-z0-9_-]{11}")) {
-            throw new IllegalArgumentException("Invalid video identifier");
-        }
-        var response = request("videos", "part=snippet,contentDetails,status&id=" + videoId);
-        for (var item : response.path("items")) {
-            if (videoId.equals(item.path("id").asText())) {
-                return playable(item);
-            }
-        }
-        return null;
+        var videos = verifyAll(java.util.Collections.singletonList(videoId));
+        return videos.isEmpty() ? null : videos.getFirst();
     }
 
     static Video playable(JsonNode item) {
@@ -142,7 +162,7 @@ public final class YouTubeMusicVideoProvider implements ChatMusicVideoProvider {
         return false;
     }
 
-    private JsonNode request(String operation, String query) {
+    private JsonNode request(String operation, String query, long deadlineNanos) {
         if (!permits.tryAcquire()) {
             throw new ChatMusicException(503, "VIDEO_PROVIDER_BUSY");
         }
@@ -150,15 +170,19 @@ public final class YouTubeMusicVideoProvider implements ChatMusicVideoProvider {
         try {
             budget.reserve("provider-minute", 60, 60);
             budget.reserve("provider-day-" + operation, 86400, operation.equals("search") ? searchDaily : detailsDaily);
+            long remaining = Math.min(4_000_000_000L, deadlineNanos - System.nanoTime());
+            if (remaining <= 0) {
+                throw new ChatMusicException(503, "VIDEO_SEARCH_UNAVAILABLE");
+            }
             var request = HttpRequest.newBuilder(URI.create(endpoint + operation
-                    + "?" + query + "&key=" + encode(apiKey))).timeout(Duration.ofSeconds(4)).GET().build();
+                    + "?" + query + "&key=" + encode(apiKey))).timeout(Duration.ofNanos(remaining)).GET().build();
             call = http.sendAsync(request, info -> new LimitedBody());
-            var response = call.get(4, java.util.concurrent.TimeUnit.SECONDS);
+            var response = call.get(remaining, java.util.concurrent.TimeUnit.NANOSECONDS);
             if (response.statusCode() != 200) {
                 throw new ChatMusicException(503, "VIDEO_SEARCH_UNAVAILABLE");
             }
             var body = json.readTree(response.body());
-            if (!body.path("items").isArray() || body.path("items").size() > 10 || body.has("error")) {
+            if (!body.path("items").isArray() || body.path("items").size() > MAX_CANDIDATES || body.has("error")) {
                 throw new ChatMusicException(503, "VIDEO_SEARCH_UNAVAILABLE");
             }
             return body;
