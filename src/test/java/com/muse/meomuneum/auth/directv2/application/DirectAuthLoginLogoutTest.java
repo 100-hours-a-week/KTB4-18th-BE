@@ -2,6 +2,7 @@ package com.muse.meomuneum.auth.directv2.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,9 +15,12 @@ import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 
+import com.muse.meomuneum.auth.application.AuthFlowService.SessionDecision;
 import com.muse.meomuneum.auth.directv2.controller.DirectAuthRequestParser.Tuple;
 import com.muse.meomuneum.auth.directv2.model.DirectAuthFailure;
 import com.muse.meomuneum.auth.dto.LoginRequest;
+import com.muse.meomuneum.auth.exception.AuthErrorCode;
+import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -83,6 +87,53 @@ public class DirectAuthLoginLogoutTest {
             assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM auth_direct_projection_outbox", Integer.class))
                     .isEqualTo(2);
         }
+    }
+
+    @Test
+    void withdrawalRevokesAllDirectSessionsAndQueuesTheirCacheInvalidation() throws Exception {
+        try (var f = new DirectAuthRuntimeFixture(users())) {
+            var first = signIn(f);
+            var second = signIn(f);
+            List<String> sids = List.of(first.flow().activeSessionSid(), second.flow().activeSessionSid());
+
+            assertThat(f.authority.revokeAllSessions(42L, "WITHDRAWAL")).containsExactlyInAnyOrderElementsOf(sids);
+            assertThat(f.authority.revokeAllSessions(42L, "WITHDRAWAL")).isEmpty();
+            for (var device : List.of(first, second)) {
+                String sid = device.flow().activeSessionSid();
+                assertThat(f.authority.checkSession(42L, sid)).isEqualTo(SessionDecision.REJECTED);
+                assertThat(f.sessions.find(sid, false).orElseThrow().refreshHash()).isNull();
+                assertThat(f.flows.find(device.flow().flowId()).orElseThrow().lifecycle()).isEqualTo("ANONYMOUS");
+                assertThat(f.jdbc.queryForObject("""
+                        SELECT status FROM auth_direct_session_fences WHERE sid = ?
+                        """, String.class, sid)).isEqualTo("REVOKED");
+                assertThat(f.jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM auth_direct_projection_outbox WHERE sid = ?
+                        """, Integer.class, sid)).isEqualTo(2);
+                assertThatThrownBy(() -> f.refresh.refresh(request(device.cookies()),
+                        new Tuple(device.flow().flowId(), device.flow().epoch(), UUID.randomUUID().toString()),
+                        System.currentTimeMillis() + 600_000)).isInstanceOf(DirectAuthFailure.class);
+            }
+        }
+    }
+
+    @Test
+    void loginCannotCreateSessionWhenAccountWasWithdrawnAfterPasswordVerification() throws Exception {
+        var users = users();
+        doThrow(new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS))
+                .when(users).requireActiveUserForSession(42L);
+        try (var f = new DirectAuthRuntimeFixture(users)) {
+            var result = signIn(f);
+            assertThat(result.status()).isEqualTo(401);
+            assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM auth_browser_sessions", Integer.class)).isZero();
+        }
+    }
+
+    private DirectAuthLoginService.Result signIn(DirectAuthRuntimeFixture f) {
+        var bootstrap = f.flowService.bootstrap(request(List.of()), UUID.randomUUID().toString());
+        return f.login.login(request(bootstrap.cookies()),
+                new LoginRequest("test@example.invalid", "test-only-password"),
+                new Tuple(bootstrap.flow().flowId(), 1, UUID.randomUUID().toString()),
+                System.currentTimeMillis() + 600_000);
     }
 
     @Test

@@ -11,9 +11,13 @@ import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.core.env.StandardEnvironment;
 
 class ChatRedisConfigurationTest {
+    // 기본값과 명시적 설정을 검증하므로 로컬 .env의 Redis 설정을 상속하지 않는다.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withInitializer(context -> context.getEnvironment().getPropertySources()
+                    .remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME))
             .withUserConfiguration(ChatRedisConfiguration.class);
 
     @Test

@@ -927,7 +927,7 @@ paths:
       - BrowserBindingProofCookie: []
       responses:
         '200':
-          description: Canonical MySQL flow snapshot and current operation, if an unexpired receipt is available. A valid direct flow proof returns proofState ACTIVE; a valid matching binding fallback returns proofState REBOOTSTRAP_REQUIRED. No response sets or expires cookies.
+          description: Canonical MySQL flow snapshot and current operation, if an unexpired receipt is available. A valid direct flow proof returns proofState ACTIVE; a valid matching binding fallback returns proofState REBOOTSTRAP_REQUIRED. A missing, known no-result, or expired canonical REFRESH receipt returns operation null after validating the active session. No response sets or expires cookies.
           headers:
             Cache-Control:
               required: true
@@ -989,6 +989,19 @@ paths:
               schema:
                 type: string
                 const: no-store
+        '401':
+          description: The authenticated flow has no active canonical session.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelopeCurrentOperation401"
+          headers:
+            Cache-Control:
+              required: true
+              description: Every response is non-cacheable, including protocol, not-found, and canonical-state errors.
+              schema:
+                type: string
+                const: no-store
         '503':
           description: MySQL canonical state unavailable.
           content:
@@ -1003,7 +1016,7 @@ paths:
                 type: string
                 const: no-store
         '409':
-          description: AUTH_FLOW_LEGACY_QUEUED; no state change or cookie.
+          description: AUTH_FLOW_LEGACY_QUEUED, AUTH_OPERATION_SUPERSEDED, AUTH_LOGIN_SUPERSEDED, or AUTH_OPERATION_RECEIPT_EXPIRED; no state change or cookie.
           headers:
             Cache-Control:
               required: true
@@ -3019,6 +3032,20 @@ components:
           data:
             type: 'null'
         additionalProperties: false
+    ErrorEnvelopeCurrentOperation401:
+      allOf:
+      - "$ref": "#/components/schemas/EnvelopeBase"
+      - type: object
+        required:
+        - message
+        - data
+        properties:
+          message:
+            type: string
+            const: AUTH_SESSION_INVALID
+          data:
+            type: 'null'
+        additionalProperties: false
     ErrorEnvelopeCurrentOperation503:
       allOf:
       - "$ref": "#/components/schemas/EnvelopeBase"
@@ -3987,7 +4014,11 @@ components:
         properties:
           message:
             type: string
-            const: AUTH_FLOW_LEGACY_QUEUED
+            enum:
+            - AUTH_FLOW_LEGACY_QUEUED
+            - AUTH_OPERATION_SUPERSEDED
+            - AUTH_LOGIN_SUPERSEDED
+            - AUTH_OPERATION_RECEIPT_EXPIRED
           data:
             type: 'null'
         additionalProperties: false

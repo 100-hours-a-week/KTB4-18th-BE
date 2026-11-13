@@ -68,6 +68,7 @@ import com.sun.net.httpserver.HttpsServer;
 class CoreAuthProcessTest {
     private static final boolean PRODUCTION = Boolean.getBoolean("auth.integration.production");
     private static final ProductionTlsFixture TLS = PRODUCTION ? new ProductionTlsFixture() : null;
+    private static final boolean MUSIC = Boolean.getBoolean("auth.integration.music-events");
     private static final boolean RUNTIME = Boolean.getBoolean("auth.integration.runtime");
     private static final String METRICS = "synthetic-metrics-service-token-at-least-32";
     private static final boolean CONTROL = Boolean.getBoolean("auth.integration.control-events");
@@ -103,6 +104,7 @@ class CoreAuthProcessTest {
                                 user core-auth on >%s &auth-test:chat:control:v1 \
                                 +hello +ping +quit +client|setinfo +client|setname +publish
                                 user chat-auth on >%s &auth-test:chat:control:v1 &auth-test:chat:room:* \
+                                &auth-test:chat:music:* \
                                 +hello +ping +quit +publish +info +client|setinfo +client|setname \
                                 +subscribe +psubscribe +unsubscribe +punsubscribe \
                                 ~auth-test:chat:state:* +eval +hget +hset +expire
@@ -268,6 +270,14 @@ class CoreAuthProcessTest {
             if (CONTROL) {
                 chatEnv.put("CHAT_CONTROL_EVENTS_ENABLED", "true");
             }
+            if (MUSIC) {
+                chatEnv.put("CHAT_MUSIC_QUEUE_ENABLED", "true");
+                chatEnv.put("CHAT_MUSIC_PLAYBACK_ENABLED", "true");
+                chatEnv.put("CHAT_MUSIC_EVENTS_ENABLED", "true");
+                chatEnv.put("CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS", "0");
+                chatEnv.put("CHAT_MUSIC_KEYS", "fixture:" + java.util.Base64.getEncoder().encodeToString(
+                        "synthetic-music-fingerprint-key-at-least-32-bytes".getBytes(StandardCharsets.UTF_8)));
+            }
             if (PRODUCTION) {
                 chatEnv.putAll(Map.of("CHAT_AUTH_REDIS_ENABLED", "true", "CORE_AUTH_PRODUCER_IDS", PRODUCER,
                         "CHAT_REDIS_SSL_CA_CERTIFICATE", TLS.certificate().toString()));
@@ -321,6 +331,13 @@ class CoreAuthProcessTest {
             }
             Probe second = join(subscribed, revokedSid, region, room);
             Probe survivor = join(polling, survivingSid, region, room);
+            if (MUSIC) {
+                musicChecks(jdbc, polling, subscribed, first, second, revokedSid, region, room);
+                if (Boolean.getBoolean("auth.integration.music-recovery")) {
+                    musicRecoveryChecks(jdbc, chatEnv, trust, polling, subscribed, second, revokedSid, region, room);
+                }
+                return;
+            }
             if (CONTROL) {
                 String controlSid = UUID.randomUUID().toString();
                 sessions.put(controlSid, session(controlSid));
@@ -905,6 +922,192 @@ class CoreAuthProcessTest {
         return new Node(pending.process(), actualPort[0]);
     }
 
+    private void musicChecks(JdbcTemplate jdbc, Node firstTask, Node secondTask, Probe first, Probe second,
+            String sid, long region, long room) throws Exception {
+        jdbc.update("INSERT INTO music(provider,external_music_id,title,artist_name,youtube_video_id) "
+                + "VALUES ('ITUNES','music-events-process','synthetic song','synthetic artist','abcdefghijk')");
+        long music = jdbc.queryForObject("SELECT id FROM music WHERE external_music_id='music-events-process'",
+                Long.class);
+        jdbc.update("""
+                INSERT INTO music_playback_sources(music_id,youtube_video_id,channel_id,channel_kind,review_reference,
+                  reviewed_by,status,duration_millis,playback_country,verified_at,valid_until,version)
+                VALUES (?,'abcdefghijk','synthetic','ARTIST','synthetic','test','VERIFIED',120000,'KR',
+                  TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(6)),TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),1)
+                """, music);
+        jdbc.update("""
+                INSERT INTO recommendation_sessions(user_id,region_id,trigger_type,input_type,conversation_key,status)
+                VALUES (411001,?,'CHATBOT','TEXT','music-events-process','COMPLETED')
+                """, region);
+        long rec = jdbc.queryForObject("SELECT id FROM recommendation_sessions "
+                + "WHERE conversation_key='music-events-process'", Long.class);
+        jdbc.update("INSERT INTO recommendation_items(recommendation_session_id,music_id,rank_no) VALUES (?,?,1)", rec,
+                music);
+        String base = "/api/v1/chat-rooms/" + room;
+        String firstQuery = "?membership_id=" + first.membership + "&view_session_id=" + first.view;
+        String secondQuery = "?membership_id=" + second.membership + "&view_session_id=" + second.view;
+        var added = request(secondTask, "POST", base + "/queue-items" + firstQuery, token(sid),
+                json.writeValueAsString(Map.of("music_id", music)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+        assertEquals(201, added.statusCode(), added.body());
+        long current = json.readTree(added.body()).path("data").path("queue_item_id").asLong();
+        for (Probe probe : List.of(first, second)) {
+            awaitMusic(probe, "QUEUE_UPDATED", 1);
+            assertEquals("PLAYING", awaitMusic(probe, "PLAYBACK_UPDATED", 1).path("playback").path("state").asText());
+        }
+        String pauseId = UUID.randomUUID().toString();
+        String pauseBody = json.writeValueAsString(Map.of("action", "PAUSE", "queue_item_id", current,
+                "expected_version", 1));
+        var paused = request(firstTask, "POST", base + "/playback/commands" + secondQuery, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(200, paused.statusCode(), paused.body());
+        for (Probe probe : List.of(first, second)) {
+            assertEquals("PAUSED", awaitMusic(probe, "PLAYBACK_UPDATED", 2).path("playback").path("state").asText());
+        }
+        var retry = request(secondTask, "POST", base + "/playback/commands" + secondQuery, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(paused.body(), retry.body());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_command_receipts WHERE command_id=?",
+                Integer.class, pauseId));
+        var queued = request(firstTask, "POST", base + "/queue-items" + secondQuery, token(sid),
+                json.writeValueAsString(Map.of("music_id", music)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+        assertEquals(201, queued.statusCode(), queued.body());
+        for (Probe probe : List.of(first, second)) {
+            assertEquals("PAUSED", awaitMusic(probe, "QUEUE_UPDATED", 3).path("playback").path("state").asText());
+        }
+        var skipped = request(firstTask, "POST", base + "/playback/commands" + secondQuery, token(sid),
+                json.writeValueAsString(Map.of("action", "SKIP", "queue_item_id", current, "expected_version", 3)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+        assertEquals(200, skipped.statusCode(), skipped.body());
+        for (Probe probe : List.of(first, second)) {
+            var next = awaitMusic(probe, "PLAYBACK_UPDATED", 4);
+            assertEquals("PLAYING", next.path("playback").path("state").asText());
+            assertTrue(next.path("playback").path("current_queue_item_id").asLong() != current);
+        }
+        jdbc.update("""
+                UPDATE playback_states SET state_changed_at=TIMESTAMPADD(SECOND,-121,UTC_TIMESTAMP(6)),
+                  due_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) WHERE chat_room_id=?
+                """, room);
+        for (Probe probe : List.of(first, second)) {
+            assertEquals("IDLE", awaitMusic(probe, "PLAYBACK_UPDATED", 5).path("playback").path("state").asText());
+            assertEquals("IDLE", awaitMusic(probe, "PLAYBACK_SYNC", 5).path("playback").path("state").asText());
+        }
+        await(() -> jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_outbox WHERE room_id=? AND status='SENT'",
+                Integer.class, room) == 8);
+        assertEquals(5,
+                jdbc.queryForObject("SELECT version FROM playback_states WHERE chat_room_id=?", Integer.class, room));
+        var checks = Map.of("twoChatProcesses", true, "realCoreChecks", true, "crossTaskRest", true,
+                "senderViaPubSub", true, "equalVersionPair", true, "pauseRetry", true, "pausedAdd", true,
+                "skipAndServerEnd", true, "readOnlyPeriodicSync", true);
+        Files.writeString(evidence.resolve("music-events.json"), json.writeValueAsString(checks));
+        Files.writeString(evidence.resolve("music-event-examples.json"), json.writeValueAsString(musicExamples));
+    }
+
+    private void musicRecoveryChecks(JdbcTemplate jdbc, Map<String, String> chatEnv, Path trust,
+            Node polling, Node subscribed, Probe view, String sid, long region, long room) throws Exception {
+        long song = jdbc.queryForObject("SELECT id FROM music WHERE external_music_id='music-events-process'",
+                Long.class);
+        String base = "/api/v1/chat-rooms/" + room;
+        String query = "?membership_id=" + view.membership + "&view_session_id=" + view.view;
+        assertEquals(201, request(polling, "POST", base + "/queue-items" + query, token(sid),
+                json.writeValueAsString(Map.of("music_id", song)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString())).statusCode());
+        long current = jdbc.queryForObject("SELECT current_queue_item_id FROM playback_states WHERE chat_room_id=?",
+                Long.class, room);
+        String pauseId = UUID.randomUUID().toString();
+        String pauseBody = json.writeValueAsString(Map.of("action", "PAUSE", "queue_item_id", current,
+                "expected_version", 6));
+        var paused = request(polling, "POST", base + "/playback/commands" + query, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(200, paused.statusCode(), paused.body());
+        assertEquals(201, request(polling, "POST", base + "/queue-items" + query, token(sid),
+                json.writeValueAsString(Map.of("music_id", song)),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString())).statusCode());
+        stop(subscribed);
+        assertEquals(1013, view.closed.get(5, TimeUnit.SECONDS));
+        Probe drained = connect(polling, sid, room, view.membership, view.view);
+        var afterDrain = request(polling, "GET", base + "/queue-items" + query, token(sid), null, Map.of());
+        assertEquals(200, afterDrain.statusCode(), afterDrain.body());
+        assertEquals("PAUSED", json.readTree(afterDrain.body()).path("data").path("state").asText());
+        polling.process().destroyForcibly();
+        assertTrue(polling.process().waitFor(10, TimeUnit.SECONDS));
+        // Deterministic expired-lease fault; the process has really been killed, no live owner is bypassed.
+        jdbc.update("UPDATE chat_runtime_tasks SET lease_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) "
+                + "WHERE environment='auth-test' AND state='ACTIVE'");
+        Node replacement = start("chat", chatEnv, trust);
+        Probe resumed = connect(replacement, sid, room, drained.membership, drained.view);
+        var recovered = request(replacement, "GET", base + "/queue-items" + query, token(sid), null, Map.of());
+        assertEquals(200, recovered.statusCode(), recovered.body());
+        var data = json.readTree(recovered.body()).path("data");
+        assertEquals("PAUSED", data.path("state").asText());
+        assertEquals(8, data.path("version").asLong());
+        assertEquals("abcdefghijk", data.path("source_video_id").asText());
+        assertEquals(current, data.path("current_queue_item_id").asLong());
+        long epoch = data.path("epoch").asLong();
+        assertTrue(epoch > 0);
+        REDIS.getDockerClient().restartContainerCmd(REDIS.getContainerId()).exec();
+        assertEquals(1013, resumed.closed.get(8, TimeUnit.SECONDS));
+        await(() -> status(replacement, "/actuator/health/readiness") == 503);
+        assertEquals(503, request(replacement, "GET", base + "/queue-items" + query, token(sid), null,
+                Map.of()).statusCode());
+        stop(replacement);
+        // Simulate an outage beyond the original verified grace, without manufacturing a new interval.
+        jdbc.update("""
+                UPDATE chat_view_intervals i JOIN chat_view_runtime v ON v.view_id=i.view_session_id
+                SET i.started_at=TIMESTAMPADD(SECOND,-60,UTC_TIMESTAMP(6)),
+                  i.verified_at=TIMESTAMPADD(SECOND,-31,UTC_TIMESTAMP(6)),
+                  i.ends_at=CASE WHEN i.ends_at IS NULL THEN NULL ELSE
+                    TIMESTAMPADD(SECOND,-31,UTC_TIMESTAMP(6)) END
+                WHERE v.environment='auth-test' AND v.room_id=?
+                """, room);
+        jdbc.update("""
+                UPDATE chat_music_outbox SET status='PENDING',sent_at=NULL,claim_token=?,
+                  claim_until=TIMESTAMPADD(SECOND,10,UTC_TIMESTAMP(6))
+                WHERE room_id=? AND event_type='QUEUE_UPDATED' AND music_version=8
+                """, UUID.randomUUID().toString(), room);
+        long receipts = jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_command_receipts WHERE room_id=?",
+                Long.class, room);
+        recoveryCommand();
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_outbox WHERE environment='auth-test' "
+                + "AND epoch=? AND status='PENDING'", Integer.class, epoch));
+        assertEquals(receipts, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_command_receipts WHERE room_id=?",
+                Long.class, room));
+        Node fresh = start("chat", chatEnv, trust);
+        Probe restored = connect(fresh, sid, room, resumed.membership, resumed.view);
+        var latest = request(fresh, "GET", base + "/queue-items" + query, token(sid), null, Map.of());
+        assertEquals(200, latest.statusCode(), latest.body());
+        var finalState = json.readTree(latest.body()).path("data");
+        assertEquals(epoch + 1, finalState.path("epoch").asLong());
+        assertEquals("IDLE", finalState.path("state").asText());
+        assertEquals(0, finalState.path("items").size());
+        assertEquals("CANCELED", jdbc.queryForObject("SELECT status FROM music_queue_items WHERE id=?",
+                String.class, current));
+        var replay = request(fresh, "POST", base + "/playback/commands" + query, token(sid), pauseBody,
+                Map.of("Idempotency-Key", pauseId));
+        assertEquals(paused.body(), replay.body());
+        assertEquals(finalState.path("version").asLong(), jdbc.queryForObject(
+                "SELECT version FROM playback_states WHERE chat_room_id=?", Long.class, room));
+        assertFalse(restored.closed.isDone());
+        Files.writeString(evidence.resolve("music-recovery.json"), json.writeValueAsString(Map.of(
+                "sigtermPausedPreserved", true, "realSigkill", true, "sameViewTaskTakeover", true,
+                "leaseExpiryFault", true, "realRedisRestartClosed", true, "operatorCommandNewEpoch", true,
+                "oldOutboxExpired", true, "expiredAbsenceCleared", true, "receiptReplayDidNotRestoreState", true)));
+    }
+
+    private final List<com.fasterxml.jackson.databind.JsonNode> musicExamples = new ArrayList<>();
+
+    private com.fasterxml.jackson.databind.JsonNode awaitMusic(Probe probe, String type, long version)
+            throws Exception {
+        for (int attempt = 0; attempt < 20; attempt++) {
+            var data = frameData(probe.await(type));
+            if (data.path("version").asLong() >= version) {
+                musicExamples.add(json.valueToTree(Map.of("type", type, "data", data)));
+                return data;
+            }
+        }
+        throw new AssertionError("latest music snapshot missing");
+    }
+
     private Probe join(Node node, String sid, long region, long room) throws Exception {
         return join(node, node, sid, region, room);
     }
@@ -920,6 +1123,10 @@ class CoreAuthProcessTest {
     }
 
     private String location(String sid, long region) {
+        return location(sid, region, 411001L);
+    }
+
+    private String location(String sid, long region, long userId) {
         var provider = new com.muse.meomuneum.location.security.LocationResolutionTokenProvider(
                 new com.muse.meomuneum.location.config.LocationTokenProperties(LOCATION), java.time.Clock.systemUTC());
         // Issue the existing token format from persisted administrative metadata, with synthetic signing material.
@@ -933,7 +1140,7 @@ class CoreAuthProcessTest {
                 jdbc.queryForObject("SELECT code FROM regions WHERE id=?", String.class, region), "fixture",
                 com.muse.meomuneum.chat.region.domain.RegionLevel.SIGUNGU, parent);
         ReflectionTestUtils.setField(local, "id", region);
-        return provider.issueForSession(411001L, sid, parent, local, null).value();
+        return provider.issueForSession(userId, sid, parent, local, null).value();
     }
 
     private Probe connect(Node node, String sid, long room, long membership, String view) throws Exception {
@@ -962,6 +1169,10 @@ class CoreAuthProcessTest {
     }
 
     private String seedBrowserSession(JdbcTemplate jdbc, String sid, String cookie) throws Exception {
+        return seedBrowserSession(jdbc, sid, cookie, 411001L);
+    }
+
+    private String seedBrowserSession(JdbcTemplate jdbc, String sid, String cookie, long userId) throws Exception {
         String flowId = UUID.randomUUID().toString();
         var mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(HMAC_KEY.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
@@ -976,9 +1187,9 @@ class CoreAuthProcessTest {
         jdbc.update("""
                 INSERT INTO auth_browser_sessions
                     (sid,flow_id,flow_epoch,user_id,status,idle_expires_at,absolute_expires_at,created_at,updated_at)
-                VALUES (?,?,1,411001,'ACTIVE',DATE_ADD(NOW(6),INTERVAL 1 DAY),
+                VALUES (?,?,1,?,'ACTIVE',DATE_ADD(NOW(6),INTERVAL 1 DAY),
                         DATE_ADD(NOW(6),INTERVAL 1 DAY),NOW(6),NOW(6))
-                """, sid, flowId);
+                """, sid, flowId, userId);
         return flowId;
     }
 
@@ -1004,20 +1215,28 @@ class CoreAuthProcessTest {
     }
 
     private String token(String sid) {
+        return token(sid, 411001L);
+    }
+
+    private String token(String sid, long userId) {
         if (PRODUCTION) {
             return java.util.Objects.requireNonNull(issuedTokens.get(sid), "real login token required");
         }
         User user = new User() {
         };
-        ReflectionTestUtils.setField(user, "id", 411001L);
+        ReflectionTestUtils.setField(user, "id", userId);
         ReflectionTestUtils.setField(user, "role", UserRole.USER);
         return new JwtTokenProvider(new JwtProperties("project-api", "project-api", SECRET, 3600, 1209600))
                 .createAccessToken(user, sid);
     }
 
     private HazelcastAuthStateStore.AuthSession session(String sid) {
+        return session(sid, 411001L);
+    }
+
+    private HazelcastAuthStateStore.AuthSession session(String sid, long userId) {
         Instant now = Instant.now();
-        return new HazelcastAuthStateStore.AuthSession(411001L, sid, "fixture",
+        return new HazelcastAuthStateStore.AuthSession(userId, sid, "fixture",
                 HazelcastAuthStateStore.SessionStatus.ACTIVE,
                 "jti", "hash", null, null, null, null, null, null, null, 0, null, null, 0,
                 now, now, now.plusSeconds(3600), now.plusSeconds(3600), now.plusSeconds(7200), null);

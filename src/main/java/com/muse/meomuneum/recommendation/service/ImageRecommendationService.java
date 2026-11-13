@@ -21,10 +21,12 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.ImageRecommendationRequest;
@@ -46,6 +48,7 @@ public class ImageRecommendationService {
     private final ImageRecommendationAdmission admission;
     private final ObjectProvider<ImageStreamingRecommendationProvider> provider;
     private final Executor imageExecutor;
+    private final RecommendationLocationContext locationContext;
     private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(task -> {
         Thread thread = new Thread(task, "recommendation-image-watchdog");
         thread.setDaemon(true);
@@ -56,12 +59,22 @@ public class ImageRecommendationService {
             RecommendationEventStream eventStream, ImageRecommendationAdmission admission,
             ObjectProvider<ImageStreamingRecommendationProvider> provider,
             @Qualifier("imageRecommendationTaskExecutor") Executor imageExecutor) {
+        this(repository, validator, eventStream, admission, provider, imageExecutor, null);
+    }
+
+    @Autowired
+    public ImageRecommendationService(RecommendationRepository repository, RecommendationImageValidator validator,
+            RecommendationEventStream eventStream, ImageRecommendationAdmission admission,
+            ObjectProvider<ImageStreamingRecommendationProvider> provider,
+            @Qualifier("imageRecommendationTaskExecutor") Executor imageExecutor,
+            RecommendationLocationContext locationContext) {
         this.repository = repository;
         this.validator = validator;
         this.eventStream = eventStream;
         this.admission = admission;
         this.provider = provider;
         this.imageExecutor = imageExecutor;
+        this.locationContext = locationContext;
     }
 
     @PostConstruct
@@ -70,6 +83,11 @@ public class ImageRecommendationService {
     }
 
     public RecommendationAcceptedResponse accept(ImageRecommendationRequest request, MultipartFile image, Long userId) {
+        return accept(request, image, userId, null);
+    }
+
+    public RecommendationAcceptedResponse accept(ImageRecommendationRequest request, MultipartFile image, Long userId,
+            String authSessionId) {
         if (userId == null) {
             throw new RecommendationException(401, "로그인이 필요합니다.");
         }
@@ -89,6 +107,14 @@ public class ImageRecommendationService {
         }
         if (image.getSize() > RecommendationImageValidator.MAX_BYTES) {
             throw new RecommendationException(413, "image too large");
+        }
+
+        LocationResolutionClaims location = null;
+        if (request.location_resolution_token() != null) {
+            if (locationContext == null) {
+                throw new RecommendationException(503, "location context unavailable");
+            }
+            location = locationContext.resolve(request.location_resolution_token(), userId, authSessionId);
         }
 
         if (!eventStream.reserveImageCapacity()) {
@@ -111,7 +137,10 @@ public class ImageRecommendationService {
             }
             var normalizedRequest = new ImageRecommendationRequest(conversationKey, request.input_type(),
                     request.trigger_type());
-            long id = repository.createImageSession(normalizedRequest, userId, Instant.now());
+            long id = location == null
+                    ? repository.createImageSession(normalizedRequest, userId, Instant.now())
+                    : repository.createImageSession(normalizedRequest, userId, Instant.now(),
+                            location.sigunguRegionId(), location.mapDotId());
             eventStream.registerImage(id);
             registered = true;
             byte[] ownedBytes = imageBytes;

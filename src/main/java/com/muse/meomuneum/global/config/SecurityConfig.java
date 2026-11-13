@@ -20,6 +20,7 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
@@ -76,12 +77,15 @@ public class SecurityConfig {
                 "/api/v1/users/me",
                 "/api/v1/users/me/**"
         };
+        var musicSearchRequeue = PathPatternRequestMatcher.withDefaults()
+                .matcher(HttpMethod.POST, "/api/v1/admin/music-search-storage/*/requeue");
         RequestMatcher bearerOnlyBusinessMutation = request -> {
             String method = request.getMethod();
             boolean unsafe = HttpMethod.POST.matches(method) || HttpMethod.PUT.matches(method)
                     || HttpMethod.PATCH.matches(method) || HttpMethod.DELETE.matches(method);
             String authorization = request.getHeader("Authorization");
-            return unsafe && !request.getRequestURI().startsWith("/api/v1/auth/")
+            return unsafe && !musicSearchRequeue.matches(request)
+                    && !request.getRequestURI().startsWith("/api/v1/auth/")
                     && authorization != null && authorization.startsWith("Bearer ");
         };
 
@@ -111,6 +115,8 @@ public class SecurityConfig {
                                 "/api/v1/recommendations/**").permitAll();
                     }
                     authorize.requestMatchers("/api/v1/auth/**", "/ws").permitAll()
+                            .requestMatchers(musicSearchRequeue)
+                            .hasRole("ADMIN")
                             .requestMatchers(HttpMethod.POST, "/api/v1/users/signup").permitAll()
                             .requestMatchers(HttpMethod.GET, "/api/v1/users/availability/**").permitAll()
                             .requestMatchers(HttpMethod.GET, "/api/v1/terms", "/api/v1/terms/**").permitAll()

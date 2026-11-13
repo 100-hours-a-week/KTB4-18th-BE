@@ -39,6 +39,7 @@ import com.muse.meomuneum.chat.message.dto.ChatMessageResponse;
 import com.muse.meomuneum.chat.message.policy.ChatMessageRejection;
 import com.muse.meomuneum.chat.message.query.ChatQueryException;
 import com.muse.meomuneum.chat.message.relay.ChatDeliveryMetrics;
+import com.muse.meomuneum.chat.music.ChatMusicException;
 import com.muse.meomuneum.chat.room.dto.ChatRoomMembershipResponse;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
@@ -215,6 +216,11 @@ public final class ChatParticipationService {
     }
 
     private volatile BooleanSupplier messageTransportReady = () -> true;
+    private volatile BooleanSupplier musicTransportReady = () -> true;
+
+    public void setMusicTransportReady(BooleanSupplier guard) {
+        musicTransportReady = Objects.requireNonNull(guard);
+    }
 
     public void setMessageTransportReady(BooleanSupplier guard) {
         messageTransportReady = guard;
@@ -230,7 +236,7 @@ public final class ChatParticipationService {
         if (!runtimePermit.getAsBoolean()) {
             return unavailable("runtime_permit");
         }
-        if (!messageTransportReady.getAsBoolean()) {
+        if (!messageTransportReady.getAsBoolean() || !musicTransportReady.getAsBoolean()) {
             return unavailable("message_transport");
         }
         long remaining = localLease - System.nanoTime();
@@ -276,6 +282,8 @@ public final class ChatParticipationService {
                 return new Join(null, true);
             }
             LocalDateTime now = now();
+            // Reconcile absence before a new reservation can hide a stale room after a Task failure.
+            reconcileMusicAbsence(tx, room);
             long memberId = same == null ? createMembership(user, sid, room, now) : same.id;
             String view = storage.create(user, room, memberId);
             jdbc.update(
@@ -316,6 +324,7 @@ public final class ChatParticipationService {
                             || current.deadline != null && current.deadline.isAfter(now()))) {
                 throw denied();
             }
+            reconcileMusicAbsence(tx, room);
             if (!capacity(user, room, roomCapacity(room))) {
                 throw error(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED);
             }
@@ -533,25 +542,99 @@ public final class ChatParticipationService {
     }
 
     public <T> T read(long user, long room, long member, String view, Function<ReadContext, T> operation) {
-        return execute(user, tx -> {
+        return execute(user, tx -> read(tx, user, room, member, view, operation));
+    }
+
+    private <T> T read(Transition tx, long user, long room, long member, String view,
+            Function<ReadContext, T> operation) {
+        tx.lock(List.of(room));
+        RuntimeView current = owned(user, room, member, view);
+        if (!current.state.equals("CONNECTED") || current.owner == null || !ownerLive(current.owner)
+                || current.generation < 1 || jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM chat_view_sessions WHERE id=? AND ended_at IS NULL
+                            AND updated_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
+                        """, Integer.class, view) != 1) {
+            throw denied();
+        }
+        authorizeUser(user, false);
+        access.authorize(user, sid(member));
+        T result = operation.apply(new ReadContext(environment, epoch, current.generation, tx.version(room), now()));
+        if (!ownerLive(current.owner)) {
+            throw denied();
+        }
+        return result;
+    }
+
+    /** REST music operations authorize the current connected view, including a remote Task owner. */
+    public <T> T musicTransaction(long user, String authSid, long room, long member, String view,
+            Function<MusicTransaction, T> operation) {
+        return execute(user, tx -> read(tx, user, room, member, view, context -> {
+            if (!authSid.equals(sid(member)) || jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM chat_view_sessions v JOIN chat_rooms r ON r.id=v.room_id
+                    JOIN regions g ON g.id=r.region_id JOIN regions p ON p.id=g.parent_id
+                    JOIN chat_room_members m ON m.id=v.membership_id
+                    WHERE v.id=? AND m.auth_session_id=? AND r.status='ACTIVE'
+                      AND g.is_active=TRUE AND p.is_active=TRUE
+                    """, Integer.class, view, authSid) != 1) {
+                throw denied();
+            }
+            return operation.apply(new MusicTransaction(context, room, tx));
+        }));
+    }
+
+    private volatile java.util.function.Consumer<MusicTransaction> musicPresenceHook;
+
+    public void setMusicPresenceHook(java.util.function.Consumer<MusicTransaction> hook) {
+        musicPresenceHook = Objects.requireNonNull(hook);
+    }
+
+    private void reconcileMusicAbsence(Transition tx, long room) {
+        var hook = musicPresenceHook;
+        if (hook != null) {
+            hook.accept(new MusicTransaction(
+                    new ReadContext(environment, epoch, 0, tx.version(room), now()), room, tx));
+        }
+    }
+
+    /** Internal scheduler only; still pins control, epoch, Task lease and room before music locks. */
+    public <T> T systemMusicTransaction(long room, Function<MusicTransaction, T> operation) {
+        return execute(null, tx -> {
             tx.lock(List.of(room));
-            RuntimeView current = owned(user, room, member, view);
-            if (!current.state.equals("CONNECTED") || current.owner == null || !ownerLive(current.owner)
-                    || current.generation < 1 || jdbc.queryForObject("""
-                            SELECT COUNT(*) FROM chat_view_sessions WHERE id=? AND ended_at IS NULL
-                                AND updated_at>TIMESTAMPADD(HOUR,-24,UTC_TIMESTAMP(6))
-                            """, Integer.class, view) != 1) {
-                throw denied();
-            }
-            authorizeUser(user, false);
-            access.authorize(user, sid(member));
-            T result = operation
-                    .apply(new ReadContext(environment, epoch, current.generation, tx.version(room), now()));
-            if (!ownerLive(current.owner)) {
-                throw denied();
-            }
-            return result;
+            return operation.apply(new MusicTransaction(
+                    new ReadContext(environment, epoch, 0, tx.version(room), now()), room, tx));
         });
+    }
+
+    public final class MusicTransaction {
+        private final ReadContext context;
+        private final long room;
+        private final Transition transition;
+
+        private MusicTransaction(ReadContext context, long room, Transition transition) {
+            this.context = context;
+            this.room = room;
+            this.transition = transition;
+        }
+
+        public ReadContext context() {
+            return context;
+        }
+
+        public long roomId() {
+            return room;
+        }
+
+        public String producerId() {
+            return "chat:" + taskId;
+        }
+
+        public long changed() {
+            if (context.roomSeq() >= 9_007_199_254_740_991L) {
+                throw new ChatMusicException(409, "MUSIC_COUNTER_EXHAUSTED");
+            }
+            transition.changed(room);
+            return transition.version(room);
+        }
     }
 
     public ChatMessageResponse writeMessage(long user, long room, long member,
@@ -683,6 +766,14 @@ public final class ChatParticipationService {
     }
 
     public SocketEnqueuePermissions issueSocketEnqueuePermissions(long room) {
+        return issueSocketEnqueuePermissions(room, false);
+    }
+
+    public SocketEnqueuePermissions issueMusicEnqueuePermissions(long room) {
+        return issueSocketEnqueuePermissions(room, true);
+    }
+
+    private SocketEnqueuePermissions issueSocketEnqueuePermissions(long room, boolean music) {
         if (!available()) {
             throw new ChatParticipationUnavailableException();
         }
@@ -696,7 +787,8 @@ public final class ChatParticipationService {
                             AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
                                 AND b.deleted_at IS NULL AND b.created_at<=UTC_TIMESTAMP(6)
                                 AND b.expires_at>UTC_TIMESTAMP(6)) AND
-                        """ + EFFECTIVE + " GROUP BY v.socket_token,v.owner_generation,v.user_id HAVING COUNT(*)=1",
+                        """ + EFFECTIVE + (music ? " AND v.state='CONNECTED'" : "")
+                        + " GROUP BY v.socket_token,v.owner_generation,v.user_id HAVING COUNT(*)=1",
                         environment, room, taskId, epoch));
         var permitted = new HashMap<String, RecipientPermission>();
         rows.forEach(row -> {
@@ -739,6 +831,14 @@ public final class ChatParticipationService {
 
     /** Fresh primary read for requests already waiting at actual handlers; no previous result is reused. */
     private List<Boolean> permitsDeliveryBatch(List<MessagePermission> requests, boolean messages) {
+        return permitsDeliveryBatch(requests, messages, false);
+    }
+
+    public List<Boolean> permitsMusicBatch(List<MessagePermission> requests) {
+        return permitsDeliveryBatch(requests, false, true);
+    }
+
+    private List<Boolean> permitsDeliveryBatch(List<MessagePermission> requests, boolean messages, boolean music) {
         if (requests.size() > 32) {
             throw new IllegalArgumentException("At most 32 current delivery requests per DB read");
         }
@@ -808,7 +908,8 @@ public final class ChatParticipationService {
                             AND NOT EXISTS(SELECT 1 FROM chat_bans b WHERE b.user_id=v.user_id
                                 AND b.deleted_at IS NULL AND b.created_at<=UTC_TIMESTAMP(6)
                                 AND b.expires_at>UTC_TIMESTAMP(6))
-                        """ + messageBoundary + " GROUP BY q.slot HAVING COUNT(*)=1";
+                        """ + messageBoundary + (music ? " AND v.state='CONNECTED'" : "")
+                + " GROUP BY q.slot HAVING COUNT(*)=1";
         var permitted = measured(
                 messages
                         ? ChatDeliveryMetrics.Stage.MESSAGE_PERMISSION_BATCH_DB
@@ -1034,7 +1135,7 @@ public final class ChatParticipationService {
         }
     }
 
-    private <T> T execute(long user, Function<Transition, T> action) {
+    private <T> T execute(Long user, Function<Transition, T> action) {
         if (!available()) {
             throw new ChatParticipationUnavailableException();
         }
@@ -1070,9 +1171,12 @@ public final class ChatParticipationService {
                 tx.phase("task_guard");
                 requireTask();
                 tx.phase("user_lock");
-                List<Long> users = jdbc.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, user);
-                if (users.isEmpty()) {
-                    throw error(ChatRoomErrorCode.USER_NOT_FOUND);
+                if (user != null) {
+                    List<Long> users = jdbc.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class,
+                            user);
+                    if (users.isEmpty()) {
+                        throw error(ChatRoomErrorCode.USER_NOT_FOUND);
+                    }
                 }
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
@@ -1097,6 +1201,11 @@ public final class ChatParticipationService {
                 T applied = action.apply(tx);
                 tx.phase("control_outbox");
                 for (long room : tx.presence) {
+                    var hook = musicPresenceHook;
+                    if (hook != null) {
+                        hook.accept(new MusicTransaction(
+                                new ReadContext(environment, epoch, 0, tx.version(room), now()), room, tx));
+                    }
                     tx.projectionVersions.put(room, tx.version(room));
                     recordControl("CHAT_PRESENCE_CHANGED", room, tx.version(room),
                             Map.of("room_id", room, "room_seq", tx.version(room)));
@@ -1107,7 +1216,8 @@ public final class ChatParticipationService {
             Thread.currentThread().interrupt();
             diagnostics.transactionFailed(tx.phase.stage(), interrupted, tx.started);
             throw new ChatParticipationUnavailableException();
-        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection rejected) {
+        } catch (ChatRoomException | ChatQueryException | ChatMessageRejection
+                | ChatMusicException rejected) {
             throw rejected;
         } catch (ChatParticipationUnavailableException rejected) {
             diagnostics.transactionFailed(tx.phase.stage(), rejected, tx.started);

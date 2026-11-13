@@ -198,19 +198,40 @@ public class DirectAuthRecoveryService {
             return summary;
         }
         if ("REFRESH".equals(flow.currentOperationKind())) {
-            var receipt = refreshReceipts.find(flow.flowId(), id, true).orElseThrow(DirectAuthFailure::unavailable);
-            refresh.requireLive(receipt);
+            var now = flows.now();
+            var session = sessions.require(flow, now, false);
+            var receipt = refreshReceipts.find(flow.flowId(), id, true).orElse(null);
+            if (receipt == null || "TOMBSTONE".equals(receipt.status())
+                    || "NEGATIVE_STALE".equals(receipt.status())) {
+                return null;
+            }
+            if (!"SUCCEEDED".equals(receipt.status()) || receipt.epoch() <= 0 || receipt.sid() == null
+                    || receipt.sid().isBlank() || receipt.resultEpoch() == null || receipt.resultEpoch() <= 0
+                    || receipt.resultRevision() == null || receipt.resultRevision() <= 0
+                    || receipt.flowGeneration() == null || receipt.flowGeneration() <= 0
+                    || receipt.refreshGeneration() == null || receipt.refreshGeneration() <= 0
+                    || receipt.client() == null || receipt.effective() == null || receipt.client() <= 0
+                    || receipt.client() > 9_007_199_254_740_991L || receipt.effective() <= 0
+                    || receipt.effective() > receipt.client() || receipt.expiry() == null) {
+                throw DirectAuthFailure.unavailable();
+            }
             var recovered = flow.recoveryOperationId() == null
                     ? null
                     : recoveryRows.find(flow.flowId(), flow.recoveryOperationId(), true).orElse(null);
-            var session = sessions.require(flow, flows.now(), false);
             boolean recoveryCanonical = recovered != null && sourceLifecycle.canonical(
-                    new DirectAuthRecoveryLifecycle.Source(flow, receipt, flows.now()), session, recovered);
+                    new DirectAuthRecoveryLifecycle.Source(flow, receipt, now), session, recovered);
             if (receipt.resultEpoch() == null || receipt.resultEpoch() != flow.epoch()
                     || !recoveryCanonical
                             && (receipt.resultRevision() == null || receipt.resultRevision() != flow.revision())
-                    || !java.util.Objects.equals(receipt.sid(), session.sid())) {
+                    || !java.util.Objects.equals(receipt.sid(), session.sid())
+                    || !recoveryCanonical && (receipt.flowGeneration() != flow.flowCookieGeneration()
+                            || receipt.refreshGeneration() != session.refreshGeneration())) {
                 throw DirectAuthFailure.conflict("AUTH_OPERATION_SUPERSEDED");
+            }
+            if (!now.isBefore(receipt.expiry())
+                    || com.muse.meomuneum.auth.directv2.repository.DirectAuthLoginLifecycleRepository
+                            .micros(now) >= receipt.effective() * 1000) {
+                return null;
             }
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("flowId", flow.flowId());
@@ -233,6 +254,11 @@ public class DirectAuthRecoveryService {
         }
         DirectAuthOperationState operation = operations.lockLogin(flow.flowId(), id).orElse(null);
         if (operation == null) {
+            return null;
+        }
+        boolean receiptExpired = operation.receiptExpiresAt() == null
+                || !flows.now().isBefore(operation.receiptExpiresAt());
+        if (flow.activeLoginOperationId() == null && !"IN_PROGRESS".equals(operation.status()) && receiptExpired) {
             return null;
         }
         login.requireLive(operation);

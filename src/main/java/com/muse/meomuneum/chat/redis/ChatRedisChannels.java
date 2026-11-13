@@ -18,6 +18,17 @@ public class ChatRedisChannels {
         return prefix + "room:*";
     }
 
+    public String musicChannel(long roomId) {
+        if (roomId <= 0) {
+            throw new IllegalArgumentException("roomId must be positive");
+        }
+        return prefix + "music:" + roomId;
+    }
+
+    public String musicPattern() {
+        return prefix + "music:*";
+    }
+
     public String controlChannel() {
         return prefix + "control:v1";
     }

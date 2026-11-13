@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "meaning": "Local verification is separate from permission to activate production flags.",
+  "gates": [
+    { "id": "catalog", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "KR/VERIFIED/current official video, duration, review evidence and expiry; at least one requestable song in the rollout region" },
+    { "id": "migrations", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Single migrator: versions 20261108192420, 20261109103259, 20261109132852 and all prior migrations; production Flyway validate" },
+    { "id": "database-access", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Chat music DML/locking and recovery music Outbox SELECT/UPDATE grants, DB pool/lock budgets" },
+    { "id": "redis-acl", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "TLS/auth/namespace and PUBLISH/PSUBSCRIBE music channel plus existing relay/lifecycle ACL" },
+    { "id": "secrets-flags", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Separate HMAC key ring, old receipt keys retained; same flags/keys on all Tasks and validated isolated runtime profile" },
+    { "id": "routing-headers", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Public /api and /ws routing, no cache, auth/view headers/query, WebSocket upgrade, real Origin/Referer/CSP/Permissions-Policy" },
+    { "id": "mobile-media", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Physical iOS Safari and Android Chrome: autoplay recovery, visible iframe, background return, headphone/mute and reconnect" },
+    { "id": "capacity-slo", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "1000 real account/socket connections with music events/snapshot/control, agreed latency/loss/resource budgets and repeated results" },
+    { "id": "monitoring-recovery", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Private metrics scrape/alerts, operator owner, stopped-routing CLI recovery and rollback rehearsal on deployment infrastructure" },
+    { "id": "release-approval", "required": true, "status": "pending", "owner": null, "evidence": null, "check": "Reviewed artifact SHA and release order, staging smoke and named rollout/rollback owner" }
+  ]
+}
