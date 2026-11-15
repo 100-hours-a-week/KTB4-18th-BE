@@ -4,7 +4,7 @@ spring:
     username: ${MUSIC_SIGNUP_DB_USERNAME}
     password: ${MUSIC_SIGNUP_DB_PASSWORD}
   flyway:
-    locations: filesystem:build/music-record-signup-local-migrations
+    locations: classpath:db/music-record-signup-legacy
   jpa:
     hibernate:
       ddl-auto: none

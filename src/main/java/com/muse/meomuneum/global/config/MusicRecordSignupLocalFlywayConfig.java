@@ -42,7 +42,7 @@ public class MusicRecordSignupLocalFlywayConfig {
 
         return flyway -> {
             if (flyway.getConfiguration().getLocations().length != 1
-                    || !"filesystem:build/music-record-signup-local-migrations"
+                    || !"classpath:db/music-record-signup-legacy"
                             .equals(flyway.getConfiguration().getLocations()[0].toString())) {
                 throw new IllegalStateException("Signup-local Flyway migration location is not isolated");
             }

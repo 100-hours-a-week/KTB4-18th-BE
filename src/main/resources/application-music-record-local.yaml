@@ -1,6 +1,6 @@
 spring:
   flyway:
-    locations: filesystem:build/music-record-local-migrations
+    locations: classpath:db/music-record-local
   jpa:
     hibernate:
       ddl-auto: none
