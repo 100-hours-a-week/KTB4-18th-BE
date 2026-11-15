@@ -19,7 +19,8 @@ import com.muse.meomuneum.musicrecord.service.MusicSearchIngestJobService.Claime
 public class MusicSearchIngestJobRepository {
     private static final String COLUMNS = "id, provider, external_music_id, title, artist_name, album_cover_url, "
             + "preview_url, youtube_video_id, status, attempt_count, lease_token, payload_version, "
-            + "metadata_observed_at, attempt_started_at, lease_until, title_us, artist_name_us, title_ko, artist_name_ko, release_epoch_second";
+            + "metadata_observed_at, attempt_started_at, lease_until, title_us, "
+            + "artist_name_us, title_ko, artist_name_ko, release_epoch_second";
     private final JdbcTemplate jdbc;
 
     public MusicSearchIngestJobRepository(JdbcTemplate jdbc) {
@@ -35,7 +36,8 @@ public class MusicSearchIngestJobRepository {
     public void admit(MusicItem item, LocalDateTime observed) {
         jdbc.update("INSERT INTO music_search_ingest_jobs (provider, external_music_id, title, artist_name, "
                 + "album_cover_url, preview_url, youtube_video_id, status, attempt_count, next_attempt_at, "
-                + "metadata_observed_at, payload_version, title_us, artist_name_us, title_ko, artist_name_ko, release_epoch_second) VALUES (?, ?, ?, ?, ?, ?, ?, 'QUEUED', 0, "
+                + "metadata_observed_at, payload_version, title_us, artist_name_us, "
+                + "title_ko, artist_name_ko, release_epoch_second) VALUES (?, ?, ?, ?, ?, ?, ?, 'QUEUED', 0, "
                 + "CURRENT_TIMESTAMP(6), ?, 1, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id", item.provider(),
                 item.external_music_id(), item.title(), item.artist_name(), item.album_cover_url(),
                 item.preview_url(), item.youtube_video_id(), observed, item.storefrontNames().titleUs(),
@@ -54,7 +56,9 @@ public class MusicSearchIngestJobRepository {
             return;
         }
         jdbc.update("UPDATE music_search_ingest_jobs SET title=?, artist_name=?, album_cover_url=?, "
-                + "preview_url=?, youtube_video_id=?, title_us=?, artist_name_us=?, title_ko=?, artist_name_ko=?, release_epoch_second=?, metadata_observed_at=?, payload_version=payload_version+1, "
+                + "preview_url=?, youtube_video_id=?, title_us=?, artist_name_us=?, "
+                + "title_ko=?, artist_name_ko=?, release_epoch_second=?, "
+                + "metadata_observed_at=?, payload_version=payload_version+1, "
                 + "status=IF(status='DEAD','DEAD','QUEUED'), "
                 + "attempt_count=IF(status='DEAD',attempt_count,0), lease_token=NULL, lease_until=NULL, "
                 + "attempt_started_at=NULL, next_attempt_at=CURRENT_TIMESTAMP(6), "

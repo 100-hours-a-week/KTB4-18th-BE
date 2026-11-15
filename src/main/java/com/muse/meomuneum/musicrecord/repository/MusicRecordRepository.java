@@ -223,13 +223,17 @@ public class MusicRecordRepository {
         var names = music.storefrontNames();
         String fresh = direct
                 ? "incoming.metadata_observed_at>=music.metadata_observed_at"
-                : "incoming.metadata_observed_at>music.metadata_observed_at OR (incoming.metadata_observed_at=music.metadata_observed_at AND incoming.metadata_version>music.metadata_version)";
+                : "incoming.metadata_observed_at>music.metadata_observed_at OR "
+                        + "(incoming.metadata_observed_at=music.metadata_observed_at AND "
+                        + "incoming.metadata_version>music.metadata_version)";
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id, title_us, artist_name_us, title_ko, artist_name_ko, release_epoch_second, metadata_observed_at, metadata_version) "
+                + "preview_url, youtube_video_id, title_us, artist_name_us, "
+                + "title_ko, artist_name_ko, release_epoch_second, metadata_observed_at, metadata_version) "
                 + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS incoming ON DUPLICATE KEY UPDATE "
                 + "title=IF(" + fresh + ", COALESCE(incoming.title_ko, music.title_ko, incoming.title), music.title), "
                 + "artist_name=IF(" + fresh
-                + ", COALESCE(incoming.artist_name_ko, music.artist_name_ko, incoming.artist_name), music.artist_name), "
+                + ", COALESCE(incoming.artist_name_ko, music.artist_name_ko, "
+                + "incoming.artist_name), music.artist_name), "
                 + "album_cover_url=IF(" + fresh
                 + ", COALESCE(incoming.album_cover_url, music.album_cover_url), music.album_cover_url), "
                 + "preview_url=IF(" + fresh
@@ -275,7 +279,8 @@ public class MusicRecordRepository {
             return;
         }
         jdbc.update("UPDATE music SET title_us=COALESCE(?, title_us), artist_name_us=COALESCE(?, artist_name_us), "
-                + "title_ko=COALESCE(?, title_ko), artist_name_ko=COALESCE(?, artist_name_ko), metadata_observed_at=CURRENT_TIMESTAMP(6), metadata_version=metadata_version+1 "
+                + "title_ko=COALESCE(?, title_ko), artist_name_ko=COALESCE(?, "
+                + "artist_name_ko), metadata_observed_at=CURRENT_TIMESTAMP(6), metadata_version=metadata_version+1 "
                 + "WHERE provider=? AND external_music_id=?",
                 names.titleUs(), names.artistNameUs(), names.titleKo(), names.artistNameKo(),
                 music.provider(), music.external_music_id());

@@ -16,9 +16,12 @@ public class MusicSearchIngestDlqRepository {
     public void insert(ClaimedJob job, String errorCode) {
         jdbc.update("INSERT INTO music_search_ingest_dlq (job_id, failure_token, payload_version, provider, "
                 + "external_music_id, title, artist_name, album_cover_url, preview_url, youtube_video_id, "
-                + "title_us, artist_name_us, title_ko, artist_name_ko, release_epoch_second, metadata_observed_at, attempt_count, error_code, failed_at) "
+                + "title_us, artist_name_us, title_ko, artist_name_ko, "
+                + "release_epoch_second, metadata_observed_at, attempt_count, error_code, failed_at) "
                 + "SELECT id, lease_token, payload_version, provider, external_music_id, title, artist_name, "
-                + "album_cover_url, preview_url, youtube_video_id, title_us, artist_name_us, title_ko, artist_name_ko, release_epoch_second, metadata_observed_at, attempt_count, ?, "
+                + "album_cover_url, preview_url, youtube_video_id, title_us, "
+                + "artist_name_us, title_ko, artist_name_ko, release_epoch_second, "
+                + "metadata_observed_at, attempt_count, ?, "
                 + "CURRENT_TIMESTAMP(6) FROM music_search_ingest_jobs WHERE id=?", errorCode, job.id());
     }
 
