@@ -90,21 +90,47 @@ public class MusicRecordRepository {
         return jdbc.query(sql, (row, index) -> location(row), sigunguId, dotId, sigunguId, sidoId)
                 .stream().findFirst();
     }
-    public void insertMusicIfAbsent(MusicItem music) {
+    public void upsertSearchMusic(MusicItem music, LocalDateTime observedAt, long version) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
+        String fresh = "VALUES(metadata_observed_at)>metadata_observed_at OR "
+                + "(VALUES(metadata_observed_at)=metadata_observed_at AND VALUES(metadata_version)>metadata_version)";
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, youtube_video_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id",
+                + "preview_url, youtube_video_id, metadata_observed_at, metadata_version) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE "
+                + "title=IF(" + fresh + ", VALUES(title), title), "
+                + "artist_name=IF(" + fresh + ", VALUES(artist_name), artist_name), "
+                + "album_cover_url=IF(" + fresh
+                + ", COALESCE(VALUES(album_cover_url), album_cover_url), album_cover_url), "
+                + "preview_url=IF(" + fresh + ", COALESCE(VALUES(preview_url), preview_url), preview_url), "
+                + "youtube_video_id=IF(" + fresh
+                + ", COALESCE(VALUES(youtube_video_id), youtube_video_id), youtube_video_id), "
+                + "updated_at=IF(" + fresh + ", CURRENT_TIMESTAMP(6), updated_at), "
+                + "metadata_version=IF(" + fresh + ", VALUES(metadata_version), metadata_version), "
+                + "metadata_observed_at=GREATEST(metadata_observed_at, VALUES(metadata_observed_at))",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
-                music.album_cover_url(), music.preview_url(), music.youtube_video_id());
+                music.album_cover_url(), music.preview_url(),
+                music.youtube_video_id() != null && music.youtube_video_id().matches("[A-Za-z0-9_-]{11}")
+                        ? music.youtube_video_id()
+                        : null,
+                observedAt, version);
     }
 
     public long upsertMusic(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
         jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE "
-                + "title=VALUES(title), artist_name=VALUES(artist_name), "
-                + "album_cover_url=COALESCE(VALUES(album_cover_url), album_cover_url), "
-                + "preview_url=COALESCE(VALUES(preview_url), preview_url), updated_at=CURRENT_TIMESTAMP(6)",
+                + "preview_url, metadata_observed_at, metadata_version) "
+                + "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), 1) ON DUPLICATE KEY UPDATE "
+                + "title=IF(VALUES(metadata_observed_at)>metadata_observed_at, VALUES(title), title), "
+                + "artist_name=IF(VALUES(metadata_observed_at)>metadata_observed_at, "
+                + "VALUES(artist_name), artist_name), "
+                + "album_cover_url=IF(VALUES(metadata_observed_at)>metadata_observed_at, "
+                + "COALESCE(VALUES(album_cover_url), album_cover_url), album_cover_url), "
+                + "preview_url=IF(VALUES(metadata_observed_at)>metadata_observed_at, "
+                + "COALESCE(VALUES(preview_url), preview_url), preview_url), "
+                + "updated_at=IF(VALUES(metadata_observed_at)>metadata_observed_at, CURRENT_TIMESTAMP(6), updated_at), "
+                + "metadata_version=IF(VALUES(metadata_observed_at)>metadata_observed_at, "
+                + "metadata_version+1, metadata_version), "
+                + "metadata_observed_at=GREATEST(metadata_observed_at, VALUES(metadata_observed_at))",
                 music.provider(), music.external_music_id(), music.title(), music.artist_name(),
                 music.album_cover_url(), music.preview_url());
         Long id = jdbc.queryForObject("SELECT id FROM music WHERE provider=? AND external_music_id=?",

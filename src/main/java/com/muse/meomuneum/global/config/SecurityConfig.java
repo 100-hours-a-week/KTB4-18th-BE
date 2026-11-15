@@ -75,6 +75,8 @@ public class SecurityConfig {
                                 "/api/v1/recommendations/**").permitAll();
                     }
                     authorize.requestMatchers("/api/v1/auth/**").permitAll()
+                            .requestMatchers(HttpMethod.POST, "/api/v1/admin/music-search-storage/*/requeue")
+                            .hasRole("ADMIN")
                             .requestMatchers(HttpMethod.POST, "/api/v1/users/signup").permitAll()
                             .requestMatchers(HttpMethod.GET, "/api/v1/users/availability/**").permitAll()
                             .requestMatchers(HttpMethod.GET, "/api/v1/terms", "/api/v1/terms/**").permitAll()

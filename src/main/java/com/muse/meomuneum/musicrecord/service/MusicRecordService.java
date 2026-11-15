@@ -11,9 +11,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,7 +37,6 @@ import tools.jackson.databind.JsonNode;
 @Service
 public class MusicRecordService {
     private static final int PAGE_SIZE = 20;
-    private static final Logger log = LoggerFactory.getLogger(MusicRecordService.class);
     private final MusicSearchStorageService searchStorage;
     private final MusicRecordRepository repository;
     private final ItunesMusicSearchClient itunes;
@@ -118,12 +114,7 @@ public class MusicRecordService {
         List<MusicItem> storageSnapshot = List.copyOf(results.stream()
                 .filter(item -> storageSeen.add(item.external_music_id())).toList());
         if (!storageSnapshot.isEmpty()) {
-            try {
-                searchStorage.store(storageSnapshot);
-            } catch (TaskRejectedException exception) {
-                log.warn("event=music_search_storage_rejected count={} exception={}",
-                        storageSnapshot.size(), exception.getClass().getSimpleName());
-            }
+            searchStorage.store(storageSnapshot);
         }
         return candidates;
     }

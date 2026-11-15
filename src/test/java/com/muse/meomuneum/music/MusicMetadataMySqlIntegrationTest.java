@@ -82,6 +82,8 @@ class MusicMetadataMySqlIntegrationTest {
                 "INSERT INTO music (provider,external_music_id,title,artist_name) VALUES ('ITUNES','2',?,?)",
                 TITLE, ARTIST)).hasMessageContaining("Data too long for column 'artist_name'");
         copyMigration(MIGRATION);
+        copyMigration("V20261110093705__create_music_search_ingest_jobs.sql");
+        copyMigration("V20261115190842__add_music_search_storage_recovery.sql");
         flyway().migrate();
         assertThat(jdbc.queryForObject("SELECT artist_name FROM music WHERE external_music_id='1'", String.class))
                 .isEqualTo("가수");
@@ -89,7 +91,7 @@ class MusicMetadataMySqlIntegrationTest {
                 "V20260923142421__create_chat_room_foundation.sql",
                 "V20260925174748__create_map_dots_and_music_records_tables.sql")) {
             try (var connection = dataSource.getConnection()) {
-                ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
+                ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/music-search-legacy/" + file));
             }
         }
         jdbc.update(
@@ -106,7 +108,7 @@ class MusicMetadataMySqlIntegrationTest {
     }
 
     private static void copyMigration(String file) throws Exception {
-        try (var input = new ClassPathResource("db/migration/" + file).getInputStream()) {
+        try (var input = new ClassPathResource("db/music-search-legacy/" + file).getInputStream()) {
             Files.copy(input, migrations.resolve(file));
         }
     }
