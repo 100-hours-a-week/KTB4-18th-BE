@@ -87,7 +87,12 @@ class SongRegistrationMySqlIntegrationTest {
                 "V20261110135304__add_music_release_epoch.sql",
                 "V20260921200528__create_users_table.sql", "V20260923142421__create_chat_room_foundation.sql",
                 "V20260925174748__create_map_dots_and_music_records_tables.sql",
-                "V20261108192420__add_chat_music_catalog_foundation.sql")) {
+                "V20261108192420__add_chat_music_catalog_foundation.sql",
+                "V20261110193555__create_music_search_ingest_jobs.sql",
+                "V20261115190842__add_music_search_storage_recovery.sql",
+                "V20261115204849__align_music_search_ingest_metadata_columns.sql",
+                "V20261115233805__align_music_catalog_compatibility.sql",
+                "V20261115233818__extend_music_search_dlq_payload.sql")) {
             try (var connection = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
             }
