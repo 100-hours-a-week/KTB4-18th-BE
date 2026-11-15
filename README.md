@@ -110,7 +110,7 @@ local/dev/prod 간 인증 코드는 동일하지만 데이터와 비밀값은 �
 ## 음악 기록 로컬 개발 프로필
 
 음악 기록용 별도 개발 DB는 `dev,music-record-local` 프로필로 실행합니다.
-이 프로필은 Gradle이 준비한 마이그레이션 중 공유 `regions`·채팅 기반 테이블을 먼저 생성하고,
+이 프로필은 JAR에 포함된 `classpath:db/music-record-local`의 고정 SQL 목록에서 공유 `regions`·채팅 기반 테이블을 먼저 생성하고,
 후행 도트·음악 기록 테이블을 생성하고 지도 카탈로그의 도트 1,050개를 적재합니다. 일반 `dev` 프로필은 전체 마이그레이션을 실행합니다.
 여러 행정구역에 걸친 도트의 `region_id`는 카탈로그의 첫 지역을 대표 지역으로 사용하며, 사용자에게 표시하는 현재 장소는 별도 위치 판정 결과를 사용합니다.
 
@@ -121,8 +121,8 @@ set +a
 ./gradlew bootRun --args='--spring.profiles.active=dev,music-record-local'
 ```
 
-`bootRun`은 `prepareMusicRecordLocalMigrations`를 먼저 실행합니다. IDE에서 애플리케이션을 직접 실행할 때는
-`./gradlew prepareMusicRecordLocalMigrations`를 먼저 실행하고 두 프로필을 모두 활성화하세요.
+`processResources`가 전용 SQL을 classpath에 패키징하며 기존 `build/music-record-local-migrations`도 유지합니다.
+IDE에서는 Gradle 리소스 처리를 실행하고 두 프로필을 모두 활성화하세요.
 임시 프로필에서는 일부 마이그레이션만 사용하므로 JPA의 전체 스키마 검증을 끕니다. 음악 기록 SQL의 Flyway 검증은 유지됩니다.
 새 음악 기록 마이그레이션을 추가하면 `build.gradle`의 전용 SQL 목록에도 추가해야 합니다.
 이 프로필은 로컬 개발 전용이며 통합 검증이나 배포에 사용하지 않습니다.
@@ -158,7 +158,7 @@ set +a
 SERVER_PORT=8082 ./gradlew bootRun --args='--spring.profiles.active=dev,music-record-signup-local'
 ```
 
-새 프로필은 `prepareMusicRecordSignupLocalMigrations`의 SQL만 실행하며 원본 migration을
+새 프로필은 `classpath:db/music-record-signup-legacy`의 고정 SQL만 실행하며 원본 migration을
 수정하지 않습니다. Flyway 전 URL·설정 계정과 실제 연결 스키마·계정을 검사해 로컬 전용
 대상이 아니면 실행을 거부합니다. IntelliJ에서 직접 실행하면 위 Gradle 준비 태스크를 먼저
 실행하고 프로필 순서를 `dev,music-record-signup-local`로 지정합니다.
@@ -176,6 +176,112 @@ SERVER_PORT=8082 ./gradlew bootRun --args='--spring.profiles.active=dev,music-re
 해당 앱의 Kakao Maps API 사용을 활성화하세요. 키는 백엔드의 `Authorization: KakaoAK ...`
 헤더에만 사용하며 프론트엔드로 전달하지 않습니다. 기존 위치 API의 요청·응답 형식은 유지됩니다.
 Kakao 조회가 성공한 시점부터 위치 토큰의 유효시간은 300초입니다.
+
+### 음악 검색 결과의 영속 접수와 백그라운드 저장
+
+외부 iTunes 검색에 성공하면 응답을 보내기 전에 검색 결과의 고유 곡들을
+`music_search_ingest_jobs`에 한 트랜잭션으로 접수합니다. 이 DB 커밋이 확인되지 않으면 검색은
+성공으로 응답하지 않고 `503 Service Unavailable`을 반환합니다. 따라서 프로세스 메모리 안의
+비동기 큐에만 남아 있던 작업이 앱 종료나 재시작으로 사라지는 문제를 줄입니다.
+
+별도 Spring Bean의 `@Async("musicSearchStorageExecutor")` worker가 고정 스레드와 유한 양수 큐를
+사용합니다. poller는 worker 수와 큐 용량의 합만큼만 예약하고, MySQL `FOR UPDATE SKIP LOCKED`로
+기한이 된 작업을 claim합니다. claim과 dispatch 거부는 저장 시도 횟수를 소모하지 않습니다.
+실제 worker가 시작할 때 짧은 트랜잭션에서 시도 횟수를 증가시키며, 별도 새 저장 트랜잭션에서
+현재 token·payload version·lease를 잠근 뒤 `music` upsert와 `DONE`을 함께 커밋합니다.
+미시작 lease 만료는 횟수 증가 없이 회수하며, 시작한 작업의 만료는 실패 시도로 복구합니다.
+
+metadata의 관찰 시각은 접수 시작 시 DB에서 한 번 읽고 identity 잠금 전부터 유지합니다.
+엄격히 더 최신인 payload만 교체하고 version을 증가시킵니다. 같은 시각의 다른 payload는 먼저
+커밋한 값을 유지합니다. 동일 payload의 새 관찰은 시각만 전진시키며 작업을 다시 실행하지 않습니다.
+처리 중 payload가 바뀌면 이전 token을 취소하고 새 version을 `QUEUED`로 만듭니다.
+`music`은 더 최신 관찰 또는 동일 시각의 높은 version만 반영하고 기존 identity/FK와 알려진 URL을
+보존합니다. 음악 기록·추천의 동기 저장도 DB 쓰기 관찰 시각을 기록하여 오래된 검색 작업의 덮어쓰기를
+막습니다. 이는 로컬 관찰 순서이며 provider 수정 시각을 알 수 없어 늦게 도착한 provider 응답 자체의
+신선도를 보장하지 않습니다.
+
+실패 트랜잭션 롤백 뒤 트랜잭션 밖에서 지수 backoff와 equal jitter를 계산합니다.
+기본 cap은 첫 실패 5초, 다음 10초, 이후 두 배로 증가해 최대 300초이며 실제 지연은 cap의 절반부터
+cap 사이입니다. sleep 없이 별도 짧은 트랜잭션으로 다음 시각과 횟수를 보존합니다.
+영구 오류 또는 최대 시도 소진은 실패 당시 payload를 별도 `music_search_ingest_dlq`에 저장하고
+Outbox를 `DEAD`로 바꾸는 단일 트랜잭션입니다. persistence 실패는 lease 복구 대상으로 남습니다.
+
+| 설정 | 기본값 | 설명 |
+| --- | ---: | --- |
+| `MUSIC_SEARCH_STORAGE_WORKERS` | `2` | 고정 worker 수 |
+| `MUSIC_SEARCH_STORAGE_QUEUE_CAPACITY` | `20` | 메모리 대기 큐의 양수 상한 |
+| `MUSIC_SEARCH_STORAGE_POLL_DELAY_MS` | `1000` | 조회 및 dispatch 거부 후 재접수 지연(ms) |
+| `MUSIC_SEARCH_STORAGE_BATCH_SIZE` | `20` | poll별 최대 claim/복구 건수 |
+| `MUSIC_SEARCH_STORAGE_LEASE_SECONDS` | `120` | 시작 전후 lease 유효시간(초) |
+| `MUSIC_SEARCH_STORAGE_MAX_ATTEMPTS` | `3` | 최초 저장을 포함한 최대 시도 |
+| `MUSIC_SEARCH_STORAGE_RETRY_BASE_MS` | `5000` | 지수 backoff 초기 cap(ms) |
+| `MUSIC_SEARCH_STORAGE_RETRY_MAX_MS` | `300000` | 지수 backoff 최대 cap(ms) |
+| `MUSIC_SEARCH_STORAGE_SHUTDOWN_AWAIT_SECONDS` | `120` | 종료 대기 상한(초) |
+
+로그의 `jobId`를 확인한 뒤 ADMIN 권한으로
+`POST /api/v1/admin/music-search-storage/{jobId}/requeue`를 호출하면 선택한 `DEAD` 작업만
+시도 횟수와 오류를 초기화해 `QUEUED`로 만들고 해당 DLQ 실패 이력에 replay 시각을 기록합니다.
+새 검색의 payload가 `DEAD`에 접수되어도 `DEAD`를 유지하며, 관리자가 replay해야 실행합니다.
+Replay는 현재 최신 payload·identity·version·관찰 시각을 유지합니다. 과거 DLQ payload는 바꾸지 않습니다.
+없는 ID는 404, `DEAD`가 아닌 ID는 409입니다. 기존 JWT·ADMIN·요청 출처·CSRF 검증을 적용합니다.
+요청·응답 형식은 [OpenAPI 계약](api/music-search-storage.openapi.yaml)에 기록했습니다.
+
+`V20261115190842__add_music_search_storage_recovery.sql`은 기존 작업 migration 뒤에 적용하는
+additive 변경으로 freshness 필드와 DLQ를 추가하고 기존 `FAILED` payload를 DLQ와 `DEAD`로 옮깁니다.
+기존 Outbox payload 관찰 시각은 최초 `created_at`으로 보수적으로 채워 retry 시각이 최신 metadata를
+덮어쓰지 않게 합니다. 전체 Flyway와 두 local migration staging 목록 모두 포함합니다.
+이미 적용된 migration이나 이력은 수정하지 않습니다. 배포 시 기존 애플리케이션·worker 인스턴스를
+먼저 중지하여 이전 버전의 검색 접수와 처리를 함께 멈춘 뒤 migration을 적용하고 새 인스턴스를
+시작해야 합니다. 구·신 worker 혼용은 지원하지 않습니다. 롤백은 worker를
+멈춘 상태에서 새 스키마와 DLQ 데이터를 보존하며 기존 바이너리를 그대로 실행하지 않습니다.
+종료 시 유한 큐를 대기 시간까지 비우며, 강제 종료의 잔여 claim은 lease로 회수합니다.
+lease는 SQL 실행의 강제 제한 시간이 아니므로 DB의 잠긴 트랜잭션은 DB timeout/연결 종료까지
+잠금을 유지할 수 있습니다. 이 변경에는 배포나 운영 데이터 삭제 작업이 포함되지 않습니다.
+
+추가 호환 migration은 기존 음악의 nullable storefront 이름·발매 시각과 playback 검증 테이블의 구조를 먼저 확인한 뒤 누락된 구조만 추가합니다. DLQ에는 동일한 다섯 metadata 필드를 추가하며 과거 실패 이력의 값은 NULL로 유지합니다. 현재 작업의 metadata로 과거 실패 snapshot을 추정하지 않습니다. canonical과 세 frozen 경로 모두 새 migration만 마지막에 추가합니다.
+
+### 음악 검색 migration 이력별 실행 경로
+
+기본 처리 리소스 `classpath:db/migration`은 origin/dev의
+`V20261110193555__create_music_search_ingest_jobs.sql`만 creator로 실행합니다.
+기존 `V20261110093705__create_music_search_ingest_jobs.sql`은 원본 경로와 바이트를 보존하지만
+기본 처리 리소스에서는 제외합니다. 원본 `src/main/resources/db/migration`에는 두 creator가
+공존하므로 이 디렉터리를 filesystem Flyway location으로 직접 실행하지 마세요.
+
+기동 전에 대상 DB의 실제 Flyway history와 `SHOW CREATE TABLE music_search_ingest_jobs`를
+읽고 이력에 맞는 경로를 선택합니다. 이미 `20261110093705`를 적용한 전체 로컬 이력은
+`dev,music-search-legacy`처럼 `music-search-legacy` 프로필을 명시하여
+`classpath:db/music-search-legacy`의 고정 전체 목록을 선택합니다. 두 전용 로컬 프로필은
+각각 기존 subset 이력만 지원하며 전체 로컬 이력의 대체 경로가 아닙니다. 세 legacy 목록은
+JAR 내부에 포함되며 작업 디렉터리와 무관하게 실행됩니다. 기존 build staging 출력도 유지합니다.
+signup 전용 프로필의 DB·계정 격리 검사는 유지됩니다.
+
+기본 경로를 legacy 이력에 선택하면 시작 guard가 DDL 전에 중단하고 명시적 프로필 선택을 안내합니다.
+다른 미해결 applied 이력(미래 버전 포함)도 중단합니다. 혼합 creator·누락·checksum 불일치는
+정상 Flyway 검증을 통해 실패하며 자동 경로 전환이나 이력 수정은 하지 않습니다.
+SQL·이력을 수정하거나 `repair`, `clean`, `baseline`, `outOfOrder`, 검증 우회로 해결하지 마세요.
+
+새 `V20261115204849__align_music_search_ingest_metadata_columns.sql`은 jobs의 nullable
+`title_us VARCHAR(255)`, `artist_name_us VARCHAR(1000)`, `title_ko VARCHAR(255)`,
+`artist_name_ko VARCHAR(1000)`, `release_epoch_second BIGINT`만 조건부 추가합니다.
+다섯 필드 전체의 기존 type·길이·nullable 정의를 먼저 검사하여 불일치하면 어떤 추가 DDL보다
+먼저 실패합니다. 기존 값은 보존하고 없는 필드는 NULL로 추가하며 canonical creator에서는 no-op입니다.
+CREATE ROUTINE 권한 없이 실행하며 기존 recovery SQL은 바꾸지 않습니다.
+
+실제 MySQL 9.7 테스트는 고정 Git 객체 `c199b8f67bdf435a5c45adea11a39e5a58eaa864`의
+46개 origin/dev SQL을 바이트 그대로 추출하고 recovery·alignment를 overlay하여 빈 DB와
+적용된 dev 이력을 검증합니다. 객체가 없으면 검증은 실패하며 fetch 후 다시 실행해야 합니다.
+manifest는 `build/reports/music-search-migration/origin-manifest.txt`에 생성됩니다.
+이는 dev 애플리케이션 병합이나 rebase 검증을 뜻하지 않습니다. origin/dev가 바뀌면 객체와 검증을 갱신하세요.
+
+배포는 이 작업에 포함되지 않습니다. 실제 rollout 전 이력·스키마 검사, 백업과 스테이징 잠금 시간을
+확인하고 위 recovery 절차대로 구·신 worker를 모두 중지합니다. MySQL DDL은 잠금과 자동 commit이
+발생할 수 있어 부분 실패를 자동 rollback하지 않습니다. 실패 시 startup을 멈추고 스키마·데이터·이력을
+보존하여 별도 승인된 forward correction을 준비하세요. 조건부 추가가 재실행에 안전해도 failed history를
+자동 복구하지 않습니다. 롤백은 새 스키마와 DLQ를 보존합니다.
+접근 가능한 일부 auth 테스트 DB 이력은 jobs creator 이전이므로 다른 실제 DB의 적용 여부를 증명하지
+못합니다. origin/dev에 없는 auth `20261028003054`와 음악 외 이력 차이는 범위 밖이며 변경하지 않습니다.
+알 수 없는 live 이력과 정지된 DB는 검증했다고 간주하지 않습니다.
 
 ### 음악 기록 상세·수정 API
 

@@ -129,10 +129,18 @@ public class RecommendationRepository {
         MusicMetadataPolicy.validate(track.title(), track.artistName());
         // 같은 곡은 중복 저장하지 않습니다. UNIQUE(provider, external_music_id)와 함께 사용합니다.
         jdbc.update("""
-                INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, preview_url)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE title = VALUES(title), artist_name = VALUES(artist_name),
-                    album_cover_url = VALUES(album_cover_url), preview_url = VALUES(preview_url)
+                INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, preview_url,
+                    metadata_observed_at, metadata_version)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), 1)
+                ON DUPLICATE KEY UPDATE
+                    title=IF(VALUES(metadata_observed_at)>metadata_observed_at, VALUES(title), title),
+                    artist_name=IF(VALUES(metadata_observed_at)>metadata_observed_at, VALUES(artist_name), artist_name),
+                    album_cover_url=IF(VALUES(metadata_observed_at)>metadata_observed_at,
+                        VALUES(album_cover_url), album_cover_url),
+                    preview_url=IF(VALUES(metadata_observed_at)>metadata_observed_at, VALUES(preview_url), preview_url),
+                    metadata_version=IF(VALUES(metadata_observed_at)>metadata_observed_at,
+                        metadata_version+1, metadata_version),
+                    metadata_observed_at=GREATEST(metadata_observed_at, VALUES(metadata_observed_at))
                 """, track.provider(), track.externalId(), track.title(), track.artistName(), track.coverUrl(),
                 track.previewUrl());
         Long musicId = jdbc.queryForObject("SELECT id FROM music WHERE provider = ? AND external_music_id = ?",

@@ -35,12 +35,13 @@ paths:
               example: { message: music search storage unavailable, data: null }
   /api/v1/admin/music-search-storage/{jobId}/requeue:
     post:
-      operationId: requeueFailedMusicSearchJob
+      operationId: requeueDeadMusicSearchJob
       summary: 실패한 음악 검색 저장 작업 재투입
       description: |
-        음악 검색 결과 저장 작업 중 FAILED 상태인 작업만 즉시 QUEUED로 되돌린다.
+        음악 검색 결과 저장 작업 중 DEAD 상태인 작업만 즉시 QUEUED로 되돌린다.
         attempt_count는 0으로 초기화되고 다음 worker poll에서 다시 처리될 수 있다.
         ROLE_ADMIN 권한이 필요하며 기존 JWT, 요청 출처 및 CSRF 보호를 적용한다.
+        현재 최신 payload의 관찰 시각과 version은 보존하며 DLQ 실패 이력에는 replay 시각만 기록한다.
         검색 metadata나 원본 payload는 응답에 포함하지 않는다.
       security:
         - bearerAuth: []
@@ -83,7 +84,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: 작업 상태가 FAILED가 아님
+          description: 작업 상태가 DEAD가 아님
           content:
             application/json:
               schema:

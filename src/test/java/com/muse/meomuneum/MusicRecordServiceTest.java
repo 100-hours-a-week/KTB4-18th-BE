@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,6 +82,20 @@ class MusicRecordServiceTest {
         assertThat(service.search("가수", "ITUNES", null, 1).items()).hasSize(1);
         verify(searchStorage).store(all);
         verify(itunes).search("가수");
+    }
+
+    @Test
+    void externalSearchDoesNotReturnSuccessWhenDurableAdmissionFails() {
+        var item = new MusicItem(null, "ITUNES", "123", "song", "artist", null, null, null, false);
+        when(itunes.search("song")).thenReturn(List.of(item));
+        doThrow(new MusicRecordException("music_search_storage_unavailable", HttpStatus.SERVICE_UNAVAILABLE,
+                "music search storage unavailable")).when(searchStorage).store(any());
+
+        assertThatThrownBy(() -> service.search("song", "ITUNES", null, 20))
+                .isInstanceOfSatisfying(MusicRecordException.class,
+                        exception -> assertThat(exception.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
+
+        verify(searchStorage).store(List.of(item));
     }
 
     @Test

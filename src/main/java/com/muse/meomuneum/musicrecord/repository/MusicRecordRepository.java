@@ -214,25 +214,57 @@ public class MusicRecordRepository {
                 false, music.releaseEpochSecond(), null);
     }
 
+    public void upsertSearchMusic(MusicItem music, LocalDateTime observedAt, long version) {
+        MusicMetadataPolicy.validate(music.title(), music.artist_name());
+        writeSearchMusic(music, observedAt, version, false);
+    }
+
+    private void writeSearchMusic(MusicItem music, LocalDateTime observedAt, long version, boolean direct) {
+        var names = music.storefrontNames();
+        String fresh = direct
+                ? "incoming.metadata_observed_at>=music.metadata_observed_at"
+                : "incoming.metadata_observed_at>music.metadata_observed_at OR "
+                        + "(incoming.metadata_observed_at=music.metadata_observed_at AND "
+                        + "incoming.metadata_version>music.metadata_version)";
+        jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
+                + "preview_url, youtube_video_id, title_us, artist_name_us, "
+                + "title_ko, artist_name_ko, release_epoch_second, metadata_observed_at, metadata_version) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS incoming ON DUPLICATE KEY UPDATE "
+                + "title=IF(" + fresh + ", COALESCE(incoming.title_ko, music.title_ko, incoming.title), music.title), "
+                + "artist_name=IF(" + fresh
+                + ", COALESCE(incoming.artist_name_ko, music.artist_name_ko, "
+                + "incoming.artist_name), music.artist_name), "
+                + "album_cover_url=IF(" + fresh
+                + ", COALESCE(incoming.album_cover_url, music.album_cover_url), music.album_cover_url), "
+                + "preview_url=IF(" + fresh
+                + ", COALESCE(incoming.preview_url, music.preview_url), music.preview_url), "
+                + "youtube_video_id=IF(" + fresh
+                + ", COALESCE(incoming.youtube_video_id, music.youtube_video_id), music.youtube_video_id), "
+                + "title_us=IF(" + fresh + ", COALESCE(incoming.title_us, music.title_us), music.title_us), "
+                + "artist_name_us=IF(" + fresh
+                + ", COALESCE(incoming.artist_name_us, music.artist_name_us), music.artist_name_us), "
+                + "title_ko=IF(" + fresh + ", COALESCE(incoming.title_ko, music.title_ko), music.title_ko), "
+                + "artist_name_ko=IF(" + fresh
+                + ", COALESCE(incoming.artist_name_ko, music.artist_name_ko), music.artist_name_ko), "
+                + "release_epoch_second=IF(" + fresh
+                + ", COALESCE(incoming.release_epoch_second, music.release_epoch_second), music.release_epoch_second), "
+                + "updated_at=IF(" + fresh + ", CURRENT_TIMESTAMP(6), music.updated_at), "
+                + "metadata_version=IF(" + fresh + ", "
+                + (direct ? "music.metadata_version+1" : "incoming.metadata_version") + ", music.metadata_version), "
+                + "metadata_observed_at=GREATEST(music.metadata_observed_at, incoming.metadata_observed_at)",
+                music.provider(), music.external_music_id(), music.title(), music.artist_name(),
+                music.album_cover_url(), music.preview_url(),
+                music.youtube_video_id() != null && music.youtube_video_id().matches("[A-Za-z0-9_-]{11}")
+                        ? music.youtube_video_id()
+                        : null,
+                names.titleUs(), names.artistNameUs(), names.titleKo(), names.artistNameKo(),
+                music.releaseEpochSecond(), observedAt, version);
+    }
+
     public long upsertMusic(MusicItem music) {
         MusicMetadataPolicy.validate(music.title(), music.artist_name());
-        var names = music.storefrontNames();
-        jdbc.update("INSERT INTO music (provider, external_music_id, title, artist_name, album_cover_url, "
-                + "preview_url, " + STOREFRONT_COLUMNS + ", release_epoch_second) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS incoming "
-                + "ON DUPLICATE KEY UPDATE "
-                + "title=COALESCE(incoming.title_ko, music.title_ko, incoming.title), "
-                + "artist_name=COALESCE(incoming.artist_name_ko, music.artist_name_ko, incoming.artist_name), "
-                + "title_us=COALESCE(incoming.title_us, music.title_us), "
-                + "artist_name_us=COALESCE(incoming.artist_name_us, music.artist_name_us), "
-                + "title_ko=COALESCE(incoming.title_ko, music.title_ko), "
-                + "artist_name_ko=COALESCE(incoming.artist_name_ko, music.artist_name_ko), "
-                + "album_cover_url=COALESCE(incoming.album_cover_url, music.album_cover_url), "
-                + "preview_url=COALESCE(incoming.preview_url, music.preview_url), "
-                + "updated_at=CURRENT_TIMESTAMP(6)",
-                music.provider(), music.external_music_id(), music.title(), music.artist_name(),
-                music.album_cover_url(), music.preview_url(), names.titleUs(), names.artistNameUs(),
-                names.titleKo(), names.artistNameKo(), music.releaseEpochSecond());
+        LocalDateTime observed = jdbc.queryForObject("SELECT CURRENT_TIMESTAMP(6)", LocalDateTime.class);
+        writeSearchMusic(music, observed, 1, true);
         Long id = jdbc.queryForObject("SELECT id FROM music WHERE provider=? AND external_music_id=?",
                 Long.class, music.provider(), music.external_music_id());
         if (id == null) {
@@ -248,7 +280,8 @@ public class MusicRecordRepository {
             return;
         }
         jdbc.update("UPDATE music SET title_us=COALESCE(?, title_us), artist_name_us=COALESCE(?, artist_name_us), "
-                + "title_ko=COALESCE(?, title_ko), artist_name_ko=COALESCE(?, artist_name_ko) "
+                + "title_ko=COALESCE(?, title_ko), artist_name_ko=COALESCE(?, "
+                + "artist_name_ko), metadata_observed_at=CURRENT_TIMESTAMP(6), metadata_version=metadata_version+1 "
                 + "WHERE provider=? AND external_music_id=?",
                 names.titleUs(), names.artistNameUs(), names.titleKo(), names.artistNameKo(),
                 music.provider(), music.external_music_id());

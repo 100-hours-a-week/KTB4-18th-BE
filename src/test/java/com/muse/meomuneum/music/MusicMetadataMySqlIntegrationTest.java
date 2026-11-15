@@ -90,6 +90,8 @@ class MusicMetadataMySqlIntegrationTest {
         copyMigration("V20261110133622__add_music_storefront_names.sql");
         copyMigration("V20261110135304__add_music_release_epoch.sql");
         copyMigration("V20261110193555__create_music_search_ingest_jobs.sql");
+        copyMigration("V20261115190842__add_music_search_storage_recovery.sql");
+        copyMigration("V20261115204849__align_music_search_ingest_metadata_columns.sql");
         flyway().migrate();
         assertThat(jdbc.queryForObject("SELECT artist_name FROM music WHERE external_music_id='1'", String.class))
                 .isEqualTo("가수");
@@ -101,6 +103,9 @@ class MusicMetadataMySqlIntegrationTest {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
             }
         }
+        copyMigration("V20261115233805__align_music_catalog_compatibility.sql");
+        copyMigration("V20261115233818__extend_music_search_dlq_payload.sql");
+        flyway().migrate();
         jdbc.update(
                 "INSERT INTO users (id,email,password_hash,nickname,role) "
                         + "VALUES (1,'test@test.local','test','테스트','USER')");
@@ -172,7 +177,8 @@ class MusicMetadataMySqlIntegrationTest {
     @Test
     void ingestionEnrichesCompletedAndClaimedJobsWithBothStorefronts() throws Exception {
         var tx = new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
-        var jobs = new MusicSearchIngestJobService(new MusicSearchIngestJobRepository(jdbc), records);
+        var jobs = new MusicSearchIngestJobService(new MusicSearchIngestJobRepository(jdbc), records,
+                new com.muse.meomuneum.musicrecord.repository.MusicSearchIngestDlqRepository(jdbc), 3);
         var englishNames = new StorefrontNames("Title", "Artist", null, null, false);
         var bilingualNames = new StorefrontNames("Title", "Artist", "한국 제목", "한국 가수", false);
         var english = new MusicItem(null, "ITUNES", "860", "Title", "Artist", null, null, null, false,
@@ -186,14 +192,14 @@ class MusicMetadataMySqlIntegrationTest {
         tx.executeWithoutResult(status -> jobs.admit(List.of(english, english2)));
         var firstBatch = tx.execute(status -> jobs.claim(2, 60));
         assertThat(firstBatch).hasSize(2);
-        tx.executeWithoutResult(status -> jobs.complete(firstBatch.getFirst()));
+        tx.executeWithoutResult(status -> jobs.complete(jobs.start(firstBatch.getFirst(), 60)));
         assertThat(records.findMusic("ITUNES", "860").orElseThrow().title()).isEqualTo("Title");
 
         tx.executeWithoutResult(status -> jobs.admit(List.of(bilingual, bilingual2)));
         tx.executeWithoutResult(status -> jobs.complete(firstBatch.getLast()));
         var enriched = tx.execute(status -> jobs.claim(2, 60));
-        assertThat(enriched).hasSize(1);
-        tx.executeWithoutResult(status -> jobs.complete(enriched.getFirst()));
+        assertThat(enriched).hasSize(2);
+        tx.executeWithoutResult(status -> enriched.forEach(job -> jobs.complete(jobs.start(job, 60))));
         tx.executeWithoutResult(status -> jobs.admit(List.of(english, bilingual2)));
         var remaining = tx.execute(status -> jobs.claim(2, 60));
         assertThat(remaining).isEmpty();
@@ -202,7 +208,7 @@ class MusicMetadataMySqlIntegrationTest {
             var music = records.findMusic("ITUNES", id).orElseThrow();
             assertThat(music.title()).isEqualTo("한국 제목");
             assertThat(music.artist_name()).isEqualTo("한국 가수");
-            assertThat(music.releaseEpochSecond()).isEqualTo("861".equals(id) ? 1735689600L : null);
+            assertThat(music.releaseEpochSecond()).isEqualTo(1735689600L);
             assertThat(jdbc.queryForObject("SELECT title_us FROM music WHERE external_music_id=?", String.class, id))
                     .isEqualTo("Title");
             var location = records.findLocation(1L, 2L, 1L).orElseThrow();

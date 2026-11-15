@@ -87,7 +87,12 @@ class SongRegistrationMySqlIntegrationTest {
                 "V20261110135304__add_music_release_epoch.sql",
                 "V20260921200528__create_users_table.sql", "V20260923142421__create_chat_room_foundation.sql",
                 "V20260925174748__create_map_dots_and_music_records_tables.sql",
-                "V20261108192420__add_chat_music_catalog_foundation.sql")) {
+                "V20261108192420__add_chat_music_catalog_foundation.sql",
+                "V20261110193555__create_music_search_ingest_jobs.sql",
+                "V20261115190842__add_music_search_storage_recovery.sql",
+                "V20261115204849__align_music_search_ingest_metadata_columns.sql",
+                "V20261115233805__align_music_catalog_compatibility.sql",
+                "V20261115233818__extend_music_search_dlq_payload.sql")) {
             try (var connection = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
             }
@@ -153,9 +158,9 @@ class SongRegistrationMySqlIntegrationTest {
         assertThat(page.items()).extracting(MusicItem::releaseEpochSecond).containsExactly(12L, 10L);
         long highWatermark = repository.highestMusicId();
         repository.upsertMusic(releaseItem(2, 18L));
-        assertThat(repository.findMusic("ITUNES", "2").orElseThrow().releaseEpochSecond()).isEqualTo(10L);
+        assertThat(repository.findMusic("ITUNES", "2").orElseThrow().releaseEpochSecond()).isEqualTo(18L);
         repository.upsertMusic(releaseItem(22, 7L));
-        assertThat(repository.findMusic("ITUNES", "22").orElseThrow().releaseEpochSecond()).isNull();
+        assertThat(repository.findMusic("ITUNES", "22").orElseThrow().releaseEpochSecond()).isEqualTo(7L);
         repository.insertSelectedMusic(releaseItem(23, 1L));
 
         var remaining = new ArrayList<String>();
@@ -164,8 +169,8 @@ class SongRegistrationMySqlIntegrationTest {
             assertThat(page.source()).isEqualTo("DB");
             remaining.addAll(page.items().stream().map(MusicItem::external_music_id).toList());
         }
-        var expected = new ArrayList<>(List.of("1", "5", "3"));
-        for (int externalId = 22; externalId >= 6; externalId--) {
+        var expected = new ArrayList<>(List.of("1", "5", "3", "22"));
+        for (int externalId = 21; externalId >= 6; externalId--) {
             expected.add(Integer.toString(externalId));
         }
         assertThat(remaining).containsExactlyElementsOf(expected);
