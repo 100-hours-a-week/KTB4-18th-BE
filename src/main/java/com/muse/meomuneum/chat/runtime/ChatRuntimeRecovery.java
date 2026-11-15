@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -17,6 +18,7 @@ public final class ChatRuntimeRecovery {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final String environment;
+    private final boolean hasMusicStorage;
 
     public ChatRuntimeRecovery(JdbcTemplate jdbc, PlatformTransactionManager manager, String environment) {
         if (environment == null || !environment.matches("[a-z0-9][a-z0-9-]{0,31}")) {
@@ -29,6 +31,21 @@ public final class ChatRuntimeRecovery {
         transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
         transactions.setTimeout(2);
         this.environment = environment;
+        hasMusicStorage = musicStorageExists();
+    }
+
+    private boolean musicStorageExists() {
+        try {
+            jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_outbox WHERE 1=0", Integer.class);
+            return true;
+        } catch (BadSqlGrammarException failure) {
+            // Only an actually absent MySQL table is optional. Missing grants/connectivity must block recovery.
+            var sql = failure.getSQLException();
+            if (sql != null && sql.getErrorCode() == 1146 && "42S02".equals(sql.getSQLState())) {
+                return false;
+            }
+            throw failure;
+        }
     }
 
     public record Lease(long epoch, String token, String generation, String serverId) {
@@ -102,6 +119,12 @@ public final class ChatRuntimeRecovery {
                     UPDATE chat_message_outbox SET status='EXPIRED',claim_token=NULL
                     WHERE environment=? AND epoch<>? AND status='PENDING' LIMIT 1000
                     """, environment, lease.epoch());
+            if (hasMusicStorage) {
+                expired += jdbc.update("""
+                        UPDATE chat_music_outbox SET status='EXPIRED',claim_token=NULL,claim_until=NULL
+                        WHERE environment=? AND epoch<>? AND status='PENDING' LIMIT 1000
+                        """, environment, lease.epoch());
+            }
             if (jdbc.update("""
                     UPDATE chat_runtime_control SET recovery_lease_until=TIMESTAMPADD(SECOND,15,UTC_TIMESTAMP(6))
                     WHERE environment=? AND recovery_token=? AND recovery_lease_until>UTC_TIMESTAMP(6)
@@ -133,6 +156,12 @@ public final class ChatRuntimeRecovery {
                       +(SELECT COUNT(*) FROM chat_view_runtime WHERE environment=? AND epoch<>? AND state<>'LEFT')
                       +(SELECT COUNT(*) FROM chat_message_outbox WHERE environment=? AND epoch<>? AND status='PENDING')
                     """, Integer.class, environment, environment, lease.epoch(), environment, lease.epoch());
+            if (hasMusicStorage) {
+                unfinished += jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM chat_music_outbox
+                        WHERE environment=? AND epoch<>? AND status='PENDING'
+                        """, Integer.class, environment, lease.epoch());
+            }
             if (unfinished != 0) {
                 throw new IllegalStateException("Chat recovery chunks are incomplete");
             }

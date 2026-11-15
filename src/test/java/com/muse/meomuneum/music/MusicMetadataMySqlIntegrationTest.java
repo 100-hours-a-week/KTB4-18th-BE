@@ -2,6 +2,7 @@ package com.muse.meomuneum.music;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -41,12 +42,16 @@ import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.musicrecord.controller.MusicRecordController;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames;
 import com.muse.meomuneum.musicrecord.provider.ItunesMusicSearchClient;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
+import com.muse.meomuneum.musicrecord.repository.MusicSearchIngestJobRepository;
 import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchIngestJobService;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.recommendation.dto.TrackData;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
@@ -82,12 +87,16 @@ class MusicMetadataMySqlIntegrationTest {
                 "INSERT INTO music (provider,external_music_id,title,artist_name) VALUES ('ITUNES','2',?,?)",
                 TITLE, ARTIST)).hasMessageContaining("Data too long for column 'artist_name'");
         copyMigration(MIGRATION);
+        copyMigration("V20261110133622__add_music_storefront_names.sql");
+        copyMigration("V20261110135304__add_music_release_epoch.sql");
+        copyMigration("V20261110193555__create_music_search_ingest_jobs.sql");
         flyway().migrate();
         assertThat(jdbc.queryForObject("SELECT artist_name FROM music WHERE external_music_id='1'", String.class))
                 .isEqualTo("가수");
         for (String file : List.of("V20260921200528__create_users_table.sql",
                 "V20260923142421__create_chat_room_foundation.sql",
-                "V20260925174748__create_map_dots_and_music_records_tables.sql")) {
+                "V20260925174748__create_map_dots_and_music_records_tables.sql",
+                "V20261108192420__add_chat_music_catalog_foundation.sql")) {
             try (var connection = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
             }
@@ -119,7 +128,8 @@ class MusicMetadataMySqlIntegrationTest {
         when(tokens.validate("location-token", 1L)).thenReturn(new LocationResolutionClaims(
                 1L, 1L, "11", 2L, "11440", 1L, Instant.now().plusSeconds(300)));
         var service = new MusicRecordService(records, itunes, tokens, new MusicSearchCursorCodec("test-secret"),
-                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                mock(MusicSearchStorageService.class));
         var users = mock(CurrentUserResolver.class);
         when(users.resolve(any())).thenReturn(1L);
         mvc = MockMvcBuilders.standaloneSetup(new MusicRecordController(service, users))
@@ -136,6 +146,71 @@ class MusicMetadataMySqlIntegrationTest {
         mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.music.artist_name").value(ARTIST));
         assertThat(records.findMusic("ITUNES", "123").orElseThrow().artist_name()).isEqualTo(ARTIST);
+    }
+
+    @Test
+    void recordDetailExposesTheStoredPreviewOnlyForAnOwnedActiveRecord() throws Exception {
+        String previewUrl = "https://example.test/preview.m4a";
+        long musicId = records.upsertMusic(
+                new MusicItem(null, "ITUNES", "852", TITLE, ARTIST, null, previewUrl, null, false));
+        long legacyMusicId = records.findMusic("ITUNES", "1").orElseThrow().music_id();
+        var location = records.findLocation(1L, 2L, 1L).orElseThrow();
+        Instant now = Instant.now();
+        long recordId = records.saveRecord(1L, musicId, location, null, null, now);
+        long legacyRecordId = records.saveRecord(1L, legacyMusicId, location, null, null, now);
+
+        mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.preview_url").value(previewUrl));
+        mvc.perform(get("/api/v1/music-records/" + legacyRecordId)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.preview_url").value(nullValue()));
+        assertThat(records.findRecord(2L, recordId)).isEmpty();
+
+        assertThat(records.deleteRecord(1L, recordId, now)).isEqualTo(1);
+        mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void ingestionEnrichesCompletedAndClaimedJobsWithBothStorefronts() throws Exception {
+        var tx = new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
+        var jobs = new MusicSearchIngestJobService(new MusicSearchIngestJobRepository(jdbc), records);
+        var englishNames = new StorefrontNames("Title", "Artist", null, null, false);
+        var bilingualNames = new StorefrontNames("Title", "Artist", "한국 제목", "한국 가수", false);
+        var english = new MusicItem(null, "ITUNES", "860", "Title", "Artist", null, null, null, false,
+                englishNames, null);
+        var english2 = new MusicItem(null, "ITUNES", "861", "Title", "Artist", null, null, null, false,
+                englishNames, null);
+        var bilingual = new MusicItem(null, "ITUNES", "860", "한국 제목", "한국 가수", null, null, null, false,
+                bilingualNames, 1735689600L);
+        var bilingual2 = new MusicItem(null, "ITUNES", "861", "한국 제목", "한국 가수", null, null, null, false,
+                bilingualNames, 1735689600L);
+        tx.executeWithoutResult(status -> jobs.admit(List.of(english, english2)));
+        var firstBatch = tx.execute(status -> jobs.claim(2, 60));
+        assertThat(firstBatch).hasSize(2);
+        tx.executeWithoutResult(status -> jobs.complete(firstBatch.getFirst()));
+        assertThat(records.findMusic("ITUNES", "860").orElseThrow().title()).isEqualTo("Title");
+
+        tx.executeWithoutResult(status -> jobs.admit(List.of(bilingual, bilingual2)));
+        tx.executeWithoutResult(status -> jobs.complete(firstBatch.getLast()));
+        var enriched = tx.execute(status -> jobs.claim(2, 60));
+        assertThat(enriched).hasSize(1);
+        tx.executeWithoutResult(status -> jobs.complete(enriched.getFirst()));
+        tx.executeWithoutResult(status -> jobs.admit(List.of(english, bilingual2)));
+        var remaining = tx.execute(status -> jobs.claim(2, 60));
+        assertThat(remaining).isEmpty();
+
+        for (String id : List.of("860", "861")) {
+            var music = records.findMusic("ITUNES", id).orElseThrow();
+            assertThat(music.title()).isEqualTo("한국 제목");
+            assertThat(music.artist_name()).isEqualTo("한국 가수");
+            assertThat(music.releaseEpochSecond()).isEqualTo("861".equals(id) ? 1735689600L : null);
+            assertThat(jdbc.queryForObject("SELECT title_us FROM music WHERE external_music_id=?", String.class, id))
+                    .isEqualTo("Title");
+            var location = records.findLocation(1L, 2L, 1L).orElseThrow();
+            long recordId = records.saveRecord(1L, music.music_id(), location, null, null, Instant.now());
+            mvc.perform(get("/api/v1/music-records/" + recordId)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.music.title").value("한국 제목"))
+                    .andExpect(jsonPath("$.data.music.artist_name").value("한국 가수"));
+        }
     }
 
     @Test
@@ -206,7 +281,8 @@ class MusicMetadataMySqlIntegrationTest {
         };
         var failingService = new MusicRecordService(failingRepository, itunes,
                 mock(LocationResolutionTokenProvider.class), new MusicSearchCursorCodec("rollback-test-secret"),
-                new MusicSearchCandidateCache(java.time.Clock.systemUTC()));
+                new MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                mock(MusicSearchStorageService.class));
         var transaction = new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
         var body = new ObjectMapper().readTree(
                 "{\"music\":{\"provider\":\"ITUNES\",\"external_music_id\":\""

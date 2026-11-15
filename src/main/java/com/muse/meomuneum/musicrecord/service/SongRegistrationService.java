@@ -2,6 +2,7 @@ package com.muse.meomuneum.musicrecord.service;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
@@ -12,6 +13,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.dto.SongRegistrationDtos.Request;
 import com.muse.meomuneum.musicrecord.dto.SongRegistrationDtos.Response;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
@@ -25,7 +27,6 @@ public class SongRegistrationService {
     private final ItunesMusicSearchClient itunes;
     private final MusicSearchCandidateCache candidates;
     private final TransactionTemplate writes;
-    private final TransactionTemplate reads;
     private final Map<String, CompletableFuture<Response>> inFlight = new HashMap<>();
 
     public SongRegistrationService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
@@ -35,16 +36,13 @@ public class SongRegistrationService {
         this.candidates = candidates;
         writes = new TransactionTemplate(transactions);
         writes.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        reads = new TransactionTemplate(transactions);
-        reads.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        reads.setReadOnly(true);
     }
 
     public Response register(Request request) {
         String id = request.externalTrackId();
         var stored = repository.findMusic("ITUNES", id);
         if (stored.isPresent()) {
-            return new Response(stored.orElseThrow(), false);
+            return reuseStored(id, stored.orElseThrow());
         }
         CompletableFuture<Response> future;
         boolean owner;
@@ -84,19 +82,44 @@ public class SongRegistrationService {
         }
     }
 
+    private Response reuseStored(String id, MusicItem stored) {
+        var candidate = candidates.findCandidate(itunes.country(), id);
+        if (candidate.isEmpty()) {
+            return new Response(stored, false);
+        }
+        MusicItem localized = candidate.orElseThrow();
+        var names = localized.storefrontNames();
+        boolean newTitle = names.titleKo() != null && !Objects.equals(names.titleKo(), stored.title());
+        boolean newArtist = names.artistNameKo() != null && !Objects.equals(names.artistNameKo(), stored.artist_name());
+        if (!newTitle && !newArtist) {
+            return new Response(stored, false);
+        }
+        return writes.execute(status -> {
+            repository.mergeStorefrontNames(localized);
+            return new Response(repository.findMusic("ITUNES", id).orElseThrow(), false);
+        });
+    }
+
     private Response insertOrReuse(String id) {
         var stored = repository.findMusic("ITUNES", id);
         if (stored.isPresent()) {
-            return new Response(stored.orElseThrow(), false);
+            return reuseStored(id, stored.orElseThrow());
         }
-        var selected = candidates.findCandidate(itunes.country(), id).orElseGet(() -> itunes.lookup(id)
-                .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
-                        "music not found")));
+        var selected = candidates.findCandidate(itunes.country(), id)
+                .map(candidate -> candidate.storefrontNames().retryKoreanLookup()
+                        ? itunes.retryKoreanLookup(candidate)
+                        : candidate)
+                .orElseGet(() -> itunes.lookup(id)
+                        .orElseThrow(() -> new MusicRecordException("itunes_track_not_found", HttpStatus.NOT_FOUND,
+                                "music not found")));
         try {
             return writes.execute(status -> new Response(repository.insertSelectedMusic(selected), true));
         } catch (DuplicateKeyException exception) {
-            return reads.execute(status -> repository.findMusic("ITUNES", id)
-                    .map(music -> new Response(music, false)).orElseThrow(() -> exception));
+            return writes.execute(status -> {
+                repository.mergeStorefrontNames(selected);
+                return repository.findMusic("ITUNES", id).map(music -> new Response(music, false))
+                        .orElseThrow(() -> exception);
+            });
         }
     }
 }

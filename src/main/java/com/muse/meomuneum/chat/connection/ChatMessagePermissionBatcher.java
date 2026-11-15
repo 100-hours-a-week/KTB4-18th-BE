@@ -33,19 +33,21 @@ public final class ChatMessagePermissionBatcher implements AutoCloseable {
     public ChatMessagePermissionBatcher(ChatParticipationService participation, ChatDeliveryMetrics metrics) {
         this(requests -> {
             var results = new ArrayList<Boolean>(java.util.Collections.nCopies(requests.size(), false));
-            for (boolean messages : new boolean[]{true, false}) {
+            for (int kind : new int[]{1, 0, -1}) {
                 var indexes = new ArrayList<Integer>();
                 var group = new ArrayList<MessagePermission>();
                 for (int i = 0; i < requests.size(); i++) {
-                    if ((requests.get(i).message() != 0) == messages) {
+                    if (Long.signum(requests.get(i).message()) == kind) {
                         indexes.add(i);
                         group.add(requests.get(i));
                     }
                 }
                 if (!group.isEmpty()) {
-                    var allowed = messages
+                    var allowed = kind > 0
                             ? participation.permitsMessageBatch(group)
-                            : participation.permitsSocketBatch(group);
+                            : kind < 0
+                                    ? participation.permitsMusicBatch(group)
+                                    : participation.permitsSocketBatch(group);
                     for (int i = 0; i < group.size(); i++) {
                         results.set(indexes.get(i), allowed.get(i));
                     }
@@ -70,6 +72,10 @@ public final class ChatMessagePermissionBatcher implements AutoCloseable {
 
     public boolean permitsSocket(long user, String socket, long room) {
         return permits(user, socket, room, 0);
+    }
+
+    public boolean permitsMusic(long user, String socket, long room) {
+        return permits(user, socket, room, -1);
     }
 
     private boolean permits(long user, String socket, long room, long message) {

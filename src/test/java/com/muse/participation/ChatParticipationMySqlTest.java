@@ -1548,7 +1548,21 @@ class ChatParticipationMySqlTest {
             assertThrows(IllegalStateException.class, () -> recovery.finish(first, redis, channels(env)));
             while (recovery.chunk(next)) {
             }
+            String musicEvent = UUID.randomUUID().toString();
+            jdbc.update("""
+                    INSERT INTO chat_music_outbox(event_id,environment,epoch,producer_id,room_id,room_seq,
+                        music_version,event_type,event_body,expires_at,claim_token,claim_until)
+                    VALUES (?,?,?,'synthetic',?,1,1,'QUEUE_UPDATED','{}',
+                        TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(6)),?,TIMESTAMPADD(SECOND,10,UTC_TIMESTAMP(6)))
+                    """, musicEvent, env, next.epoch() - 1, room, UUID.randomUUID().toString());
+            assertThrows(IllegalStateException.class, () -> recovery.finish(next, redis, channels(env)));
+            while (recovery.chunk(next)) {
+            }
             recovery.finish(next, redis, channels(env));
+            assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM chat_music_outbox WHERE event_id=?",
+                    String.class, musicEvent));
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_music_outbox WHERE event_id=? "
+                    + "AND claim_token IS NULL AND claim_until IS NULL", Integer.class, musicEvent));
             assertEquals("OFFLINE", state(tab.viewSessionId()));
             assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM chat_message_receipts WHERE environment=?",
                     Integer.class, env));

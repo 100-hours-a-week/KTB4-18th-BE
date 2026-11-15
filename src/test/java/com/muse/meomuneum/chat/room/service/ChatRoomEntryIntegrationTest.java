@@ -3,8 +3,12 @@ package com.muse.meomuneum.chat.room.service;
 import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -43,7 +47,8 @@ import com.muse.meomuneum.location.security.IssuedLocationToken;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "chat.message-cleanup.enabled=false", "recommendation.ai.base-url=http://localhost:8000",
+        "chat.message-cleanup.enabled=false", "auth.cors.allowed-origins=http://localhost:5174",
+        "recommendation.ai.base-url=http://localhost:8000",
         "speech.transcription.ai.base-url=http://localhost:8000",
         "location.reverse-geocoding.base-url=http://localhost:8000"})
 @ActiveProfiles("test")
@@ -95,6 +100,9 @@ class ChatRoomEntryIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private Clock clock;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     @DynamicPropertySource
@@ -136,6 +144,18 @@ class ChatRoomEntryIntegrationTest {
             chatRoomRepository.findByRegion_Id(region.getId()).ifPresent(chatRoomRepository::delete);
             regionRepository.delete(region);
         }
+    }
+
+    @Test
+    void websocketHandshakeRejectsUnlistedOriginBeforeStompAuthentication() {
+        var failure = assertThrows(ExecutionException.class, () -> java.net.http.HttpClient.newHttpClient()
+                .newWebSocketBuilder().header("Origin", "http://untrusted.example.test")
+                .subprotocols("v12.stomp")
+                .buildAsync(java.net.URI.create("ws://localhost:" + port + "/ws"), new SocketProbe())
+                .get(5, TimeUnit.SECONDS));
+        assertTrue(failure.getCause() instanceof java.net.http.WebSocketHandshakeException);
+        var handshake = (java.net.http.WebSocketHandshakeException) failure.getCause();
+        assertEquals(403, handshake.getResponse().statusCode());
     }
 
     @Test
@@ -333,16 +353,18 @@ class ChatRoomEntryIntegrationTest {
         String token = issueToken(userId, room.getRegion());
         Long membershipId = service.join(userId, sid(userId), room.getId(), token).membership().membershipId();
         service.connect(userId, sid(userId), room.getId(), membershipId, "session");
+        // An already-active ban must not depend on DB/host clocks agreeing at the insertion boundary.
+        LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
         jdbcTemplate.update("""
                 INSERT INTO chat_bans (user_id, reason, created_at, expires_at)
-                VALUES (?, 'PROFANITY', UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 7 DAY))
-                """, userId);
-        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.join(userId, sid(userId), room.getId(), token));
-        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.connect(userId, sid(userId), room.getId(), membershipId, "second"));
-        org.junit.jupiter.api.Assertions.assertThrows(ChatRoomException.class,
-                () -> service.authorizeConnection(userId, room.getId(), membershipId, "session"));
+                VALUES (?, 'PROFANITY', ?, ?)
+                """, userId, now.minusMinutes(1), now.plusDays(7));
+        assertEquals(ChatRoomErrorCode.CHAT_BANNED, assertThrows(ChatRoomException.class,
+                () -> service.join(userId, sid(userId), room.getId(), token)).getErrorCode());
+        assertEquals(ChatRoomErrorCode.CHAT_BANNED, assertThrows(ChatRoomException.class,
+                () -> service.connect(userId, sid(userId), room.getId(), membershipId, "second")).getErrorCode());
+        assertEquals(ChatRoomErrorCode.CHAT_BANNED, assertThrows(ChatRoomException.class,
+                () -> service.authorizeConnection(userId, room.getId(), membershipId, "session")).getErrorCode());
     }
 
     @Test

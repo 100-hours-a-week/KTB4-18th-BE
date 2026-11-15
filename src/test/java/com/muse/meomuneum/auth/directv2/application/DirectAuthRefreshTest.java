@@ -54,6 +54,95 @@ class DirectAuthRefreshTest {
     }
 
     @Test
+    void expiredTerminalLoginReceiptDoesNotBlockSessionRecovery() throws Exception {
+        try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
+            var login = login(f);
+            f.jdbc.update("UPDATE auth_login_operations SET receipt_expires_at = ? WHERE flow_id = ?",
+                    f.flows.now().minusSeconds(1), login.flow().flowId());
+
+            var current = f.recovery.current(DirectAuthLoginLogoutTest.request(login.cookies()));
+
+            assertThat(current.data().get("operation")).isNull();
+            assertThat(f.sessions.require(login.flow(), f.flows.now(), false).status()).isEqualTo("ACTIVE");
+        }
+    }
+
+    @Test
+    void currentOperationReturnsNullForExpiredCanonicalRefreshWithoutWritingReceipt() throws Exception {
+        try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
+            var login = login(f);
+            var original = DirectAuthLoginLogoutTest.request(login.cookies());
+            var tuple = new Tuple(login.flow().flowId(), 2, UUID.randomUUID().toString());
+            var result = f.refresh.refresh(original, tuple, System.currentTimeMillis() + 600_000);
+            f.jdbc.update("UPDATE auth_direct_operation_receipts SET receipt_expires_at = ? WHERE flow_id = ? "
+                    + "AND operation_id = ? AND operation_kind = 'REFRESH'", f.flows.now().minusSeconds(1),
+                    tuple.flowId(), tuple.operationId());
+            f.jdbc.execute("""
+                    CREATE TRIGGER direct_refresh_current_no_update BEFORE UPDATE ON auth_direct_operation_receipts
+                    FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'current-operation must be read-only'
+                    """);
+            f.jdbc.execute("""
+                    CREATE TRIGGER direct_refresh_current_no_delete BEFORE DELETE ON auth_direct_operation_receipts
+                    FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'current-operation must be read-only'
+                    """);
+
+            var current = f.recovery.current(DirectAuthLoginLogoutTest.request(result.cookies()));
+
+            assertThat(current.data().get("operation")).isNull();
+            assertThat(f.sessions.require(result.flow(), f.flows.now(), false).status()).isEqualTo("ACTIVE");
+        }
+    }
+
+    @Test
+    void currentOperationChecksSessionBeforeExpiredRefreshReceipt() throws Exception {
+        try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
+            var login = login(f);
+            var tuple = new Tuple(login.flow().flowId(), 2, UUID.randomUUID().toString());
+            var result = f.refresh.refresh(DirectAuthLoginLogoutTest.request(login.cookies()), tuple,
+                    System.currentTimeMillis() + 600_000);
+            f.jdbc.update("UPDATE auth_direct_operation_receipts SET receipt_expires_at = ? WHERE flow_id = ? "
+                    + "AND operation_id = ? AND operation_kind = 'REFRESH'", f.flows.now().minusSeconds(1),
+                    tuple.flowId(), tuple.operationId());
+            f.jdbc.update("UPDATE auth_browser_sessions SET status = 'REVOKED' WHERE sid = ?",
+                    result.flow().activeSessionSid());
+
+            assertThatThrownBy(() -> f.recovery.current(DirectAuthLoginLogoutTest.request(result.cookies())))
+                    .isInstanceOf(DirectAuthFailure.class).hasMessage("AUTH_SESSION_INVALID");
+        }
+    }
+
+    @Test
+    void currentOperationKeepsCanonicalFenceAheadOfExpiredReceipt() throws Exception {
+        try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
+            var login = login(f);
+            var tuple = new Tuple(login.flow().flowId(), 2, UUID.randomUUID().toString());
+            var result = f.refresh.refresh(DirectAuthLoginLogoutTest.request(login.cookies()), tuple,
+                    System.currentTimeMillis() + 600_000);
+            f.jdbc.update("UPDATE auth_direct_operation_receipts SET receipt_expires_at = ?, result_revision = "
+                    + "result_revision + 1 WHERE flow_id = ? AND operation_id = ? AND operation_kind = 'REFRESH'",
+                    f.flows.now().minusSeconds(1), tuple.flowId(), tuple.operationId());
+
+            assertThatThrownBy(() -> f.recovery.current(DirectAuthLoginLogoutTest.request(result.cookies())))
+                    .isInstanceOf(DirectAuthFailure.class).hasMessage("AUTH_OPERATION_SUPERSEDED");
+        }
+    }
+
+    @Test
+    void currentOperationFailsClosedForMalformedRefreshReceipt() throws Exception {
+        try (var f = new DirectAuthRuntimeFixture(DirectAuthLoginLogoutTest.users())) {
+            var login = login(f);
+            var tuple = new Tuple(login.flow().flowId(), 2, UUID.randomUUID().toString());
+            var result = f.refresh.refresh(DirectAuthLoginLogoutTest.request(login.cookies()), tuple,
+                    System.currentTimeMillis() + 600_000);
+            f.jdbc.update("UPDATE auth_direct_operation_receipts SET status = 'CORRUPT' WHERE flow_id = ? "
+                    + "AND operation_id = ? AND operation_kind = 'REFRESH'", tuple.flowId(), tuple.operationId());
+
+            assertThatThrownBy(() -> f.recovery.current(DirectAuthLoginLogoutTest.request(result.cookies())))
+                    .isInstanceOf(DirectAuthFailure.class).hasMessage("AUTH_STATE_UNAVAILABLE");
+        }
+    }
+
+    @Test
     void distinctRacingIdsProduceOneWinnerAndDurableCredentialFreeNegativeReceipt() throws Exception {
         var users = DirectAuthLoginLogoutTest.users();
         try (var f = new DirectAuthRuntimeFixture(users)) {

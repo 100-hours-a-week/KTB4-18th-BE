@@ -41,6 +41,20 @@ public class DirectAuthProjectionRepository implements DirectAuthNonceAllocator.
         return lockControl(false);
     }
 
+    public long lockGenerationForRevocation() {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("A transaction is required");
+        }
+        // Revocation must remain possible when projection delivery is paused.
+        Long generation = jdbc.queryForObject("""
+                SELECT projection_generation FROM auth_direct_projection_control WHERE singleton_id = 1 FOR SHARE
+                """, Long.class);
+        if (generation == null || generation <= 0) {
+            throw DirectAuthFailure.unavailable();
+        }
+        return generation;
+    }
+
     public long lockAdmission(int capacity) {
         long generation = lockControl(true);
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM auth_direct_session_fences", Long.class);
@@ -108,6 +122,16 @@ public class DirectAuthProjectionRepository implements DirectAuthNonceAllocator.
 
     public void fence(String flowId, String sid, long epoch, long revision, long generation, String status,
             java.time.LocalDateTime retainedUntil) {
+        fence(flowId, sid, epoch, revision, generation, status, retainedUntil, "SESSION_REVOKED_LOGOUT");
+    }
+
+    public void fenceRevocation(String flowId, String sid, long epoch, long revision, long generation,
+            java.time.LocalDateTime retainedUntil, String eventKind) {
+        fence(flowId, sid, epoch, revision, generation, "REVOKED", retainedUntil, eventKind);
+    }
+
+    private void fence(String flowId, String sid, long epoch, long revision, long generation, String status,
+            java.time.LocalDateTime retainedUntil, String eventKind) {
         var current = jdbc.query("SELECT sid FROM auth_direct_session_fences WHERE sid = ? FOR UPDATE",
                 (row, index) -> row.getString(1), sid);
         int changed;
@@ -134,8 +158,8 @@ public class DirectAuthProjectionRepository implements DirectAuthNonceAllocator.
         if ("REVOKED".equals(status)) {
             requireOne(jdbc.update("""
                     INSERT INTO auth_flow_outbox (flow_id, flow_epoch, revision, event_kind, target_id, created_at)
-                    VALUES (?, ?, ?, 'SESSION_REVOKED_LOGOUT', ?, CURRENT_TIMESTAMP(6))
-                    """, flowId, epoch, revision, sid));
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6))
+                    """, flowId, epoch, revision, eventKind, sid));
         }
     }
 

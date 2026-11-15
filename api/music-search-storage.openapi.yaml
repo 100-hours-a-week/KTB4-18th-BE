@@ -1,0 +1,129 @@
+openapi: 3.0.3
+info:
+  title: Music search storage and recovery
+  version: 1.0.0
+paths:
+  /api/v1/music/search:
+    get:
+      summary: 음악 검색과 외부 후보 영속 접수
+      description: 외부 API에서 새로 받은 전체 후보는 응답 페이지를 자르기 전에 저장 작업으로 접수된다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string }
+        - name: provider
+          in: query
+          schema: { type: string, enum: [ITUNES], default: ITUNES }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20 }
+      responses:
+        '200':
+          description: 기존 음악 검색 페이지 응답
+        '503':
+          description: 검색 후보 저장 작업을 접수하지 못함
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example: { message: music search storage unavailable, data: null }
+  /api/v1/admin/music-search-storage/{jobId}/requeue:
+    post:
+      operationId: requeueFailedMusicSearchJob
+      summary: 실패한 음악 검색 저장 작업 재투입
+      description: |
+        음악 검색 결과 저장 작업 중 FAILED 상태인 작업만 즉시 QUEUED로 되돌린다.
+        attempt_count는 0으로 초기화되고 다음 worker poll에서 다시 처리될 수 있다.
+        ROLE_ADMIN 권한이 필요하며 기존 JWT, 요청 출처 및 CSRF 보호를 적용한다.
+        검색 metadata나 원본 payload는 응답에 포함하지 않는다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: 재투입 완료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                message: music search job requeued
+                data:
+                  job_id: 7
+                  status: QUEUED
+        '401':
+          description: 인증되지 않음 또는 토큰 만료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: ADMIN 권한 없음, CSRF 검증 실패 또는 허용되지 않은 요청 출처
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 작업 ID가 존재하지 않음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 작업 상태가 FAILED가 아님
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    SuccessResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: object
+          required: [job_id, status]
+          properties:
+            job_id:
+              type: integer
+              format: int64
+            status:
+              type: string
+              enum: [QUEUED]
+    ErrorResponse:
+      type: object
+      required: [message, data]
+      properties:
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+          example: null

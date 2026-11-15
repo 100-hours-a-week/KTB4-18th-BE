@@ -18,6 +18,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import com.muse.meomuneum.auth.config.AuthStateProperties;
+import com.muse.meomuneum.auth.directv2.repository.DirectAuthProjectionRepository;
 import com.muse.meomuneum.auth.exception.AuthFlowException;
 import com.muse.meomuneum.global.config.JwtProperties;
 
@@ -30,7 +31,8 @@ class AuthFlowBootstrapRateLimitTest {
         when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         when(jdbc.queryForObject(anyString(), eq(Integer.class), any(Object[].class))).thenReturn(2);
         AuthFlowService service = new AuthFlowService(jdbc, transactions, properties(), false, "Lax", true, 1,
-                new JwtProperties("issuer", "audience", "test-jwt-secret-with-at-least-32-bytes", 3600, 1209600));
+                new JwtProperties("issuer", "audience", "test-jwt-secret-with-at-least-32-bytes", 3600, 1209600),
+                mock(DirectAuthProjectionRepository.class));
         MockHttpServletRequest request = new MockHttpServletRequest();
 
         assertThatThrownBy(() -> service.bootstrap(request, new HttpHeaders()))

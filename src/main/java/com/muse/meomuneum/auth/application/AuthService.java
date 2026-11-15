@@ -84,8 +84,8 @@ public class AuthService {
 
     public void revokeAllSessions(Long userId, String reason) {
         if (authFlowService != null) {
-            authFlowService.revokeAllSessions(userId, reason)
-                    .forEach(sid -> authSessionService.publishSessionRevocation(userId, sid));
+            // Deliver revocations from the outbox after the withdrawal transaction commits.
+            authFlowService.revokeAllSessions(userId, reason);
         }
     }
 

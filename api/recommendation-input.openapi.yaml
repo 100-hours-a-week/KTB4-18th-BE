@@ -155,6 +155,9 @@ paths:
         prompt는 UTF-16 코드 단위로 최대 200자이며 공백과 줄바꿈도 포함합니다.
         공백만 있는 입력은 거절합니다. AI에는 앞뒤 공백만 제거한 현재 입력 전체를 전달합니다.
         인증 및 게스트 소유권 정책은 기존 서비스 계약을 따릅니다.
+        선택 location_resolution_token은 현재 계정·sid에 묶인 유효 위치 토큰이며 서버가 활성 지역을 검증합니다.
+        생략 또는 null이면 기존 지역 미상 추천을 유지합니다. 게스트의 토큰 제출·만료·위조·다른 sid는 400입니다.
+        이 지역 문맥은 AI 내부 요청에 전달하지 않고 접수 시 추천 출처로 저장합니다.
       requestBody:
         required: true
         content:
@@ -172,6 +175,10 @@ paths:
                 conversation_key:
                   type: string
                   format: uuid
+                location_resolution_token:
+                  type: [string, 'null']
+                  maxLength: 4096
+                  description: 선택. 현재 인증 sid로 발급된 5분 위치 토큰. region_id 직접 지정은 지원하지 않음.
                 prompt:
                   type: string
                   minLength: 1

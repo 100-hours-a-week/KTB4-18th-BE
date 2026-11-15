@@ -121,7 +121,7 @@ public class DirectAuthRuntimeFixture implements AutoCloseable {
         var jwt = new JwtProperties("test", "test", "test-only-jwt-key-" + UUID.randomUUID(), 300, 3600);
         tokens = new JwtTokenProvider(jwt);
         authority = new com.muse.meomuneum.auth.application.AuthFlowService(jdbc, manager, properties,
-                false, "Lax", false, 120, jwt);
+                false, "Lax", false, 120, jwt, projections);
         flowService = new DirectAuthFlowService(transactions, flows, new DirectAuthBootstrapRepository(jdbc),
                 projections, sessions, cookies, cipher, new ObjectMapper(), jdbc, properties);
         login = new DirectAuthLoginService(transactions, flows, operations, lifecycle, projections, sessions,

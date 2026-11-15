@@ -1,0 +1,148 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Regional chat shared playback commands",
+    "version": "1.0.0",
+    "description": "Step 5. All active participants may control room playback; no personal listen opt-in. Backend state only; publishing and YouTube UI are steps 6 and 8. Defaults off. Server DB clock and pinned duration decide track end; no client ENDED/seek/volume command exists."
+  },
+  "paths": {
+    "/api/v1/chat-rooms/{room_id}/playback/commands": {
+      "post": {
+        "operationId": "controlChatRoomPlayback",
+        "summary": "Play, pause, resume or skip current room playback",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "chat-music-queue.openapi.json#/components/parameters/Roomid"
+          },
+          {
+            "$ref": "chat-music-queue.openapi.json#/components/parameters/Membershipid"
+          },
+          {
+            "$ref": "chat-music-queue.openapi.json#/components/parameters/Viewsessionid"
+          },
+          {
+            "$ref": "chat-music-queue.openapi.json#/components/parameters/Idempotencykey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "action",
+                  "queue_item_id",
+                  "expected_version"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "PLAY",
+                      "PAUSE",
+                      "RESUME",
+                      "SKIP"
+                    ]
+                  },
+                  "queue_item_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "nullable": true,
+                    "description": "Current item from snapshot; null only when snapshot is IDLE. Always checked together with expected_version."
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "example": {
+                "action": "PAUSE",
+                "queue_item_id": 123,
+                "expected_version": 4
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Original receipt result or new snapshot. No-op stores receipt but does not bump version or emit events.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "message",
+                    "data"
+                  ],
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "chat-music-queue.openapi.json#/components/schemas/PlaybackSnapshot"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error410"
+          },
+          "429": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "chat-music-queue.openapi.json#/components/responses/Error503"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

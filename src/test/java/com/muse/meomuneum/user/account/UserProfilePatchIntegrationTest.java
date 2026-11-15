@@ -22,7 +22,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
-@SpringBootTest
+@SpringBootTest(properties = "auth.cors.allowed-origins=http://localhost:5174")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class UserProfilePatchIntegrationTest {
@@ -90,6 +90,18 @@ class UserProfilePatchIntegrationTest {
         mockMvc.perform(get("/api/v1/users/me").with(authentication(authentication)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.gender").value("FEMALE"));
+    }
+
+    @Test
+    void rejectsProfilePatchFromUnlistedOriginWithoutChangingGender() throws Exception {
+        mockMvc.perform(patch("/api/v1/users/me")
+                .with(authentication(authentication))
+                .header("Origin", "http://untrusted.example.test")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"gender\":null}"))
+                .andExpect(status().isForbidden());
+        org.junit.jupiter.api.Assertions.assertEquals("MALE", jdbcTemplate.queryForObject(
+                "SELECT gender FROM users WHERE id=?", String.class, userId));
     }
 
     @Test

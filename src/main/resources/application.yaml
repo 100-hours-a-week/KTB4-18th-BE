@@ -38,11 +38,16 @@ server:
         path: /api/v1/auth
 
 auth:
+  direct-v2:
+    enabled: ${AUTH_DIRECT_V2_ENABLED:true}
+    refresh-verified: ${AUTH_DIRECT_V2_REFRESH_VERIFIED:true}
+    refresh-recovery-verified: ${AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED:false}
+    rebootstrap-verified: ${AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED:false}
   cookie:
     secure: ${AUTH_COOKIE_SECURE:true}
     same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
   cors:
-    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   mutation-gate-open: ${AUTH_MUTATION_GATE_OPEN:false}
   flow:
     bootstrap-requests-per-minute: ${AUTH_FLOW_BOOTSTRAP_REQUESTS_PER_MINUTE:120}
@@ -55,9 +60,9 @@ auth:
   state:
     backend-replica-count: ${AUTH_BACKEND_REPLICA_COUNT:}
     hazelcast:
-      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:false}
+      enabled: ${AUTH_STATE_HAZELCAST_ENABLED:true}
       members: ${AUTH_STATE_HAZELCAST_MEMBERS:}
-      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth}
+      cluster-name: ${AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-local}
       invocation-timeout: ${AUTH_STATE_HAZELCAST_INVOCATION_TIMEOUT:1s}
     expected-hazelcast-members: ${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:1}
     hmac-key: ${AUTH_STATE_HMAC_KEY:}
@@ -129,6 +134,25 @@ location-recommendation:
     timeout: ${LOCATION_RECOMMENDATION_AI_TIMEOUT:120s}
 
 chat:
+  music:
+    video-search:
+      enabled: ${CHAT_MUSIC_VIDEO_SEARCH_ENABLED:false}
+      api-key: ${CHAT_MUSIC_VIDEO_SEARCH_API_KEY:}
+      concurrency: ${CHAT_MUSIC_VIDEO_SEARCH_CONCURRENCY:2}
+      daily-search-budget: ${CHAT_MUSIC_VIDEO_SEARCH_DAILY_SEARCH_BUDGET:100}
+      daily-details-budget: ${CHAT_MUSIC_VIDEO_SEARCH_DAILY_DETAILS_BUDGET:10000}
+      positive-seconds: ${CHAT_MUSIC_VIDEO_SEARCH_POSITIVE_SECONDS:3600}
+      empty-seconds: ${CHAT_MUSIC_VIDEO_SEARCH_EMPTY_SECONDS:300}
+      verification-seconds: ${CHAT_MUSIC_VIDEO_SEARCH_VERIFICATION_SECONDS:300}
+    events:
+      enabled: ${CHAT_MUSIC_EVENTS_ENABLED:false}
+    playback:
+      enabled: ${CHAT_MUSIC_PLAYBACK_ENABLED:false}
+    keys: ${CHAT_MUSIC_KEYS:}
+    queue:
+      enabled: ${CHAT_MUSIC_QUEUE_ENABLED:false}
+      capacity: ${CHAT_MUSIC_QUEUE_CAPACITY:100}
+      command-interval-millis: ${CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS:1000}
   redis:
     enabled: ${CHAT_REDIS_ENABLED:false}
     environment: ${CHAT_REDIS_ENVIRONMENT:}

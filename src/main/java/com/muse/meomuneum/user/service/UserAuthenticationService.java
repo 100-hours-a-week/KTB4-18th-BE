@@ -44,6 +44,10 @@ public class UserAuthenticationService implements ActiveUserLookup {
                 .orElseThrow(() -> new AuthenticationFailedException(AuthErrorCode.REFRESH_INVALID_TOKEN));
     }
 
+    public void requireActiveUserForSession(Long userId) {
+        userRepository.findActiveByIdForUpdate(userId).orElseThrow(this::invalidCredentials);
+    }
+
     private AuthenticationFailedException invalidCredentials() {
         return new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS);
     }

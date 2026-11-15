@@ -122,10 +122,11 @@ public class DirectAuthFlowService {
             DirectAuthFlowState flow = flows.lock(found.flowId()).orElseThrow(DirectAuthFailure::unavailable);
             try {
                 cookies.require(request, flow, flows.now());
-            } catch (DirectAuthFailure bindingOnly) {
-                if (!cookies.legacyMatches(request, flow, flows.now())) {
-                    throw DirectAuthFailure.conflict("AUTH_FLOW_REBOOTSTRAP_REQUIRED");
-                }
+            } catch (DirectAuthFailure ignored) {
+                // A legacy cookie can identify the existing flow, but cannot authorize
+                // direct-v2 mutations. Tell the client to perform the explicit bootstrap
+                // upgrade instead of returning a flow that a subsequent login cannot use.
+                throw DirectAuthFailure.conflict("AUTH_FLOW_REBOOTSTRAP_REQUIRED");
             }
             return new Result(flow, data(flow), List.of());
         });

@@ -139,6 +139,34 @@ class ChatMessageOutboundGuardTest {
         org.mockito.Mockito.verify(batcher).permitsSocket(1L, "first", 10L);
     }
 
+    @Test
+    void musicUsesFreshConnectedOnlyBatchAtHandlerInsteadOfEnqueueProofOrGenericPresencePermission() {
+        var service = org.mockito.Mockito.mock(com.muse.meomuneum.chat.participation.ChatParticipationService.class);
+        var batcher = org.mockito.Mockito.mock(ChatMessagePermissionBatcher.class);
+        var presence = new ChatPresenceRegistry(Clock.systemUTC());
+        presence.connect(1L, 10L, 100L, 25, "first");
+        presence.subscribed("first", "room", "/topic/chat-rooms/10");
+        presence.setParticipation(service);
+        var registry = new ChatAuthSessionRegistry();
+        registry.register("first", new ChatAuthSessionRegistry.Context(1L, java.util.UUID.randomUUID().toString()));
+        var guard = new ChatMessageOutboundGuard(presence);
+        guard.setParticipation(service);
+        guard.setCoreVerifier(org.mockito.Mockito.mock(com.muse.meomuneum.chat.auth.ChatSessionVerifier.class),
+                registry);
+        guard.setPermissionBatcher(batcher);
+        org.mockito.Mockito.when(service.permitsSocketEnqueue(1L, "first", 10L, null)).thenReturn(true);
+        org.mockito.Mockito.when(service.available()).thenReturn(true);
+        var frame = MessageBuilder.fromMessage(outgoing("first", Set.of("first")))
+                .setHeader("chatMusicVersion", 2L).build();
+        assertSame(frame, guard.preSend(frame, null));
+        assertNull(guard.beforeHandle(frame, null, null));
+        org.mockito.Mockito.when(batcher.permitsMusic(1L, "first", 10L)).thenReturn(true);
+        assertSame(frame, guard.beforeHandle(frame, null, null));
+        org.mockito.Mockito.verify(batcher, org.mockito.Mockito.never()).permitsSocket(1L, "first", 10L);
+        registry.remove("first");
+        assertNull(guard.beforeHandle(frame, null, null));
+    }
+
     private Message<byte[]> outgoing(String session, Set<String> recipients) {
         SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
         headers.setSessionId(session);

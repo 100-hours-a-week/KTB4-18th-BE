@@ -8,9 +8,14 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionTimedOutException;
@@ -26,6 +31,8 @@ import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.
 import com.muse.meomuneum.locationrecommendation.dto.LocationRecommendationDtos.TrackResponse;
 import com.muse.meomuneum.locationrecommendation.exception.LocationRecommendationException;
 import com.muse.meomuneum.musicrecord.repository.MusicRecordRepository;
+import com.muse.meomuneum.recommendation.dto.TrackData;
+import com.muse.meomuneum.recommendation.repository.RecommendationRepository;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -40,14 +47,25 @@ public class LocationRecommendationRepository {
     private final MusicRecordRepository musicRecords;
     private final PlatformTransactionManager transactionManager;
     private final TransactionTemplate transaction;
+    private final boolean testRepeatEnabled;
 
     public LocationRecommendationRepository(JdbcTemplate jdbc, ObjectMapper mapper,
             MusicRecordRepository musicRecords, PlatformTransactionManager transactionManager) {
+        this(jdbc, mapper, musicRecords, transactionManager, null, false);
+    }
+
+    @Autowired
+    public LocationRecommendationRepository(JdbcTemplate jdbc, ObjectMapper mapper,
+            MusicRecordRepository musicRecords, PlatformTransactionManager transactionManager,
+            Environment environment,
+            @Value("${location-recommendation.test-repeat-enabled:false}") boolean configuredTestRepeatEnabled) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.musicRecords = musicRecords;
         this.transactionManager = transactionManager;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.testRepeatEnabled = configuredTestRepeatEnabled && environment != null
+                && environment.acceptsProfiles(Profiles.of("local-mock & !prod"));
     }
 
     public Optional<RegionResponse> findActiveRegion(ResolvedRegionCode codes) {
@@ -105,7 +123,7 @@ public class LocationRecommendationRepository {
                         response(root, state, userId));
             }
 
-            if (musicRecords.existsActiveRecordInRegion(userId, region.regionId())) {
+            if (!testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, region.regionId())) {
                 Request skipped = insertTerminalRequest(userId, requestId, requestId, state, region.regionId(),
                         dbDate.kstDate(), LocationRecommendationStatus.SUPERSEDED, "RECORDED_REGION");
                 return outcome(skipped, state, userId);
@@ -121,7 +139,7 @@ public class LocationRecommendationRepository {
                     return new AdmissionOutcome(false, root.requestId(), root.admittedCancelEpoch(), root.generation(),
                             response(root, state, userId));
                 }
-                if (root.status() == LocationRecommendationStatus.READY && !isExpired(root)) {
+                if (!testRepeatEnabled && root.status() == LocationRecommendationStatus.READY && !isExpired(root)) {
                     Request alias = insertAlias(userId, requestId, requestId, root, state, region.regionId(),
                             dbDate.kstDate());
                     return new AdmissionOutcome(false, root.requestId(), root.admittedCancelEpoch(), root.generation(),
@@ -142,7 +160,9 @@ public class LocationRecommendationRepository {
                 return outcome(disabled, state, userId);
             }
 
-            Request issued = findIssuedRequest(userId, region.regionId(), dbDate.kstDate()).orElse(null);
+            Request issued = testRepeatEnabled
+                    ? null
+                    : findIssuedRequest(userId, region.regionId(), dbDate.kstDate()).orElse(null);
             if (issued != null) {
                 Request root = resolveRoot(issued);
                 if (root.status() == LocationRecommendationStatus.READY && !isExpired(root)
@@ -159,7 +179,7 @@ public class LocationRecommendationRepository {
                 return outcome(skipped, state, userId);
             }
 
-            if (state.cooldownActive()) {
+            if (!testRepeatEnabled && state.cooldownActive()) {
                 Request cooldown = insertTerminalRequest(userId, requestId, requestId, state, region.regionId(),
                         dbDate.kstDate(), LocationRecommendationStatus.SUPERSEDED, "COOLDOWN_ACTIVE");
                 return outcome(cooldown, state, userId);
@@ -190,7 +210,7 @@ public class LocationRecommendationRepository {
     }
 
     public RecommendationResponse complete(long userId, UUID requestId, UUID generation, long cancelEpoch,
-            List<TrackResponse> tracks, long deadlineNanos) {
+            List<TrackResponse> tracks, String recommendationMessage, long deadlineNanos) {
         try {
             return inTransaction(deadlineNanos, () -> {
                 State state = lockState(userId);
@@ -203,14 +223,15 @@ public class LocationRecommendationRepository {
                 if (!ownsLiveLease(userId, root, state, generation, cancelEpoch)) {
                     return response(root, state, userId);
                 }
-                if (musicRecords.existsActiveRecordInRegion(userId, root.regionId())) {
+                if (!testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, root.regionId())) {
                     updateTerminalOwned(root, LocationRecommendationStatus.SUPERSEDED, "RECORDED_REGION", true);
                     releaseLease(userId, requestId);
                 } else if (tracks.isEmpty()) {
                     updateTerminalOwned(root, LocationRecommendationStatus.EMPTY, null, true);
                     releaseLease(userId, requestId);
                 } else {
-                    insertDailyIssue(userId, root, tracks, generation, cancelEpoch, deadlineNanos);
+                    insertDailyIssue(userId, root, tracks, recommendationMessage, generation, cancelEpoch,
+                            deadlineNanos);
                     releaseLease(userId, requestId);
                 }
                 State latest = readState(userId);
@@ -271,17 +292,19 @@ public class LocationRecommendationRepository {
             if (request == null || !ownsLiveLease(userId, request, state, generation, cancelEpoch)) {
                 return false;
             }
-            if (state.cooldownActive()) {
+            if (!testRepeatEnabled && state.cooldownActive()) {
                 updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "COOLDOWN_ACTIVE", true);
                 releaseLease(userId, requestId);
                 return false;
             }
+            String cooldownPredicate = testRepeatEnabled
+                    ? ""
+                    : " AND (last_ai_attempt_at IS NULL OR "
+                            + "last_ai_attempt_at<=DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 30 MINUTE))";
             int updated = jdbc.update("UPDATE location_recommendation_states SET last_ai_attempt_at=UTC_TIMESTAMP(6), "
                     + "updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND lease_request_uuid=? "
-                    + "AND scope_generation=? AND cancel_epoch=? AND lease_expires_at>UTC_TIMESTAMP(6) "
-                    + "AND (last_ai_attempt_at IS NULL OR last_ai_attempt_at<="
-                    + "DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 30 MINUTE))", userId, requestId.toString(),
-                    generation.toString(), cancelEpoch);
+                    + "AND scope_generation=? AND cancel_epoch=? AND lease_expires_at>UTC_TIMESTAMP(6)"
+                    + cooldownPredicate, userId, requestId.toString(), generation.toString(), cancelEpoch);
             if (updated != 1) {
                 throw integrityError();
             }
@@ -360,7 +383,8 @@ public class LocationRecommendationRepository {
             UUID ownerRequest = state.leaseRequestId();
             UUID ledgerTarget = targetRequestId;
             jdbc.update("UPDATE location_recommendation_requests SET status='CANCELLED', error_reason='CANCELLED', "
-                    + "tracks=JSON_ARRAY(), display_claim_key=NULL, display_claimed_at=NULL, "
+                    + "tracks=JSON_ARRAY(), recommendation_message=NULL, "
+                    + "display_claim_key=NULL, display_claimed_at=NULL, "
                     + "updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND canonical_request_id IS NULL "
                     + "AND scope_generation=? AND admitted_cancel_epoch=? AND status IN ('PROCESSING','READY')",
                     userId, generation.toString(), expectedCancelEpoch);
@@ -393,9 +417,10 @@ public class LocationRecommendationRepository {
         return inTransaction(() -> {
             int deleted = jdbc.update("DELETE FROM location_recommendation_daily_issues WHERE issued_date < "
                     + "DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR)");
-            jdbc.update("UPDATE location_recommendation_requests SET tracks=JSON_ARRAY(), "
+            jdbc.update("UPDATE location_recommendation_requests SET tracks=JSON_ARRAY(), recommendation_message=NULL, "
                     + "display_claim_key=NULL, display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) "
-                    + "WHERE status='READY' AND expires_at<=UTC_TIMESTAMP(6) AND JSON_LENGTH(tracks)>0");
+                    + "WHERE status='READY' AND expires_at<=UTC_TIMESTAMP(6) "
+                    + "AND (JSON_LENGTH(tracks)>0 OR recommendation_message IS NOT NULL)");
             jdbc.update("DELETE a FROM location_recommendation_requests a JOIN location_recommendation_requests c "
                     + "ON c.user_id=a.user_id AND c.request_id=a.canonical_request_id "
                     + "WHERE a.canonical_request_id IS NOT NULL "
@@ -482,7 +507,7 @@ public class LocationRecommendationRepository {
     private Optional<Request> findByRequestId(long userId, UUID id) {
         return jdbc.query("SELECT r.user_id, r.request_id, r.idempotency_key, r.canonical_request_id, "
                 + "r.scope_generation, r.region_id, r.scope_date, r.status, r.admitted_cancel_epoch, "
-                + "r.expires_at, r.display_claim_key, r.error_reason, r.tracks, "
+                + "r.expires_at, r.display_claim_key, r.error_reason, r.tracks, r.recommendation_message, "
                 + "CASE WHEN r.expires_at IS NULL THEN 0 ELSE GREATEST(0, "
                 + "TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(6), r.expires_at) DIV 1000) END ttl_ms, "
                 + "g.code region_code, g.name region_name, p.name sido_name "
@@ -541,9 +566,10 @@ public class LocationRecommendationRepository {
             tracks = List.of();
             ttl = 0;
         } else if (status == LocationRecommendationStatus.READY
-                && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
+                && !testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
             jdbc.update("UPDATE location_recommendation_requests SET status='SUPERSEDED', "
-                    + "error_reason='RECORDED_REGION', tracks=JSON_ARRAY(), display_claim_key=NULL, "
+                    + "error_reason='RECORDED_REGION', tracks=JSON_ARRAY(), recommendation_message=NULL, "
+                    + "display_claim_key=NULL, "
                     + "display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND request_id=? "
                     + "AND status='READY'", userId, request.requestId().toString());
             status = LocationRecommendationStatus.SUPERSEDED;
@@ -556,7 +582,8 @@ public class LocationRecommendationRepository {
         }
         return new RecommendationResponse(request.requestId(), status.name(), reason,
                 new RegionResponse(request.regionId(), request.regionCode(), request.regionName(), request.sidoName()),
-                tracks, request.generation(), state.cancelEpoch(), Math.min(RESULT_TTL_MILLIS, ttl));
+                tracks, status == LocationRecommendationStatus.READY ? request.recommendationMessage() : null,
+                request.generation(), state.cancelEpoch(), Math.min(RESULT_TTL_MILLIS, ttl));
     }
 
     private boolean isExpired(Request request) {
@@ -565,7 +592,8 @@ public class LocationRecommendationRepository {
 
     private void expireReservation(long userId, UUID requestId) {
         jdbc.update("UPDATE location_recommendation_requests SET status='FAILED', error_reason='LEASE_EXPIRED', "
-                + "tracks=JSON_ARRAY(), updated_at=UTC_TIMESTAMP(6) WHERE user_id=? AND request_id=? "
+                + "tracks=JSON_ARRAY(), recommendation_message=NULL, updated_at=UTC_TIMESTAMP(6) "
+                + "WHERE user_id=? AND request_id=? "
                 + "AND canonical_request_id IS NULL AND status='PROCESSING'", userId, requestId.toString());
     }
 
@@ -606,37 +634,73 @@ public class LocationRecommendationRepository {
         if (request.ttlMillis() <= 0) {
             return "EXPIRED";
         }
-        if (musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
+        if (!testRepeatEnabled && musicRecords.existsActiveRecordInRegion(userId, request.regionId())) {
             return "RECORDED_REGION";
         }
         return null;
     }
 
-    private void insertDailyIssue(long userId, Request request, List<TrackResponse> tracks, UUID generation,
-            long cancelEpoch, long deadlineNanos) {
+    private void insertDailyIssue(long userId, Request request, List<TrackResponse> tracks,
+            String recommendationMessage, UUID generation, long cancelEpoch, long deadlineNanos) {
         requireBeforeDeadline(deadlineNanos);
         String json = serialize(tracks);
-        try {
-            jdbc.update("INSERT INTO location_recommendation_daily_issues (user_id, region_id, issued_date, "
-                    + "canonical_request_id, created_at) VALUES (?, ?, DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), ?, "
-                    + "UTC_TIMESTAMP(6))",
-                    userId, request.regionId(), request.requestId().toString());
-        } catch (org.springframework.dao.DuplicateKeyException exception) {
-            updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "REGION_ISSUED_TODAY", true);
-            return;
+        if (!testRepeatEnabled) {
+            try {
+                jdbc.update("INSERT INTO location_recommendation_daily_issues (user_id, region_id, issued_date, "
+                        + "canonical_request_id, created_at) VALUES (?, ?, "
+                        + "DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), ?, UTC_TIMESTAMP(6))",
+                        userId, request.regionId(), request.requestId().toString());
+            } catch (org.springframework.dao.DuplicateKeyException exception) {
+                updateTerminalOwned(request, LocationRecommendationStatus.SUPERSEDED, "REGION_ISSUED_TODAY", true);
+                return;
+            }
         }
         requireBeforeDeadline(deadlineNanos);
         int updated = jdbc.update("UPDATE location_recommendation_requests r SET status='READY', error_reason=NULL, "
                 + "issued_date=DATE(UTC_TIMESTAMP(6) + INTERVAL 9 HOUR), issued_at=UTC_TIMESTAMP(6), "
                 + "expires_at=DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 10 MINUTE), tracks=CAST(? AS JSON), "
+                + "recommendation_message=?, "
                 + "updated_at=UTC_TIMESTAMP(6) WHERE r.user_id=? AND r.request_id=? "
                 + "AND r.canonical_request_id IS NULL AND r.status='PROCESSING' AND EXISTS "
                 + "(SELECT 1 FROM location_recommendation_states s WHERE s.user_id=r.user_id "
                 + "AND s.lease_request_uuid=r.request_id AND s.scope_generation=? AND s.cancel_epoch=? "
-                + "AND s.lease_expires_at>UTC_TIMESTAMP(6))", json, userId, request.requestId().toString(),
+                + "AND s.lease_expires_at>UTC_TIMESTAMP(6))", json, recommendationMessage, userId,
+                request.requestId().toString(),
                 generation.toString(), cancelEpoch);
         if (updated != 1 || System.nanoTime() - deadlineNanos >= 0) {
             throw new ReservationLostException();
+        }
+        archiveCompleted(request, tracks);
+        requireBeforeDeadline(deadlineNanos);
+    }
+
+    private void archiveCompleted(Request request, List<TrackResponse> tracks) {
+        // This joins the READY/daily-issue transaction, not the expiring popup's lifetime.
+        var keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            var statement = connection.prepareStatement("""
+                    INSERT INTO recommendation_sessions
+                    (user_id,region_id,trigger_type,input_type,conversation_key,status,created_at,completed_at,
+                     location_request_id)
+                    VALUES (?,?,'LOCATION','SYSTEM',?,'COMPLETED',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),?)
+                    """, new String[]{"id"});
+            statement.setLong(1, request.userId());
+            statement.setLong(2, request.regionId());
+            statement.setString(3, request.requestId().toString());
+            statement.setString(4, request.requestId().toString());
+            return statement;
+        }, keys);
+        if (keys.getKey() == null) {
+            throw integrityError();
+        }
+        long sessionId = keys.getKey().longValue();
+        var recommendations = new RecommendationRepository(jdbc);
+        int rank = 0;
+        for (TrackResponse track : tracks) {
+            long musicId = recommendations.saveMusic(new TrackData(
+                    "ITUNES", track.trackId(), track.title(), track.artist(), track.artworkUrl(),
+                    track.previewUrl(), track.storeUrl(), null));
+            recommendations.saveItem(sessionId, musicId, ++rank);
         }
     }
 
@@ -644,7 +708,7 @@ public class LocationRecommendationRepository {
             boolean requireLiveLease) {
         String liveClause = requireLiveLease ? " AND s.lease_expires_at>UTC_TIMESTAMP(6)" : "";
         int updated = jdbc.update("UPDATE location_recommendation_requests r SET status=?, error_reason=?, "
-                + "tracks=JSON_ARRAY(), "
+                + "tracks=JSON_ARRAY(), recommendation_message=NULL, "
                 + "display_claim_key=NULL, display_claimed_at=NULL, updated_at=UTC_TIMESTAMP(6) "
                 + "WHERE r.user_id=? AND r.request_id=? AND r.canonical_request_id IS NULL "
                 + "AND r.status='PROCESSING' AND EXISTS (SELECT 1 FROM location_recommendation_states s "
@@ -847,7 +911,8 @@ public class LocationRecommendationRepository {
     private record Request(long userId, UUID requestId, UUID idempotencyKey, UUID canonicalRequestId,
             UUID generation, long regionId, LocalDate scopeDate, LocationRecommendationStatus status,
             long admittedCancelEpoch, java.time.LocalDateTime expiresAt, UUID displayClaimKey, String errorReason,
-            List<TrackResponse> tracks, long ttlMillis, String regionCode, String regionName, String sidoName) {
+            List<TrackResponse> tracks, String recommendationMessage, long ttlMillis, String regionCode,
+            String regionName, String sidoName) {
     }
 
     private record Cancellation(UUID targetRequestId, UUID generation, long expectedEpoch, long resultEpoch,
@@ -872,7 +937,8 @@ public class LocationRecommendationRepository {
                     LocationRecommendationStatus.valueOf(row.getString("status")),
                     row.getLong("admitted_cancel_epoch"), row.getObject("expires_at", java.time.LocalDateTime.class),
                     uuidOrNull(row.getString("display_claim_key")), row.getString("error_reason"),
-                    tracks(row.getString("tracks")), row.getLong("ttl_ms"), row.getString("region_code"),
+                    tracks(row.getString("tracks")), row.getString("recommendation_message"), row.getLong("ttl_ms"),
+                    row.getString("region_code"),
                     row.getString("region_name"), row.getString("sido_name"));
         }
     }

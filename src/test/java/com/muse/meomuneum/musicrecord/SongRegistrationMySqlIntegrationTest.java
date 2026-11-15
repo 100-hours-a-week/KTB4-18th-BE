@@ -49,6 +49,7 @@ import com.muse.meomuneum.musicrecord.controller.MusicRecordController;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.CreateRequest;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem;
 import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicSelection;
+import com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames;
 import com.muse.meomuneum.musicrecord.dto.SongRegistrationDtos.Request;
 import com.muse.meomuneum.musicrecord.dto.SongRegistrationDtos.Response;
 import com.muse.meomuneum.musicrecord.exception.MusicRecordException;
@@ -58,6 +59,7 @@ import com.muse.meomuneum.musicrecord.resolver.CurrentUserResolver;
 import com.muse.meomuneum.musicrecord.service.MusicRecordService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache;
 import com.muse.meomuneum.musicrecord.service.MusicSearchCursorCodec;
+import com.muse.meomuneum.musicrecord.service.MusicSearchStorageService;
 import com.muse.meomuneum.musicrecord.service.SongRegistrationService;
 import com.sun.net.httpserver.HttpServer;
 
@@ -81,8 +83,11 @@ class SongRegistrationMySqlIntegrationTest {
         jdbc = new JdbcTemplate(dataSource);
         for (String file : List.of("V1__recommendation_sample.sql",
                 "V20261002133615__expand_music_artist_name_length.sql",
+                "V20261110133622__add_music_storefront_names.sql",
+                "V20261110135304__add_music_release_epoch.sql",
                 "V20260921200528__create_users_table.sql", "V20260923142421__create_chat_room_foundation.sql",
-                "V20260925174748__create_map_dots_and_music_records_tables.sql")) {
+                "V20260925174748__create_map_dots_and_music_records_tables.sql",
+                "V20261108192420__add_chat_music_catalog_foundation.sql")) {
             try (var connection = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/migration/" + file));
             }
@@ -103,6 +108,129 @@ class SongRegistrationMySqlIntegrationTest {
         when(itunes.country()).thenReturn("KR");
         cache = new MusicSearchCandidateCache(Clock.systemUTC());
         search = search(itunes, cache);
+    }
+
+    @Test
+    void registrationStoresBothNamesAndSearchesBothEvenAfterAMetadataRetry() {
+        var names = new StorefrontNames("Landing in Love", "HANRORO", "사랑하게 될 거야", "한로로", false);
+        var candidate = new MusicItem(null, "ITUNES", "1703196825", names.titleKo(), names.artistNameKo(),
+                null, null, null, false, names);
+        cache.put("track", "KR", List.of(candidate));
+
+        var registered = registration(itunes, cache).register(new Request("1703196825"));
+
+        assertThat(registered.created()).isTrue();
+        long id = registered.music().music_id();
+        assertThat(registered.music().title()).isEqualTo(names.titleKo());
+        repository.upsertMusic(new MusicItem(null, "ITUNES", "1703196825", names.titleUs(), names.artistNameUs(),
+                null, null, null, false, new StorefrontNames(names.titleUs(), names.artistNameUs(), null, null, true)));
+        var row = jdbc.queryForMap("SELECT title_us, artist_name_us, title_ko, artist_name_ko FROM music WHERE id=?",
+                id);
+        assertThat(row).containsEntry("title_us", names.titleUs()).containsEntry("artist_name_us", names.artistNameUs())
+                .containsEntry("title_ko", names.titleKo()).containsEntry("artist_name_ko", names.artistNameKo());
+        for (String query : List.of("Landing in Love", "HANRORO", "사랑하게 될 거야", "한로로")) {
+            assertThat(repository.searchMusic(query, Long.MAX_VALUE, id, 20))
+                    .extracting(MusicItem::title).containsExactly(names.titleKo());
+        }
+    }
+
+    @Test
+    void realMysqlPagesByReleaseAcrossTiesAndMissingDatesWithAPinnedHighWatermark() {
+        for (int externalId = 1; externalId <= 22; externalId++) {
+            Long release = switch (externalId) {
+                case 1 -> 9L;
+                case 2 -> 10L;
+                case 3, 5 -> 8L;
+                case 4 -> 12L;
+                default -> null;
+            };
+            repository.insertSelectedMusic(releaseItem(externalId, release));
+        }
+
+        var page = search.search("release test", "ITUNES", null, 2);
+        assertThat(page.source()).isEqualTo("DB");
+        assertThat(page.items()).extracting(MusicItem::external_music_id).containsExactly("4", "2");
+        assertThat(page.items()).extracting(MusicItem::releaseEpochSecond).containsExactly(12L, 10L);
+        long highWatermark = repository.highestMusicId();
+        repository.upsertMusic(releaseItem(2, 18L));
+        assertThat(repository.findMusic("ITUNES", "2").orElseThrow().releaseEpochSecond()).isEqualTo(10L);
+        repository.upsertMusic(releaseItem(22, 7L));
+        assertThat(repository.findMusic("ITUNES", "22").orElseThrow().releaseEpochSecond()).isNull();
+        repository.insertSelectedMusic(releaseItem(23, 1L));
+
+        var remaining = new ArrayList<String>();
+        while (page.has_next()) {
+            page = search.search("release test", "ITUNES", page.next_cursor(), 2);
+            assertThat(page.source()).isEqualTo("DB");
+            remaining.addAll(page.items().stream().map(MusicItem::external_music_id).toList());
+        }
+        var expected = new ArrayList<>(List.of("1", "5", "3"));
+        for (int externalId = 22; externalId >= 6; externalId--) {
+            expected.add(Integer.toString(externalId));
+        }
+        assertThat(remaining).containsExactlyElementsOf(expected);
+
+        long fourthMusicId = repository.findMusic("ITUNES", "4").orElseThrow().music_id();
+        var codec = new MusicSearchCursorCodec("secret");
+        String legacy = codec.encode("release test", "KR", 2, codec.database(fourthMusicId, highWatermark));
+        var oldPage = search.search("release test", "ITUNES", legacy, 2);
+        assertThat(oldPage.items()).extracting(MusicItem::external_music_id).containsExactly("3", "2");
+        assertThat(codec.decode(oldPage.next_cursor(), "release test", "KR", 2).legacyDatabaseOrder()).isTrue();
+        assertThat(search.search("release test", "ITUNES", oldPage.next_cursor(), 2).items())
+                .extracting(MusicItem::external_music_id).containsExactly("1");
+    }
+
+    @Test
+    void realMysqlPagesByExactAndPartialNameBeforeReleaseAndPreservesDateOnlyCursors() {
+        var names = new StorefrontNames("US title", "US Artist", "한국 곡", "한로로 노래", false);
+        repository.insertSelectedMusic(new MusicItem(null, "ITUNES", "1", "한국 곡", "다른 표시 이름",
+                null, null, null, false, names, 10L));
+        insertRankedSong(2, "다른 곡", "한 로 로   노래", 20L);
+        insertRankedSong(3, "한로로 노래 라이브", "가수", 50L);
+        insertRankedSong(4, "다른 곡", "밴드 한로로 노래", 50L);
+        insertRankedSong(5, "한로로 라이브", "노래 가수", 300L);
+        insertRankedSong(6, "한로로 노래", "가수", null);
+        for (int externalId = 7; externalId <= 22; externalId++) {
+            insertRankedSong(externalId, "한로로 라이브", "노래 가수", null);
+        }
+
+        String query = "한로로 노래";
+        var page = search.search(query, "ITUNES", null, 2);
+        assertThat(page.source()).isEqualTo("DB");
+        assertThat(page.items()).extracting(MusicItem::external_music_id).containsExactly("2", "1");
+        assertThat(page.items()).extracting(MusicItem::matchPriority).containsExactly(0, 0);
+        assertThat(new ObjectMapper().valueToTree(page.items().getFirst()).size()).isEqualTo(9);
+        var codec = new MusicSearchCursorCodec("secret");
+        assertThat(codec.decode(page.next_cursor(), query, "KR", 2).lastMatchPriority()).isZero();
+        long highWatermark = repository.highestMusicId();
+        insertRankedSong(23, "한로로 노래", "가수", 400L);
+
+        var remaining = new ArrayList<String>();
+        for (int pageNumber = 0; page.has_next() && pageNumber < 12; pageNumber++) {
+            page = search.search(query, "ITUNES", page.next_cursor(), 2);
+            assertThat(page.source()).isEqualTo("DB");
+            remaining.addAll(page.items().stream().map(MusicItem::external_music_id).toList());
+        }
+        assertThat(page.has_next()).isFalse();
+        var expected = new ArrayList<>(List.of("6", "4", "3", "5"));
+        for (int externalId = 22; externalId >= 7; externalId--) {
+            expected.add(Integer.toString(externalId));
+        }
+        assertThat(remaining).containsExactlyElementsOf(expected);
+
+        long newestMusicId = repository.findMusic("ITUNES", "5").orElseThrow().music_id();
+        String dated = codec.encode(query, "KR", 2, codec.database(newestMusicId, highWatermark, 300L));
+        var oldPage = search.search(query, "ITUNES", dated, 2);
+        assertThat(oldPage.items()).extracting(MusicItem::external_music_id).containsExactly("4", "3");
+        assertThat(codec.decode(oldPage.next_cursor(), query, "KR", 2).lastMatchPriority()).isNull();
+        assertThat(search.search(query, "ITUNES", oldPage.next_cursor(), 2).items())
+                .extracting(MusicItem::external_music_id).containsExactly("2", "1");
+        verify(itunes, never()).search(query);
+    }
+
+    private void insertRankedSong(int externalId, String title, String artist, Long release) {
+        repository.insertSelectedMusic(new MusicItem(null, "ITUNES", Integer.toString(externalId), title, artist,
+                null, null, null, false, StorefrontNames.EMPTY, release));
     }
 
     @Test
@@ -132,7 +260,7 @@ class SongRegistrationMySqlIntegrationTest {
     }
 
     @Test
-    void firstPageCacheHitSubsequentPageEmptyAndFailureLeaveBothTablesIdentical() throws Exception {
+    void firstPageCacheHitSubsequentPageEmptyAndFailureDoNotWriteCatalogSynchronously() {
         long id = repository.insertSelectedMusic(item("1", "original", "stored artist")).music_id();
         jdbc.update("UPDATE music SET youtube_video_id='abcdefghijk', preview_url='stored-preview', "
                 + "created_at='2026-01-01 00:00:00.123456', updated_at='2026-02-02 01:02:03.654321' WHERE id=?", id);
@@ -156,10 +284,6 @@ class SongRegistrationMySqlIntegrationTest {
                 org.springframework.http.HttpStatus.BAD_GATEWAY, "music provider unavailable"));
         assertThatThrownBy(() -> search.search("failure", "ITUNES", null, 20)).hasMessage("music provider unavailable");
         assertThat(tables()).isEqualTo(before);
-        assertThatThrownBy(() -> Class.forName("com.muse.meomuneum.musicrecord.service.MusicSearchStorageService"))
-                .isInstanceOf(ClassNotFoundException.class);
-        assertThatThrownBy(() -> Class.forName("com.muse.meomuneum.musicrecord.config.MusicSearchStorageConfig"))
-                .isInstanceOf(ClassNotFoundException.class);
     }
 
     @Test
@@ -219,7 +343,7 @@ class SongRegistrationMySqlIntegrationTest {
         var reused = registration(itunes, cache).register(new Request("123"));
         assertThat(reused.created()).isFalse();
         assertThat(reused.music().title()).isEqualTo("authoritative");
-        assertThat(reused.music().is_queueable()).isTrue();
+        assertThat(reused.music().is_queueable()).isFalse();
         assertThat(tables()).isEqualTo(before);
         verify(itunes, org.mockito.Mockito.times(8)).lookup("123");
     }
@@ -236,7 +360,8 @@ class SongRegistrationMySqlIntegrationTest {
         var tokens = mock(LocationResolutionTokenProvider.class);
         when(tokens.validate("token", 1L)).thenReturn(new LocationResolutionClaims(1L, 1L, "11", 2L, "11440", 1L,
                 Instant.now().plusSeconds(300)));
-        var records = new MusicRecordService(repository, itunes, tokens, new MusicSearchCursorCodec("secret"), cache);
+        var records = new MusicRecordService(repository, itunes, tokens, new MusicSearchCursorCodec("secret"), cache,
+                mock(MusicSearchStorageService.class));
         var transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         var created = transaction.execute(status -> records.create(1,
                 new CreateRequest(new MusicSelection("ITUNES", "123"), "token", "place", "memo")));
@@ -321,8 +446,9 @@ class SongRegistrationMySqlIntegrationTest {
                 assertThat(cache.findQuery("3:KR:" + new MusicSearchCursorCodec("secret").hash(query))).isEmpty();
                 assertThat(tables()).isEqualTo(before);
             }
+            assertThat(lookups).hasValue(0);
             registration(http, cache).register(new Request("123"));
-            assertThat(lookups).hasValue(1);
+            assertThat(lookups).hasValue(2);
             body.set("{\"results\":[{\"kind\":\"podcast\",\"trackId\":0}," + valid + "]}");
             assertThat(realSearch.search("mixed", "ITUNES", null, 20).items())
                     .extracting(MusicItem::external_music_id).containsExactly("123");
@@ -394,12 +520,18 @@ class SongRegistrationMySqlIntegrationTest {
 
     private MusicRecordService search(ItunesMusicSearchClient client, MusicSearchCandidateCache candidates) {
         return new MusicRecordService(repository, client, mock(LocationResolutionTokenProvider.class),
-                new MusicSearchCursorCodec("secret"), candidates);
+                new MusicSearchCursorCodec("secret"), candidates,
+                mock(MusicSearchStorageService.class));
     }
 
     private Map<String, List<Map<String, Object>>> tables() {
         return Map.of("music", jdbc.queryForList("SELECT * FROM music ORDER BY id"),
                 "music_records", jdbc.queryForList("SELECT * FROM music_records ORDER BY id"));
+    }
+
+    private MusicItem releaseItem(int externalId, Long release) {
+        return new MusicItem(null, "ITUNES", Integer.toString(externalId), "release test", "artist",
+                null, null, null, false, StorefrontNames.EMPTY, release);
     }
 
     private MusicItem item(String id, String title, String artist) {

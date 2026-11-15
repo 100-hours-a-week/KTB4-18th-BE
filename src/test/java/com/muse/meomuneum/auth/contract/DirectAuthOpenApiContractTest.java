@@ -40,8 +40,8 @@ class DirectAuthOpenApiContractTest {
             new Route("/logout", "post", "200,400,401,403,409,428,503",
                     "aab7d7149413845604fbeb5cb6f6b0c147a0024b4223118b2c0530c3eac11d51"),
             new Route("/token/csrf", "get", "200", "47dc02ab3e0ef9e5e8a9f59ea994e39c6608cf2f356139111b977bf239169068"),
-            new Route("/flow/current-operation", "get", "200,400,404,409,503",
-                    "446efcf06e42843726ea5b4a50ac6dae99efa3f8e65144a7555dc7108e4a6f82"),
+            new Route("/flow/current-operation", "get", "200,400,401,404,409,503",
+                    "e58f9fb6c103f0741642057983d704af0609c54057ac1bfe01ea44b7e1156613"),
             new Route("/flow/rebootstrap", "post", "200,400,403,404,409,429,503",
                     "8d8452fbf7d7ad891c664df3ef0b6fefba2dfc48abd4856076db4a78b2059f6b"),
             new Route("/token/refresh/operations/{operationId}/session-recovery", "post",
@@ -90,7 +90,7 @@ class DirectAuthOpenApiContractTest {
         Map<String, Object> document = document();
         Map<String, Object> components = map(document.get("components"));
         assertThat(hash(components.get("schemas"))).as("schemas, closed error codes and conditions")
-                .isEqualTo("5305f6e600adb62bdb5e9f36cdead506b9402355e9b5b0be763b7d7c97c00450");
+                .isEqualTo("c7b8dede412617a89552f8d399379e20ffa90237bfed6eaa9f67e406e602c616");
         assertThat(hash(components.get("securitySchemes"))).as("security schemes")
                 .isEqualTo("788d536415e602398a62e3d9af82426dbc0c2da08e80856c4832ccd6e141ffd6");
         checkReferences(document, document);

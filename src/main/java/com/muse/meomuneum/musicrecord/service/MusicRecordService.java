@@ -33,6 +33,7 @@ import tools.jackson.databind.JsonNode;
 public class MusicRecordService {
     private static final int PAGE_SIZE = 20;
     private final MusicSearchCandidateCache candidates;
+    private final MusicSearchStorageService searchStorage;
     private final MusicRecordRepository repository;
     private final ItunesMusicSearchClient itunes;
     private final LocationResolutionTokenProvider tokens;
@@ -41,8 +42,10 @@ public class MusicRecordService {
 
     public MusicRecordService(MusicRecordRepository repository, ItunesMusicSearchClient itunes,
             LocationResolutionTokenProvider tokens,
-            MusicSearchCursorCodec searchCursors, MusicSearchCandidateCache candidates) {
+            MusicSearchCursorCodec searchCursors, MusicSearchCandidateCache candidates,
+            MusicSearchStorageService searchStorage) {
         this.candidates = candidates;
+        this.searchStorage = searchStorage;
         this.repository = repository;
         this.itunes = itunes;
         this.tokens = tokens;
@@ -73,25 +76,36 @@ public class MusicRecordService {
             return externalPage(snapshot, normalized, country, position.offset(), pageSize);
         }
         long highWatermark = position == null ? repository.highestMusicId() : position.highWatermark();
-        long beforeId = position == null ? Long.MAX_VALUE : position.lastDbId();
-        List<MusicItem> db = repository.searchMusic(normalized, beforeId, highWatermark,
-                position == null ? PAGE_SIZE + 1 : pageSize + 1);
+        List<MusicItem> db;
+        if (position == null) {
+            db = repository.searchMusic(normalized, Long.MAX_VALUE, highWatermark, PAGE_SIZE + 1);
+        } else if (position.legacyDatabaseOrder()) {
+            db = repository.searchMusic(normalized, position.lastDbId(), highWatermark, pageSize + 1);
+        } else {
+            db = repository.searchMusic(normalized, position.lastDbId(), position.lastReleaseEpochSecond(),
+                    position.lastMatchPriority(), highWatermark, pageSize + 1);
+        }
         if (position != null || db.size() > PAGE_SIZE) {
             boolean hasNext = db.size() > pageSize;
             List<MusicItem> items = List.copyOf(db.subList(0, Math.min(pageSize, db.size())));
             String next = null;
             if (hasNext) {
-                long lastId = items.getLast().music_id();
+                MusicItem last = items.getLast();
                 var nextPosition = position == null
-                        ? searchCursors.database(lastId, highWatermark)
-                        : position.advance(lastId, 0);
+                        ? searchCursors.database(last.music_id(), highWatermark, last.releaseEpochSecond(),
+                                last.matchPriority())
+                        : position.advanceDatabase(last.music_id(), last.releaseEpochSecond(), last.matchPriority());
                 next = searchCursors.encode(normalized, country, pageSize, nextPosition);
             }
             return new MusicSearchResponse(items, next, hasNext, "DB");
         }
         String key = searchKey(country, normalized);
         var snapshot = candidates.findQuery(key)
-                .orElseGet(() -> candidates.put(key, country, itunes.search(normalized)));
+                .orElseGet(() -> {
+                    var results = itunes.search(normalized);
+                    searchStorage.store(results);
+                    return candidates.putSearch(key, country, normalized, results);
+                });
         return externalPage(snapshot, normalized, country, 0, pageSize);
     }
 

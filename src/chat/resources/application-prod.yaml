@@ -1,0 +1,9 @@
+# Production Chat artifact only. Explicit environment values override these defaults.
+chat:
+  music:
+    queue:
+      enabled: ${CHAT_MUSIC_QUEUE_ENABLED:true}
+    playback:
+      enabled: ${CHAT_MUSIC_PLAYBACK_ENABLED:true}
+    events:
+      enabled: ${CHAT_MUSIC_EVENTS_ENABLED:true}

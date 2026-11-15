@@ -80,6 +80,36 @@ class ImageRecommendationSecurityIntegrationTest {
     }
 
     @Test
+    void optionalLocationIsBoundToAuthenticatedSidAndUnknownParametersRemainRejected() throws Exception {
+        when(service.accept(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("550e8400-e29b-41d4-a716-446655440000")))
+                .thenReturn(new RecommendationAcceptedResponse(43L, "PROCESSING",
+                        "11111111-1111-1111-1111-111111111111"));
+        mockMvc.perform(imageRequest().param("location_resolution_token", "signed-location")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken()))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.data.recommendation_id").value(43));
+        verify(service).accept(
+                org.mockito.ArgumentMatchers
+                        .argThat(request -> "signed-location".equals(request.location_resolution_token())),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("550e8400-e29b-41d4-a716-446655440000"));
+        mockMvc.perform(imageRequest().param("region_id", "999")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void rejectsDuplicateAndOversizedLocationParameters() throws Exception {
+        mockMvc.perform(imageRequest().param("location_resolution_token", "first", "second")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(imageRequest().param("location_resolution_token", "x".repeat(4097))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void rejectsMalformedConversationKeyBeforeServiceCall() throws Exception {
         clearInvocations(service);
         mockMvc.perform(imageRequest().param("conversation_key", "not-a-uuid")
