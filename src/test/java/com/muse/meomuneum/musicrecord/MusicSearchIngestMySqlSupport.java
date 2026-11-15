@@ -40,7 +40,10 @@ abstract class MusicSearchIngestMySqlSupport {
             for (String file : List.of("V1__recommendation_sample.sql",
                     "V20261002133615__expand_music_artist_name_length.sql",
                     "V20261110093705__create_music_search_ingest_jobs.sql",
-                    "V20261115190842__add_music_search_storage_recovery.sql")) {
+                    "V20261115190842__add_music_search_storage_recovery.sql",
+                    "V20261115204849__align_music_search_ingest_metadata_columns.sql",
+                    "V20261115233805__align_music_catalog_compatibility.sql",
+                    "V20261115233818__extend_music_search_dlq_payload.sql")) {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/music-search-legacy/" + file));
             }
         }

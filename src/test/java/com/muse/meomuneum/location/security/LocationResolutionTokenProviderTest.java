@@ -73,6 +73,29 @@ class LocationResolutionTokenProviderTest {
         assertInvalidToken(() -> provider.validate(token, 8L));
     }
 
+    @Test
+    void chatTokensAreBoundToOneAuthenticationSessionWhileGeneralValidationRemainsCompatible() {
+        LocationResolutionTokenProvider provider = providerAt(ISSUED_AT, SECRET);
+        String sid = "550e8400-e29b-41d4-a716-446655440000";
+        String token = provider.issueForSession(7L, sid, sido, sigungu, 101L).value();
+        assertThat(provider.validateForChat(token, 7L, sid).authSessionId()).isEqualTo(sid);
+        assertThat(provider.validate(token, 7L).mapDotId()).isEqualTo(101L);
+        assertInvalidToken(() -> provider.validateForChat(token, 7L,
+                "550e8400-e29b-41d4-a716-446655440001"));
+        assertInvalidToken(() -> provider.validateForChat(token, 8L, sid));
+        assertInvalidToken(() -> providerAt(ISSUED_AT.plusSeconds(300), SECRET).validateForChat(token, 7L, sid));
+    }
+
+    @Test
+    void unboundTokensRemainValidForGeneralUseButCannotAuthorizeChat() {
+        LocationResolutionTokenProvider provider = providerAt(ISSUED_AT, SECRET);
+        String token = provider.issue(7L, sido, sigungu, 101L).value();
+        assertThat(provider.validate(token, 7L).mapDotId()).isEqualTo(101L);
+        assertInvalidToken(() -> provider.validateForChat(token, 7L,
+                "550e8400-e29b-41d4-a716-446655440000"));
+        assertInvalidToken(() -> provider.issueForSession(7L, "invalid", sido, sigungu, 101L));
+    }
+
     private LocationResolutionTokenProvider providerAt(Instant instant, String secret) {
         return new LocationResolutionTokenProvider(new LocationTokenProperties(secret),
                 Clock.fixed(instant, ZoneOffset.UTC));

@@ -34,7 +34,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 @WebMvcTest(value = MapDotController.class, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
         "auth.cors.allowed-origins=http://localhost:5173"})
-@Import({SecurityConfig.class, MapDotSecurityIntegrationTest.SecurityTestConfiguration.class})
+@Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class,
+        MapDotSecurityIntegrationTest.SecurityTestConfiguration.class})
 class MapDotSecurityIntegrationTest {
 
     @Autowired

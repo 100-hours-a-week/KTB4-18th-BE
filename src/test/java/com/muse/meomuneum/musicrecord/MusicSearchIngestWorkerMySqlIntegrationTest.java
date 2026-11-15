@@ -24,6 +24,50 @@ import com.muse.meomuneum.musicrecord.service.MusicSearchRetryPolicy;
 
 class MusicSearchIngestWorkerMySqlIntegrationTest extends MusicSearchIngestMySqlSupport {
     @Test
+    void richPayloadSurvivesRestartDeadNewAdmissionReplayAndCatalogReads() {
+        var names = new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames(
+                "US title", "US artist", "한국 제목", "한국 가수", true);
+        var original = new MusicItem(null, "ITUNES", "900", "한국 제목", "한국 가수", "cover", "preview", null,
+                false, names, 100L);
+        long id;
+        try (var context = context()) {
+            var jobs = context.getBean(MusicSearchIngestJobService.class);
+            jobs.admit(List.of(original));
+            id = jobId("900");
+        }
+        try (var context = context()) {
+            var jobs = context.getBean(MusicSearchIngestJobService.class);
+            var started = jobs.start(jobs.claim(1, 120).getFirst(), 120);
+            assertThat(started.music().storefrontNames().titleUs()).isEqualTo("US title");
+            assertThat(started.music().releaseEpochSecond()).isEqualTo(100L);
+            jobs.fail(started, false, "invalid", 0);
+            var historical = jdbc.queryForMap("SELECT title_us,artist_name_us,title_ko,artist_name_ko, "
+                    + "release_epoch_second FROM music_search_ingest_dlq");
+            var latestNames = new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames(
+                    "new US", "new artist", "최신 제목", "최신 가수", false);
+            var latest = new MusicItem(null, "ITUNES", "900", "최신 제목", "최신 가수", "new cover", "new preview",
+                    "abcdefghijk", true, latestNames, 200L);
+            jobs.admit(List.of(latest));
+            assertThat(status("900")).isEqualTo("DEAD");
+            jobs.requeue(id);
+            var current = jobs.start(jobs.claim(1, 120).getFirst(), 120);
+            jobs.complete(current);
+            assertThat(jdbc.queryForMap("SELECT title_us,artist_name_us,title_ko,artist_name_ko, "
+                    + "release_epoch_second FROM music_search_ingest_dlq")).isEqualTo(historical);
+            var repository = context.getBean(MusicRecordRepository.class);
+            var stored = repository.findMusic("ITUNES", "900").orElseThrow();
+            assertThat(stored.title()).isEqualTo("최신 제목");
+            assertThat(stored.preview_url()).isEqualTo("new preview");
+            assertThat(stored.releaseEpochSecond()).isEqualTo(200L);
+            assertThat(stored.is_queueable()).isFalse();
+            assertThat(repository.searchMusic("최신", Long.MAX_VALUE, Long.MAX_VALUE, 20)).hasSize(1);
+            jobs.admit(List.of(new MusicItem(null, "ITUNES", "900", "최신 제목", "최신 가수", null, null, null, false)));
+            assertThat(status("900")).isEqualTo("DONE");
+            assertThat(jobs.claim(1, 120)).isEmpty();
+        }
+    }
+
+    @Test
     void twoConcurrentClaimersAreDisjointAndFutureJobsAreExcluded() throws Exception {
         try (var context = context()) {
             var jobs = context.getBean(MusicSearchIngestJobService.class);

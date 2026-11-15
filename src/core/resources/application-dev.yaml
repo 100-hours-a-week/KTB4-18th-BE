@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: ${DEV_DB_URL:jdbc:mysql://localhost:3306/meomuneum_dev}
+    username: ${DEV_DB_USERNAME:meomuneum_dev}
+    password: ${DEV_DB_PASSWORD}
+
+auth:
+  direct-v2:
+    enabled: ${AUTH_DIRECT_V2_ENABLED:true}
+    refresh-verified: ${AUTH_DIRECT_V2_REFRESH_VERIFIED:true}
+    refresh-recovery-verified: ${AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED:false}
+    rebootstrap-verified: ${AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED:false}
+    safety-mode: "${AUTH_DIRECT_V2_SAFETY_MODE:OFF}"
+    backend-instances: "${AUTH_DIRECT_V2_BACKEND_INSTANCES:}"
+    external-restore-epoch: "${AUTH_DIRECT_V2_EXTERNAL_RESTORE_EPOCH:}"
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  state:
+    hazelcast:
+      enabled: ${DEV_AUTH_STATE_HAZELCAST_ENABLED:${AUTH_STATE_HAZELCAST_ENABLED:true}}
+      members: ${DEV_AUTH_STATE_HAZELCAST_MEMBERS:${AUTH_STATE_HAZELCAST_MEMBERS:}}
+      cluster-name: ${DEV_AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-dev}
+    expected-hazelcast-members: ${DEV_AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:3}}

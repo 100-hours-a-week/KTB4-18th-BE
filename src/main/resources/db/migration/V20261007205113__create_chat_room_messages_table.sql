@@ -1,0 +1,16 @@
+CREATE TABLE `chat_room_messages` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `room_id` BIGINT NOT NULL,
+    `user_id` BIGINT NOT NULL,
+    `client_message_id` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `content` VARCHAR(300) NOT NULL,
+    `created_at` DATETIME(6) NOT NULL,
+    CONSTRAINT `PK_CHAT_ROOM_MESSAGES` PRIMARY KEY (`id`),
+    CONSTRAINT `UK_CHAT_ROOM_MESSAGES_USER_CLIENT` UNIQUE (`user_id`, `client_message_id`),
+    CONSTRAINT `FK_CHAT_ROOM_MESSAGES_ROOM` FOREIGN KEY (`room_id`) REFERENCES `chat_rooms` (`id`),
+    CONSTRAINT `FK_CHAT_ROOM_MESSAGES_USER` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`),
+    CONSTRAINT `CK_CHAT_ROOM_MESSAGES_CONTENT` CHECK (CHAR_LENGTH(TRIM(`content`)) > 0),
+    CONSTRAINT `CK_CHAT_ROOM_MESSAGES_CLIENT_ID` CHECK (CHAR_LENGTH(TRIM(`client_message_id`)) > 0),
+    INDEX `IDX_CHAT_ROOM_MESSAGES_ROOM_CREATED` (`room_id`, `created_at`, `id`),
+    INDEX `IDX_CHAT_ROOM_MESSAGES_CREATED` (`created_at`, `id`)
+) DEFAULT CHARACTER SET utf8mb4;

@@ -1,0 +1,92 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Chat runtime operational endpoints",
+    "version": "1.0.0",
+    "description": "P1 10단계. isolated Chat only; public ALB must deny metrics. Offline recovery is an explicit operator job followed by new Chat Tasks, not an HTTP endpoint or automatic reopen."
+  },
+  "paths": {
+    "/actuator/health/liveness": {
+      "get": {
+        "security": [],
+        "description": "External storage failure alone does not change process liveness. No details.",
+        "responses": {
+          "200": {
+            "description": "Live"
+          },
+          "503": {
+            "description": "Process not live"
+          }
+        }
+      }
+    },
+    "/actuator/health/readiness": {
+      "get": {
+        "security": [],
+        "description": "Includes runtime gate, DB, Core auth, Task lease and prepared Redis transport/subscriptions. No details.",
+        "responses": {
+          "200": {
+            "description": "Ready"
+          },
+          "503": {
+            "description": "Do not route Chat traffic"
+          }
+        }
+      }
+    },
+    "/actuator/prometheus": {
+      "get": {
+        "security": [
+          {
+            "metricsServiceToken": []
+          }
+        ],
+        "description": "Separate service token only; end-user JWT is rejected. Blank token denies all collection. Internal scraper access only. No per-user/room/session labels. Requires CHAT_LIFECYCLE_ENABLED.",
+        "responses": {
+          "200": {
+            "description": "Prometheus exposition",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid dedicated service token; no metrics"
+          },
+          "404": {
+            "description": "Endpoint unavailable for this application/configuration"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "metricsServiceToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "CHAT_METRICS_SERVICE_TOKEN, separate from JWT/Core/Redis credentials, 32-256 ASCII URL-safe characters; never supplied to FE."
+      }
+    }
+  },
+  "x-offline-recovery": {
+    "confirmationEnvironment": "CHAT_RECOVERY_CONFIRM=chat-stopped",
+    "launcher": "java -Dloader.main=com.muse.meomuneum.chat.runtime.ChatRecoveryCommand -cp meomuneum-chat.jar org.springframework.boot.loader.launch.PropertiesLauncher",
+    "preconditions": [
+      "Close routing and stop old Chat Tasks",
+      "Single migrator applies V20261027205623__add_chat_runtime_recovery_control.sql",
+      "Inject Chat DB/Redis credentials and required ACL, no secrets in command arguments"
+    ],
+    "completion": [
+      "DB RUNNING with prepared Redis generation/run_id/marker",
+      "Start compatible new Chat UUIDs and check readiness before routing"
+    ],
+    "leaseSeconds": 15,
+    "automaticReopen": false,
+    "drainSecondsDefault": 20,
+    "shutdownPhaseSecondsDefault": 30
+  }
+}

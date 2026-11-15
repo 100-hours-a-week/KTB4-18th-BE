@@ -106,6 +106,15 @@ class MusicSearchIngestMigrationMySqlIntegrationTest {
                 org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
                         new org.springframework.core.io.ClassPathResource(
                                 "db/migration/V20261115190842__add_music_search_storage_recovery.sql"));
+                org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
+                        new org.springframework.core.io.ClassPathResource(
+                                "db/migration/V20261115204849__align_music_search_ingest_metadata_columns.sql"));
+                org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
+                        new org.springframework.core.io.ClassPathResource(
+                                "db/migration/V20261115233805__align_music_catalog_compatibility.sql"));
+                org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
+                        new org.springframework.core.io.ClassPathResource(
+                                "db/migration/V20261115233818__extend_music_search_dlq_payload.sql"));
             }
             assertThat(jdbc.queryForObject("SELECT title FROM music_search_ingest_dlq", String.class))
                     .isEqualTo("legacy");

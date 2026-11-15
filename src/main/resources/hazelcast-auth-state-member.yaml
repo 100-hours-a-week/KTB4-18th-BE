@@ -1,0 +1,13 @@
+hazelcast:
+  cluster-name: meomuneum-auth
+  config-replacers:
+    replacers:
+      - class-name: com.hazelcast.config.replacer.PropertyReplacer
+  split-brain-protection:
+    auth-state-majority:
+      enabled: true
+      protect-on: READ_WRITE
+      minimum-cluster-size: ${auth.state.hazelcast.minimum-cluster-size}
+  map:
+    "auth-*-v2":
+      split-brain-protection-ref: auth-state-majority

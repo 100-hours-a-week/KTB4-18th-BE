@@ -32,6 +32,7 @@ import com.muse.meomuneum.global.security.SecurityErrorResponseWriter;
 import com.muse.meomuneum.musicrecord.controller.MusicSearchStorageAdminController;
 import com.muse.meomuneum.musicrecord.service.MusicSearchIngestJobService;
 import com.muse.meomuneum.musicrecord.service.MusicSearchIngestJobService.RequeueResult;
+import com.muse.meomuneum.support.BearerSecurityTestSupport;
 import com.muse.meomuneum.user.domain.User;
 import com.muse.meomuneum.user.domain.UserRole;
 import com.muse.meomuneum.user.service.UserAuthenticationService;
@@ -44,7 +45,8 @@ import ch.qos.logback.core.read.ListAppender;
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
         "auth.cors.allowed-origins=http://localhost:5173"
 })
-@Import({SecurityConfig.class, MusicSearchStorageAdminSecurityIntegrationTest.SecurityTestConfiguration.class})
+@Import({SecurityConfig.class, BearerSecurityTestSupport.class,
+        MusicSearchStorageAdminSecurityIntegrationTest.SecurityTestConfiguration.class})
 class MusicSearchStorageAdminSecurityIntegrationTest {
     private static final String ORIGIN = "http://localhost:5173";
     @Autowired
@@ -139,7 +141,7 @@ class MusicSearchStorageAdminSecurityIntegrationTest {
         User user = mock(User.class);
         when(user.getId()).thenReturn(11L);
         when(user.getRole()).thenReturn(role);
-        return "Bearer " + jwt.createAccessToken(user);
+        return "Bearer " + jwt.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     @TestConfiguration

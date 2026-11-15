@@ -67,9 +67,21 @@ public class MusicSearchStorageService {
             throw new MusicMetadataException("music_identity_invalid");
         }
         MusicMetadataPolicy.validate(item.title(), item.artist_name());
+        var names = item.storefrontNames();
+        validateName(names.titleUs(), "title_us", 255);
+        validateName(names.titleKo(), "title_ko", 255);
+        validateName(names.artistNameUs(), "artist_name_us", 1000);
+        validateName(names.artistNameKo(), "artist_name_ko", 1000);
         validateOptionalField(item.album_cover_url(), "album_cover_url");
         validateOptionalField(item.preview_url(), "preview_url");
         validateLength(item.youtube_video_id(), "youtube_video_id", 32);
+    }
+
+    private static void validateName(String value, String field, int maximum) {
+        validateLength(value, field, maximum);
+        if (value != null && value.isBlank()) {
+            throw new MusicMetadataException(field + "_invalid");
+        }
     }
 
     private static void validateOptionalField(String value, String name) {

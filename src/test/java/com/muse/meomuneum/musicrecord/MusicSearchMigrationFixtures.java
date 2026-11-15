@@ -99,9 +99,7 @@ final class MusicSearchMigrationFixtures {
         Map<String, List<Map<String, Object>>> snapshot = new LinkedHashMap<>();
         for (String table : List.of("music", "music_search_ingest_jobs", "music_search_ingest_dlq")) {
             var rows = jdbc.queryForList("SELECT * FROM " + table + " ORDER BY id");
-            if (table.equals("music_search_ingest_jobs")) {
-                rows.forEach(row -> COLUMNS.forEach(row::remove));
-            }
+            rows.forEach(row -> COLUMNS.forEach(row::remove));
             snapshot.put(table, rows);
         }
         return snapshot;
@@ -150,7 +148,7 @@ final class MusicSearchMigrationFixtures {
         var resolver = new PathMatchingResourcePatternResolver();
         for (var resource : resolver.getResources("classpath*:db/migration/*.sql")) {
             String name = resource.getFilename();
-            if (name.startsWith("V" + RECOVERY) || name.startsWith("V" + ALIGNMENT)) {
+            if (name.matches("V[0-9]{14}__.*") && name.substring(1, 15).compareTo(RECOVERY) >= 0) {
                 try (var input = resource.getInputStream()) {
                     Files.write(directory.resolve(name), input.readAllBytes());
                 }

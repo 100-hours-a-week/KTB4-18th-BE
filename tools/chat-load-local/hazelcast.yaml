@@ -1,0 +1,15 @@
+hazelcast:
+  cluster-name: chat-load-local-auth
+  network:
+    join:
+      auto-detection:
+        enabled: false
+      multicast:
+        enabled: false
+      tcp-ip:
+        enabled: true
+        member-list:
+          - hazelcast:5701
+  properties:
+    hazelcast.phone.home.enabled: false
+    hazelcast.logging.type: jdk

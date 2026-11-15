@@ -37,7 +37,7 @@ class MusicSearchMigrationHistoryMySqlIntegrationTest {
         freshFlyway.migrate();
         freshFlyway.validate();
         fresh.assertAligned();
-        assertThat(fresh.history()).hasSize(48);
+        assertThat(fresh.history()).hasSize(50);
         assertThat(fresh.history())
                 .noneMatch(row -> MusicSearchMigrationFixtures.OLD_VERSION.equals(row.get("version")));
 
@@ -54,11 +54,63 @@ class MusicSearchMigrationHistoryMySqlIntegrationTest {
         upgrade.migrate();
         upgrade.validate();
         assertThat(applied.history().subList(0, prior.size())).isEqualTo(prior);
-        assertThat(applied.history()).hasSize(prior.size() + 2);
+        assertThat(applied.history()).hasSize(prior.size() + 4);
         assertThat(applied.jdbc.queryForList("SELECT title_us,artist_name_us,title_ko,artist_name_ko, "
                 + "release_epoch_second FROM music_search_ingest_jobs ORDER BY id")).isEqualTo(metadata);
         applied.assertAligned();
         assertThat(upgrade.migrate().migrationsExecuted).isZero();
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "MODIFY channel_kind VARCHAR(19) NOT NULL",
+            "DROP FOREIGN KEY fk_music_playback_source_music",
+            "DROP CHECK chk_music_source_version, ADD CONSTRAINT chk_music_source_version CHECK (version>=0)"
+    })
+    void incompatiblePlaybackShapeRejectsBeforeAddingMissingMusicColumns(String alteration) throws Exception {
+        var fixture = new MusicSearchMigrationFixtures(MYSQL);
+        fixture.flyway(MusicSearchMigrationFixtures.LEGACY, MusicSearchMigrationFixtures.ALIGNMENT).migrate();
+        var resource = new org.springframework.core.io.ClassPathResource(
+                "db/migration/V20261108192420__add_chat_music_catalog_foundation.sql");
+        String sql = resource.getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        fixture.jdbc.execute(sql.substring(sql.indexOf("CREATE TABLE music_playback_sources")));
+        fixture.jdbc.execute("ALTER TABLE music_playback_sources " + alteration);
+        var before = fixture.jdbc.queryForList("SHOW COLUMNS FROM music");
+        var history = fixture.history();
+        assertThatThrownBy(() -> fixture.flyway(MusicSearchMigrationFixtures.LEGACY, null).migrate())
+                .hasStackTraceContaining("music_catalog_compatibility_requires_expected_schema");
+        assertThat(fixture.jdbc.queryForList("SHOW COLUMNS FROM music")).isEqualTo(before);
+        assertThat(fixture.history()).isEqualTo(history);
+    }
+
+    @ParameterizedTest
+    @MethodSource("incompatibleColumns")
+    void catalogPreflightRejectsLateInvalidColumnBeforeAddingEarlierFields(String column, String definition) {
+        var fixture = new MusicSearchMigrationFixtures(MYSQL);
+        fixture.flyway(MusicSearchMigrationFixtures.LEGACY, MusicSearchMigrationFixtures.ALIGNMENT).migrate();
+        fixture.jdbc.execute("ALTER TABLE music ADD COLUMN " + column + " " + definition);
+        var before = fixture.jdbc.queryForList("SHOW COLUMNS FROM music");
+        var history = fixture.history();
+        assertThatThrownBy(() -> fixture.flyway(MusicSearchMigrationFixtures.LEGACY, null).migrate())
+                .hasStackTraceContaining("music_catalog_compatibility_requires_expected_schema");
+        assertThat(fixture.jdbc.queryForList("SHOW COLUMNS FROM music")).isEqualTo(before);
+        assertThat(fixture.history()).isEqualTo(history);
+        assertThat(fixture.jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables "
+                + "WHERE table_schema=DATABASE() AND table_name='music_playback_sources'", Integer.class)).isZero();
+    }
+
+    @ParameterizedTest
+    @MethodSource("incompatibleColumns")
+    void dlqPreflightRejectsEveryIncompatibleDefinitionWithoutPartialDdl(String column, String definition) {
+        var fixture = new MusicSearchMigrationFixtures(MYSQL);
+        fixture.flyway(MusicSearchMigrationFixtures.LEGACY, "20261115233805").migrate();
+        fixture.jdbc.execute("ALTER TABLE music_search_ingest_dlq ADD COLUMN " + column + " " + definition);
+        var before = fixture.jdbc.queryForList("SHOW COLUMNS FROM music_search_ingest_dlq");
+        var history = fixture.history();
+        assertThatThrownBy(() -> fixture.flyway(MusicSearchMigrationFixtures.LEGACY, null).migrate())
+                .hasStackTraceContaining("music_dlq_requires_expected_nullable_column_types");
+        assertThat(fixture.jdbc.queryForList("SHOW COLUMNS FROM music_search_ingest_dlq")).isEqualTo(before);
+        assertThat(fixture.history()).isEqualTo(history);
     }
 
     @ParameterizedTest
@@ -67,7 +119,7 @@ class MusicSearchMigrationHistoryMySqlIntegrationTest {
         var fixture = new MusicSearchMigrationFixtures(MYSQL);
         fixture.flyway(location, MusicSearchMigrationFixtures.OLD_VERSION).migrate();
         fixture.seed();
-        if (target.equals(MusicSearchMigrationFixtures.RECOVERY)) {
+        if (!target.equals(MusicSearchMigrationFixtures.OLD_VERSION)) {
             fixture.flyway(location, target).migrate();
             fixture.jdbc.update("UPDATE music_search_ingest_dlq SET replayed_at='2026-02-01'");
         }
@@ -75,13 +127,15 @@ class MusicSearchMigrationHistoryMySqlIntegrationTest {
         var jobs = fixture.jdbc.queryForList("SELECT id,external_music_id,title,artist_name,album_cover_url, "
                 + "preview_url,youtube_video_id,attempt_count,created_at,updated_at FROM music_search_ingest_jobs "
                 + "ORDER BY id");
-        var data = target.equals(MusicSearchMigrationFixtures.RECOVERY) ? fixture.data() : null;
+        var data = !target.equals(MusicSearchMigrationFixtures.OLD_VERSION) ? fixture.data() : null;
         var upgrade = fixture.flyway(location, null);
         new MusicSearchMigrationConfiguration().musicSearchMigrationStrategy().migrate(upgrade);
         upgrade.validate();
         assertThat(fixture.history().subList(0, prior.size())).isEqualTo(prior);
         assertThat(fixture.history()).hasSize(prior.size()
-                + (target.equals(MusicSearchMigrationFixtures.RECOVERY) ? 1 : 2));
+                + (target.equals(MusicSearchMigrationFixtures.OLD_VERSION)
+                        ? 4
+                        : target.equals(MusicSearchMigrationFixtures.RECOVERY) ? 3 : 2));
         assertThat(fixture.jdbc.queryForList("SELECT id,external_music_id,title,artist_name,album_cover_url, "
                 + "preview_url,youtube_video_id,attempt_count,created_at,updated_at FROM music_search_ingest_jobs "
                 + "ORDER BY id")).isEqualTo(jobs);
@@ -101,6 +155,18 @@ class MusicSearchMigrationHistoryMySqlIntegrationTest {
                 + "AND artist_name_us IS NULL AND title_ko IS NULL AND artist_name_ko IS NULL "
                 + "AND release_epoch_second IS NULL", Integer.class)).isEqualTo(4);
         fixture.assertAligned();
+        var repository = new com.muse.meomuneum.musicrecord.repository.MusicRecordRepository(fixture.jdbc);
+        var names = new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames(
+                "US", "Artist", "한국", "가수", false);
+        var item = new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.MusicItem(null, "ITUNES", "998",
+                "한국", "가수", "cover", "preview", null, false, names, 200L);
+        repository.upsertSearchMusic(item, java.time.LocalDateTime.now(), 1);
+        var catalog = repository.findMusic("ITUNES", "998").orElseThrow();
+        assertThat(catalog.title()).isEqualTo("한국");
+        assertThat(catalog.preview_url()).isEqualTo("preview");
+        assertThat(catalog.releaseEpochSecond()).isEqualTo(200L);
+        assertThat(catalog.is_queueable()).isFalse();
+        assertThat(repository.searchMusic("한국", Long.MAX_VALUE, Long.MAX_VALUE, 20)).hasSize(1);
         assertThat(upgrade.migrate().migrationsExecuted).isZero();
     }
 
@@ -109,7 +175,8 @@ class MusicSearchMigrationHistoryMySqlIntegrationTest {
                 "classpath:db/music-record-signup-legacy").flatMap(
                         location -> Stream.of(
                                 Arguments.of(location, MusicSearchMigrationFixtures.OLD_VERSION),
-                                Arguments.of(location, MusicSearchMigrationFixtures.RECOVERY)));
+                                Arguments.of(location, MusicSearchMigrationFixtures.RECOVERY),
+                                Arguments.of(location, MusicSearchMigrationFixtures.ALIGNMENT)));
     }
 
     @ParameterizedTest

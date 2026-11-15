@@ -16,7 +16,13 @@ import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, Long> {
 
     @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
-    Optional<ChatRoomMember> findByUser_IdAndDeletedAtIsNull(Long userId);
+    Optional<ChatRoomMember> findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(Long userId, String authSessionId);
+
+    @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
+    List<ChatRoomMember> findAllByUser_IdAndDeletedAtIsNull(Long userId);
+
+    @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region"})
+    List<ChatRoomMember> findAllByUser_IdAndAuthSessionId(Long userId, String authSessionId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
@@ -26,6 +32,9 @@ public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, 
                 AND member.deletedAt IS NULL
             """)
     List<ChatRoomMember> findAllActiveByChatRoomIdForUpdate(@Param("roomId") Long roomId);
+
+    @EntityGraph(attributePaths = {"chatRoom", "chatRoom.region", "user"})
+    Optional<ChatRoomMember> findByIdAndUser_IdAndChatRoom_Id(Long id, Long userId, Long roomId);
 
     long countByChatRoom_IdAndDeletedAtIsNull(Long roomId);
 }

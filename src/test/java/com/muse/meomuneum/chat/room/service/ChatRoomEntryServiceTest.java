@@ -1,5 +1,6 @@
 package com.muse.meomuneum.chat.room.service;
 
+import static com.muse.meomuneum.chat.support.ChatTestSessions.sid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,12 +15,13 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import com.muse.meomuneum.chat.connection.ChatSocketSessions;
 import com.muse.meomuneum.chat.member.domain.ChatRoomMember;
 import com.muse.meomuneum.chat.member.repository.ChatRoomMemberRepository;
 import com.muse.meomuneum.chat.region.domain.Region;
@@ -27,6 +29,7 @@ import com.muse.meomuneum.chat.room.domain.ChatRoom;
 import com.muse.meomuneum.chat.room.exception.ChatRoomErrorCode;
 import com.muse.meomuneum.chat.room.exception.ChatRoomException;
 import com.muse.meomuneum.chat.room.repository.ChatRoomRepository;
+import com.muse.meomuneum.chat.view.ChatViewLifecycle;
 import com.muse.meomuneum.location.security.LocationResolutionClaims;
 import com.muse.meomuneum.location.security.LocationResolutionTokenProvider;
 import com.muse.meomuneum.user.domain.User;
@@ -41,6 +44,7 @@ class ChatRoomEntryServiceTest {
     private UserRepository userRepository;
     private LocationResolutionTokenProvider tokenProvider;
     private ChatRoomEntryService service;
+    private com.muse.meomuneum.chat.connection.ChatPresenceRegistry presence;
 
     @BeforeEach
     void setUp() {
@@ -48,8 +52,30 @@ class ChatRoomEntryServiceTest {
         memberRepository = mock(ChatRoomMemberRepository.class);
         userRepository = mock(UserRepository.class);
         tokenProvider = mock(LocationResolutionTokenProvider.class);
+        presence = new com.muse.meomuneum.chat.connection.ChatPresenceRegistry(Clock.fixed(NOW, ZoneOffset.UTC));
         service = new ChatRoomEntryService(chatRoomRepository, memberRepository, userRepository, tokenProvider,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), presence,
+                mock(com.muse.meomuneum.chat.connection.ChatSocketSessions.class),
+                mock(com.muse.meomuneum.chat.ban.service.ChatBanStorageService.class),
+                mock(org.springframework.transaction.PlatformTransactionManager.class),
+                mock(com.muse.meomuneum.chat.view.ChatViewStorageService.class),
+                mock(com.muse.meomuneum.chat.view.ChatViewLifecycle.class),
+                mock(com.muse.meomuneum.chat.connection.ChatSessionAccessPolicy.class),
+                new com.muse.meomuneum.chat.connection.ChatAuthSessionRegistry());
+    }
+
+    @Test
+    void distributedLeaveDetachesTheExactViewBeforeClosingItsTransport() {
+        var participation = mock(com.muse.meomuneum.chat.participation.ChatParticipationService.class);
+        service.setParticipation(participation);
+        var views = (ChatViewLifecycle) ReflectionTestUtils.getField(service, "views");
+        var sockets = (ChatSocketSessions) ReflectionTestUtils.getField(service, "sockets");
+        when(views.discardEnded(7L, 700L, 900L, "view")).thenReturn(java.util.Set.of("socket"));
+        service.leaveTab(7L, sid(7L), 700L, 900L, "view");
+        var order = org.mockito.Mockito.inOrder(participation, views, sockets);
+        order.verify(participation).leave(7L, sid(7L), 700L, 900L, "view");
+        order.verify(views).discardEnded(7L, 700L, 900L, "view");
+        order.verify(sockets).close(java.util.Set.of("socket"), 4100, "CHAT_LEFT");
     }
 
     @Test
@@ -58,9 +84,10 @@ class ChatRoomEntryServiceTest {
         ChatRoom room = room(700L, 25L, "41135", 25);
         ChatRoomMember membership = membership(900L, room);
         prepareJoin(user, room, claims(7L, 25L, "41135"));
-        when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(membership));
+        when(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(7L, sid(7L)))
+                .thenReturn(Optional.of(membership));
 
-        ChatRoomJoinResult result = service.join(7L, 700L, "loc_token");
+        ChatRoomJoinResult result = service.join(7L, sid(7L), 700L, "loc_token");
 
         assertFalse(result.created());
         assertEquals(900L, result.membership().membershipId());
@@ -74,7 +101,8 @@ class ChatRoomEntryServiceTest {
         ChatRoom room = room(700L, 25L, "41135", 25);
         prepareJoin(user, room, claims(7L, 30L, "11680"));
 
-        ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
+        ChatRoomException exception = assertThrows(ChatRoomException.class,
+                () -> service.join(7L, sid(7L), 700L, "loc_token"));
 
         assertEquals(ChatRoomErrorCode.LOCATION_REGION_MISMATCH, exception.getErrorCode());
         verify(memberRepository, never()).saveAndFlush(any());
@@ -88,10 +116,12 @@ class ChatRoomEntryServiceTest {
         ChatRoomMember previousMembership = mock(ChatRoomMember.class);
         when(previousMembership.getChatRoom()).thenReturn(previousRoom);
         prepareJoin(user, targetRoom, claims(7L, 25L, "41135"));
-        when(memberRepository.findByUser_IdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(previousMembership));
-        when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of(mock(ChatRoomMember.class)));
+        when(memberRepository.findByUser_IdAndAuthSessionIdAndDeletedAtIsNull(7L, sid(7L)))
+                .thenReturn(Optional.of(previousMembership));
+        presence.reserve(8L, 700L, 901L);
 
-        ChatRoomException exception = assertThrows(ChatRoomException.class, () -> service.join(7L, 700L, "loc_token"));
+        ChatRoomException exception = assertThrows(ChatRoomException.class,
+                () -> service.join(7L, sid(7L), 700L, "loc_token"));
 
         assertEquals(ChatRoomErrorCode.CHAT_ROOM_CAPACITY_EXCEEDED, exception.getErrorCode());
         verify(previousMembership).leave(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC));
@@ -103,16 +133,28 @@ class ChatRoomEntryServiceTest {
         User user = mock(User.class);
         ChatRoom room = room(700L, 25L, "41135", 25);
         prepareJoin(user, room, claims(7L, 25L, "41135"));
-        when(memberRepository.findAllActiveByChatRoomIdForUpdate(700L)).thenReturn(List.of());
         when(memberRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        ChatRoomJoinResult result = service.join(7L, 700L, "loc_token");
+        ChatRoomJoinResult result = service.join(7L, sid(7L), 700L, "loc_token");
 
         assertEquals(NOW.atOffset(ZoneOffset.UTC), result.membership().joinedAt());
+        var captor = org.mockito.ArgumentCaptor.forClass(ChatRoomMember.class);
+        verify(memberRepository).saveAndFlush(captor.capture());
+        assertEquals(sid(7L), captor.getValue().getAuthSessionId());
+    }
+
+    @Test
+    void rejectsMissingOrInvalidSessionBeforeUsingLocationOrDatabase() {
+        for (String session : new String[]{null, "invalid", "550E8400-E29B-41D4-A716-446655440000"}) {
+            ChatRoomException exception = assertThrows(ChatRoomException.class,
+                    () -> service.join(7L, session, 700L, "loc_token"));
+            assertEquals(ChatRoomErrorCode.AUTH_REQUIRED, exception.getErrorCode());
+        }
+        org.mockito.Mockito.verifyNoInteractions(tokenProvider, memberRepository, userRepository);
     }
 
     private void prepareJoin(User user, ChatRoom room, LocationResolutionClaims claims) {
-        when(tokenProvider.validate("loc_token", 7L)).thenReturn(claims);
+        when(tokenProvider.validateForChat("loc_token", 7L, sid(7L))).thenReturn(claims);
         when(userRepository.findActiveByIdForUpdate(7L)).thenReturn(Optional.of(user));
         when(chatRoomRepository.findAllByIdForUpdate(any())).thenReturn(java.util.List.of(room));
     }

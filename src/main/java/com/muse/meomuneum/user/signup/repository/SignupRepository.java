@@ -45,7 +45,7 @@ public class SignupRepository {
                 """, (row, index) -> new Term(
                 row.getLong("id"),
                 row.getString("type"),
-                row.getBoolean("is_required")), Timestamp.valueOf(LocalDateTime.ofInstant(now, ZoneOffset.UTC)));
+                row.getBoolean("is_required")), LocalDateTime.ofInstant(now, ZoneOffset.UTC));
     }
 
     public long createUser(
@@ -80,9 +80,11 @@ public class SignupRepository {
 
     public void createTermsAgreement(long userId, long termsId, Instant now) {
         jdbc.update("""
-                INSERT INTO terms_agreements (user_id, terms_id, created_at)
-                VALUES (?, ?, ?)
-                """, userId, termsId, Timestamp.from(now));
+                INSERT INTO terms_agreements (user_id, terms_id, accepted_version, created_at)
+                SELECT ?, t.id, t.version, ?
+                FROM terms t
+                WHERE t.id = ?
+                """, userId, Timestamp.from(now), termsId);
     }
 
     public record Term(long id, String type, boolean required) {

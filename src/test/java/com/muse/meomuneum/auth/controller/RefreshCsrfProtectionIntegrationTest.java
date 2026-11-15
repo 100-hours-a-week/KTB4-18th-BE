@@ -13,7 +13,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -35,7 +34,7 @@ class RefreshCsrfProtectionIntegrationTest {
     private WebApplicationContext webApplicationContext;
 
     private MockMvc mockMvc;
-    private MockHttpSession session;
+    private Cookie csrfCookie;
     private String csrfToken;
 
     @BeforeEach
@@ -49,14 +48,21 @@ class RefreshCsrfProtectionIntegrationTest {
                 .andReturn();
         JsonNode responseBody = objectMapper.readTree(csrfIssueResult.getResponse().getContentAsByteArray());
 
-        session = (MockHttpSession) csrfIssueResult.getRequest().getSession(false);
+        String setCookie = csrfIssueResult.getResponse().getHeader("Set-Cookie");
+        org.junit.jupiter.api.Assertions.assertNotNull(setCookie);
+        org.junit.jupiter.api.Assertions.assertTrue(setCookie.contains("HttpOnly"));
+        org.junit.jupiter.api.Assertions.assertTrue(setCookie.contains("Path=/api/v1/auth"));
+        java.util.regex.Matcher csrfCookieMatcher = java.util.regex.Pattern.compile("(?:^|;\\s*)XSRF-TOKEN=([^;]+)")
+                .matcher(setCookie);
+        org.junit.jupiter.api.Assertions.assertTrue(csrfCookieMatcher.find());
+        csrfCookie = new Cookie("XSRF-TOKEN", csrfCookieMatcher.group(1));
         csrfToken = responseBody.path("data").path("csrf_token").asText();
     }
 
     @Test
     void rejectsRefreshWhenCsrfHeaderIsMissing() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
-                .session(session)
+                .cookie(csrfCookie)
                 .cookie(new Cookie("refresh_token", "masked-refresh-token")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("csrf validation failed"))
@@ -66,7 +72,7 @@ class RefreshCsrfProtectionIntegrationTest {
     @Test
     void rejectsRefreshWhenCsrfHeaderDoesNotMatchSessionToken() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
-                .session(session)
+                .cookie(csrfCookie)
                 .cookie(new Cookie("refresh_token", "masked-refresh-token"))
                 .header("X-CSRF-TOKEN", "mismatched-csrf-token"))
                 .andExpect(status().isForbidden())
@@ -77,7 +83,7 @@ class RefreshCsrfProtectionIntegrationTest {
     @Test
     void passesCsrfValidationThenRejectsMissingRefreshCookie() throws Exception {
         mockMvc.perform(post("/api/v1/auth/token/refresh")
-                .session(session)
+                .cookie(csrfCookie)
                 .header("X-CSRF-TOKEN", csrfToken)
                 .header("Origin", "http://localhost:5174"))
                 .andExpect(status().isUnauthorized())

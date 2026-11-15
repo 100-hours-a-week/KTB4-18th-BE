@@ -61,6 +61,29 @@ set +a
 | `test` | `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD` | URL: `jdbc:mysql://localhost:3306/meomuneum_test`, 사용자: `meomuneum_test`; 비밀번호 필수 |
 | `prod` | `PROD_DB_URL`, `PROD_DB_USERNAME`, `PROD_DB_PASSWORD` | 모두 필수 |
 
+로그인 계약은 local·dev·prod에서 direct-v2를 사용하며 `AUTH_DIRECT_V2_ENABLED`와
+`AUTH_DIRECT_V2_REFRESH_VERIFIED`의 기본값은 `true`입니다. refresh token은 HttpOnly 쿠키로 전달되고,
+정상 갱신 응답에서 회전됩니다. 예외 복구인 `AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED`와
+`AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED`의 기본값은 `false`이며 일반 로그인·갱신에 필요하지 않습니다.
+테스트 프로필은 direct-v2를 비활성화합니다.
+
+local/dev/prod 간 인증 코드는 동일하지만 데이터와 비밀값은 분리해야 합니다. `dev`는 `DEV_DB_*`,
+`prod`는 `PROD_DB_*`를 사용합니다. 분리 실행하는 Core 앱은 dev에서 `DEV_DB_*`, prod에서
+`PROD_DB_*`(또는 명시적으로 분리한 `CORE_DB_*`)를 사용합니다. dev와 prod의 DB 주소·계정은 서로
+달라야 합니다. `DEV_AUTH_STATE_HAZELCAST_MEMBERS`와 `PROD_AUTH_STATE_HAZELCAST_MEMBERS`는 각 환경의
+서로 다른 3개 멤버를 가리키고, 클러스터 기본 이름은 각각 `meomuneum-auth-dev`와
+`meomuneum-auth-prod`입니다. 두 환경에 같은 Hazelcast 주소나 클러스터 이름을 설정하지 마세요.
+
+각 환경에는 서로 다른 `AUTH_JWT_SECRET`, `AUTH_STATE_HMAC_KEY`, `AUTH_STATE_REPLAY_ENCRYPTION_KEY`,
+`LOCATION_TOKEN_SECRET`을 주입해야 합니다. 이 변수명은 코드에서 같지만 값은 환경별 비밀값 저장소에서
+따로 관리합니다. `AUTH_COOKIE_SECURE=true`와 `AUTH_CORS_ALLOWED_ORIGINS`도 HTTPS 배포 도메인에 맞게
+환경별로 설정하세요. 로컬 HTTP에서만 쿠키 보안을 `false`로 둘 수 있습니다. Spring Boot는 `.env`를
+자동으로 읽지 않으므로 로컬 셸 또는 IntelliJ 실행 구성에 값을 넣어야 합니다.
+
+이 저장소에는 dev/prod 호스팅 플랫폼의 실제 비밀값·DB·Hazelcast 주소가 없으므로, 여기서 설정하는 것은
+프로필 계약과 로컬 예시입니다. 배포 환경에도 위 변수를 각각 주입해야 해당 환경에서 분리된 저장소로
+실행됩니다.
+
 현재 위치 판정에는 `LOCATION_TOKEN_SECRET`과 `LOCATION_KAKAO_REST_API_KEY`가 필요합니다.
 토큰 비밀값은 32바이트 이상이어야 하며 인증 JWT와 별도로 관리합니다. 역지오코딩 연결·응답 제한은
 `LOCATION_REVERSE_GEOCODING_CONNECT_TIMEOUT`과 `LOCATION_REVERSE_GEOCODING_READ_TIMEOUT`으로
@@ -215,6 +238,8 @@ additive 변경으로 freshness 필드와 DLQ를 추가하고 기존 `FAILED` pa
 lease는 SQL 실행의 강제 제한 시간이 아니므로 DB의 잠긴 트랜잭션은 DB timeout/연결 종료까지
 잠금을 유지할 수 있습니다. 이 변경에는 배포나 운영 데이터 삭제 작업이 포함되지 않습니다.
 
+추가 호환 migration은 기존 음악의 nullable storefront 이름·발매 시각과 playback 검증 테이블의 구조를 먼저 확인한 뒤 누락된 구조만 추가합니다. DLQ에는 동일한 다섯 metadata 필드를 추가하며 과거 실패 이력의 값은 NULL로 유지합니다. 현재 작업의 metadata로 과거 실패 snapshot을 추정하지 않습니다. canonical과 세 frozen 경로 모두 새 migration만 마지막에 추가합니다.
+
 ### 음악 검색 migration 이력별 실행 경로
 
 기본 처리 리소스 `classpath:db/migration`은 origin/dev의
@@ -260,8 +285,17 @@ manifest는 `build/reports/music-search-migration/origin-manifest.txt`에 생성
 
 ### 음악 기록 상세·수정 API
 
+외부 iTunes 검색이 성공하면 페이지를 자르기 전에 후보 전체를 MySQL 작업 테이블에 접수합니다.
+백그라운드 작업자는 한국·미국 스토어 표기와 발매일을 기존 음악 카탈로그에 저장합니다.
+DB 조회는 한국 스토어 표기를 먼저 사용하고, 비어 있으면 미국 스토어 및 기존 표기를 사용합니다.
+작업을 접수하지 못하면 검색 API는 `503 music search storage unavailable`로 응답합니다.
+작업자는 기본 2개, 폴링 간격은 1초이며 `music.search-storage.workers`와
+`music.search-storage.poll-delay-ms`로 설정할 수 있습니다. 최대 세 번 시도하고 실패한 작업은
+[관리자 재투입 API](api/music-search-storage.openapi.yaml)로 다시 요청할 수 있습니다.
+
 인증된 사용자는 `GET /api/v1/music-records/{record_id}`로 본인 기록의 곡,
 지도 도트 ID, 시/도·시/군/구, 사용자 장소명, 감정 메모, 생성·수정 시각을 조회합니다.
+상세 응답의 `data.preview_url`은 저장된 곡의 미리 듣기 URL이며, 제공되지 않는 경우 `null`입니다.
 `PATCH /api/v1/music-records/{record_id}`는 변경된 필드만 받습니다.
 
 ```json
@@ -282,6 +316,66 @@ iTunes에서 메타데이터를 확인한 뒤 음악과 기록을 트랜잭션�
 요청·응답을 기록했습니다.
 
 ## 테스트 및 빌드
+
+### 지역 채팅 메시지·자동 제재 저장 기반 (#139)
+
+`ChatMessageStorageService.store`는 호출자가 권한·내용 검사를 마친 정상 메시지를 작성자·방·본문·
+client ID·서버 UTC 전송 시각과 함께 저장합니다. 실시간 송수신·탐지는 #141로 연결하며, 참여 구간별 내역 조회는 후행 작업입니다.
+사용자 행 잠금과 실제 `UNIQUE(user_id, client_message_id)`로 동시 재시도 중복을 막고,
+같은 방·내용의 재시도에는 기존 ID와 `created=false`를 반환합니다. 후행 전파는 신규 저장 결과에만 적용합니다.
+다른 방·내용의 ID 재사용은 거절합니다. ID는 대소문자를 구분하고 작성자별로 구분합니다.
+
+본문은 공백만으로 구성될 수 없고 최대 300 Unicode code point, client ID는 공백이 아닌 최대 100자이며
+초과분을 절단하지 않습니다. 시각은 UTC 마이크로초 정밀도로 저장합니다.
+`findUnexpiredById`는 보관 기간 필터만 제공하므로 참여 구간 권한 검증 없이 공개 API에서 사용하면 안 됩니다.
+물리 삭제 후에는 client ID 기록도 없어져 무기한 멱등성은 제공하지 않습니다.
+
+`ChatBanStorageService.storeAutomaticBan`은 `PROFANITY`·`OBSCENITY` 사유와 시작·7일 뒤 만료 시각을
+저장합니다. 시스템 제재의 등록자 FK는 null이며 메시지 본문·탐지 개인정보를 제재 사유에 넣지 않습니다.
+동시 제재·재시도는 기존 활성 제재를 반환하고 만료를 연장하지 않습니다. `hasActiveBan`은 만료 시각부터
+false가 되며 별도의 삭제 실행을 기다리지 않습니다. 메시지 삭제와 제재 이력은 독립적입니다.
+
+메시지는 전송 시각부터 정확히 24시간에 유효 조회에서 제외합니다. `ChatMessageCleanupJob`은 UTC 매 정시에
+만료 행을 트랜잭션으로 물리 삭제합니다. 정상 운영 시 전송 후 최대 25시간 내 삭제를 목표로 합니다.
+실패 시 롤백하고 다음 정시 실행에서 남은 만료 행을 다시 처리하며, 조회 만료는 삭제 성공 여부와 무관합니다.
+`chat_message_cleanup_success`의 삭제 건수와 `chat_message_cleanup_failed` 이벤트를 감시합니다.
+실패 로그는 예외 클래스만 기록하며 SQL·메시지 본문을 남기지 않습니다.
+`CHAT_MESSAGE_CLEANUP_ENABLED`는 기본 true이고 통제된 유지보수·테스트에만 false로 설정합니다.
+재활성화 후 다음 정시 실행으로 재처리하거나 신뢰된 서버 내부에서 `deleteExpiredMessages()`를 호출합니다.
+관리자 삭제 REST API는 제공하지 않습니다.
+
+적용·복구 순서는 다음과 같습니다.
+
+1. 대상 DB와 기존 Flyway 이력을 확인합니다. 기존 Migration은 변경하지 않습니다.
+2. 기존 users·chat_rooms 생성 후 `V20261007205113__create_chat_room_messages_table.sql`,
+   `V20261007205453__create_chat_bans_table.sql`을 순서대로 적용합니다. 기존 테이블·데이터를 수정하지 않습니다.
+3. 메시지 PK·유일 키·작성자/방 FK·만료 인덱스, 제재 FK·기간/사유 CHECK·만료 인덱스와
+   Hibernate `ddl-auto=validate` 시작을 확인한 뒤 애플리케이션을 배포합니다. DB/JDBC 시간대는 UTC로 맞춥니다.
+4. 테스트 데이터로 동시 저장·만료 경계·물리 삭제를 확인하고 실제 정시 성공 로그를 확인합니다.
+5. MySQL DDL 실패 시 실제 테이블·Flyway 실패 이력을 확인하고 보정 Migration/승인된 복구 절차를 사용합니다.
+   자동 `clean`·무조건적인 `repair`·기존 파일 변경으로 우회하지 않습니다.
+6. 앱 복구 시 삭제 작업을 일시 중단하고 직전 검증 버전으로 복구하되 새 테이블·진행 중인 제재는 보존합니다.
+   실제 삭제된 메시지는 앱 롤백으로 복구되지 않습니다. 후행 채팅이 배포된 뒤에는 제재를 검사하지 않는
+   구버전으로 되돌리기 전에 채팅 진입을 차단해야 합니다.
+
+제재 만료 후 이력 보관 기간과 로그·백업 사본의 보존·삭제 정책은 별도 결정 대상입니다.
+이 메시지 삭제 작업이 백업까지 삭제한다고 간주하지 않습니다. 두 음악 기록 격리 로컬 프로필도
+신규 Migration을 포함하므로 IDE 실행 전 해당 `prepareMusicRecord*LocalMigrations`를 실행하세요.
+
+대상 통합 테스트는 Docker의 별도 MySQL 9.7.0에서 Flyway·JPA 매핑·동시 저장·DB 제약·24시간/7일 경계·
+물리 삭제 후 제재 유지와 삭제 실패 후 재실행을 검증합니다. Docker가 없어 스킵되면 완료로 간주하지 않습니다.
+
+```sh
+./gradlew spotlessCheck checkstyleMain checkstyleTest \
+  test --tests '*ChatStorageIntegrationTest' --tests '*ChatMessageCleanupJobTest' \
+  bootJar --no-daemon
+```
+
+2026-10-07 검증 결과: 신규 대상 테스트 14개 통과·스킵 0개. 별도 임시 MySQL로 실행한 전체 테스트는
+403개 중 384개 통과·실패 0개·기존 격리 로컬 프로필 테스트 19개 스킵입니다.
+Spotless·Checkstyle·`bootJar`도 통과했습니다. 운영 배포·실제 정시 실행은 수행하지 않았습니다.
+
+### 전체 백엔드 검증
 
 로컬 품질 검증에는 JDK 25, MySQL 9.7.0 테스트 DB와 Docker daemon이 필요합니다. 일반 통합 테스트는
 `TEST_DB_URL`의 MySQL을 사용하고, 채팅방 마이그레이션·동시성 통합 테스트는 Testcontainers로
@@ -382,6 +476,17 @@ gradle/wrapper/                    Gradle Wrapper
 현재 지도 도트 데이터 기반은 이 이슈 범위에 포함되지 않아 `map_dot`은 `null`입니다. 이후 도트
 판정 기능이 연결되더라도 행정구역 판정과 위치 토큰 검증 경계는 그대로 재사용할 수 있습니다.
 
+## 위치 기반 음악 추천 AI 연동
+
+백엔드는 내부 `POST /v1/location/recommendations` 요청에 승인된 대표 추천 UUID를 문자열
+`request_id`로 전달하고, `latitude`와 `longitude`를 함께 보냅니다. AI의 성공 응답에는
+`tracks`가 필요하며 문자열 `message`를 함께 받을 수 있습니다.
+
+공개 `POST /api/v1/location-recommendations`와 `GET /api/v1/location-recommendations/{requestId}`의
+`data.recommendationMessage`는 AI 문구를 담는 문자열 또는 `null`입니다. 앞뒤 공백을 제거한 1~80자의
+문구를 `READY` 결과와 함께 보관하며, 문구가 없거나 결과가 만료·취소되면 `null`을 반환합니다.
+`data.reason`은 추천을 표시하지 않은 사유 코드입니다.
+
 ## 행정구역 채팅방 조회와 입장
 
 `GET /api/v1/regions/{region_id}/chat-room`은 사전 생성된 활성 시·군·구 채팅방을 조회합니다.
@@ -417,8 +522,9 @@ AI의 `done` 이후 곡을 저장한 다음 공개 SSE에 `done`을 보냅니다
 `COMPLETED` 처리하며, 오류 또는 완료 전 연결 종료는 `FAILED`(제한 시간 초과는 `TIMEOUT`)로
 저장하고 `error` 이벤트를 보냅니다. 기존 GET 상세 조회는 완료 결과 재조회에 사용합니다.
 기본 iTunes 요청 제한 시간은 8초이고 `RECOMMENDATION_ITUNES_TIMEOUT`으로 변경할 수 있습니다.
-기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
-음악 기록 검색과 텍스트 음악 추천은 이 국가·요청 제한 시간 설정을 공유합니다.
+추천 기능의 기본 검색 스토어는 `US`이며 `RECOMMENDATION_ITUNES_COUNTRY`로 변경할 수 있습니다.
+음악 기록 검색도 기본 스토어는 `US`이고 `MUSIC_SEARCH_COUNTRY`로 별도 변경할 수 있습니다.
+두 기능은 iTunes 요청 제한 시간 설정을 공유합니다.
 실제 API 확인 시 `KR` 스토어는 검색 결과가 없었고 `US` 스토어에서는 한국어 곡도 검색됐습니다.
 측정 지표 `recommendation.provider.duration`과 `recommendation.request.duration`은
 각각 선택된 제공자 호출과 전체 요청의 시간·성공·실패·시간 초과를 구분합니다. 인증 정보,
@@ -632,3 +738,1635 @@ STT 결과 자체는 길이로 제한하거나 전사 실패 처리하지 않습
 DB prompt 보존, AI 전달 내용 일치, 초과 요청의 세션 생성 및 AI 호출 차단을 검증합니다.
 AI 제공자는 테스트 대역이며 실제 AI 서버와 운영 배포 환경은 별도 검증 대상입니다.
 관련 프론트엔드 이슈: https://github.com/100-hours-a-week/KTB4-18th-FE/issues/104
+
+## 지역 채팅 입퇴장과 접속 정원 (#140)
+
+REST 계약은 [chat-participation.openapi.yaml](api/chat-participation.openapi.yaml)을 따른다.
+위치 토큰은 기존 발급자의 서명·소유자·5분 유효기간과 SIGUNGU를 검증한다.
+입장 시 활성 사용자·방·제재를 확인하고, 신규 참여는 201, 같은 활성 참여는 200을 반환한다.
+퇴장은 `DELETE /api/v1/chat-rooms/{room_id}/members/me?membership_id={membership_id}`다.
+자신의 참여 이력을 확인하며 종료된 이전 이력을 다시 퇴장해도 새 이력에 영향을 주지 않는다.
+확정된 지역 이동은 이전 참여를 먼저 종료하므로 새 방 정원 초과에도 되돌리지 않는다.
+
+단일 서버 메모리에서 연결·30초 예약·30초 유예의 사용자 합집합을 정원으로 계산한다.
+REST 응답 직후 예약하고 첫 연결에서 접속으로 전환한다. 같은 사용자의 여러 연결은 1명이다.
+마지막 연결 종료에서만 유예가 시작되며, 예약·유예 경계 이후 다음 정원 계산에서 즉시 자리를 회수한다.
+이때 DB 참여 이력은 종료하지 않는다. 기한 후 재연결도 활성 이력과 제재·정원을 새로 확인한다.
+DB 트랜잭션이 실제 커밋된 다음 메모리를 반영하며 서버 내부에서 이 전환들을 직렬화한다.
+여러 애플리케이션 인스턴스 또는 Redis로 확장하는 용도로 사용할 수 없다.
+
+WebSocket은 네이티브 STOMP 1.2 `/ws`다. handshake URL에 토큰을 넣지 않는다.
+CONNECT 헤더는 `Authorization: Bearer {access_token}`, `room_id`, `membership_id`다.
+HTTP upgrade만 허용하고 실제 참여 인증은 CONNECT에서 처리한다. Origin은 기존
+`AUTH_CORS_ALLOWED_ORIGINS` 목록으로 제한한다. 수신 토큰 헤더는 즉시 제거해 오류 로그에 남기지 않는다.
+본인 방 `/topic/chat-rooms/{room_id}`와 `/user/queue/chat-events`를 구독한다. 이전 `/user/queue/chat-status`도 허용한다.
+CONNECT·SUBSCRIBE에서 사용자·방·이력·제재를 다시 확인하고 임의 broker SEND를 차단한다.
+메시지 송수신·ACK·전송 차단·마스킹은 [chat-messaging.md](api/chat-messaging.md)를 따른다.
+
+방 SUBSCRIBE에 `receipt`를 보내면 simple broker 등록 완료 후 `RECEIPT receipt-id`를 반환한다.
+프론트는 CONNECTED만으로 준비 상태가 되지 않고 이 receipt까지 기다린다.
+재연결마다 새 Bearer 토큰을 전달한다. heartbeat는 양방향 10초이며, 열린 연결의 토큰 만료·참여
+권한·제재도 10초마다 확인한다. 승인한 초기 탐지 목록은 [chat-moderation-policy.md](api/chat-moderation-policy.md)를 따른다.
+실제 퇴장·지역 이동·로그아웃은 계정의 모든 해당 연결 권한을 종료하고 `4100 CHAT_LEFT`로 닫는다.
+제재 연결 정리는 `4101 CHAT_BANNED`, 토큰 만료는 `4102 AUTH_REQUIRED`다.
+처리 거부의 STOMP ERROR message는 `CHAT_FULL`, `CHAT_BANNED`, `CHAT_LEFT`, `AUTH_REQUIRED` 중 하나다.
+#155부터 욕설·음란성 메시지는 마스킹하며 자동 제재·강제 퇴장을 수행하지 않는다.
+기존 자동 제재는 이력을 보존하여 해제한다. 저장 트랜잭션 내부에서 런타임 잠금을 취하지 않는다.
+
+배포는 BE를 먼저 적용한 뒤 FE #133을 적용한다. 프록시의 `/ws` upgrade 전달과 허용 Origin,
+26명 동시 진입, 다중 기기 1자리, 다른 방 구독 거부, 전체 퇴장 및 30초 단절을 스테이징에서 확인한다.
+롤백은 FE를 먼저 복구하고 BE를 복구한다. DB migration은 추가하지 않았으며 서버 재시작은
+연결/예약/유예 메모리를 초기화한다. 활성 DB 이력만으로 접속 자리 또는 과거 메시지 조회를 허용하지 않는다.
+
+## 욕설·음란성 메시지 마스킹 (#155)
+
+`badwordfiltering:1.0.0`과 검토한 추가·제외·허용 파일을 기동 시 로딩한다.
+탐지 구간의 입력 code point 수만큼 `*`로 치환하고 저장·방송·ACK에 같은 본문을 사용한다.
+공백과 `@ _ - . *` 삽입을 지원하며 URL·개인정보·도배는 원문에서 먼저 검사한다.
+FE의 마스킹 ACK 호환성 변경이 선행되어야 한다. 기존 자동 제재 해제는 새 데이터 마이그레이션으로
+수행하며 운영 DB를 직접 변경하지 않았다. 구버전 BE와 혼용하거나 자동 롤백하지 않는다.
+
+목록·예문·검사 순서·배포/복구 기준은 [탐지 정책](api/chat-moderation-policy.md),
+실제 검증 결과는 [마스킹 검증 기록](api/chat-masking-verification.md)을 참고한다.
+
+## Redis 연결·구독 기반 (P1 2단계)
+
+`feature/chat-redis-foundation`은 최신 `dev`의 지역 채팅에 Redis 연결 기반을 추가한다.
+제품 메시지의 서버 간 전달, 공유 정원·참여 상태, Core 인증 연동과 Chat 앱 분리는 후속 작업이다.
+현재 제품의 정원·연결 권한은 여전히 로컬 상태에 의존하므로 이 단계만으로 여러 서버를 운영하지 않는다.
+MySQL을 최종 원장으로 두고 Redis를 투영·캐시·이벤트 전달에 사용하는 계약을 따른다.
+
+| 환경 변수 | 기본값 / 의미 |
+| --- | --- |
+| `CHAT_REDIS_ENABLED` | `false`; 비활성일 때 연결과 전용 health bean을 생성하지 않음 |
+| `CHAT_REDIS_ENVIRONMENT` | 활성화 시 필수 환경 namespace |
+| `CHAT_REDIS_HOST`, `CHAT_REDIS_PORT` | `localhost`, `6379` |
+| `CHAT_REDIS_USERNAME`, `CHAT_REDIS_PASSWORD` | `default`, 활성화 시 비밀번호 필수; 앱별 명명 ACL 권장 |
+| `CHAT_REDIS_SSL` | `true`; 인증서·호스트명 검증, 자동 평문 전환 없음 |
+| `CHAT_REDIS_SSL_CA_CERTIFICATE` | 선택 PEM CA 파일 경로; 지정 시 TLS 필수 |
+| `CHAT_REDIS_CONNECT_TIMEOUT`, `CHAT_REDIS_COMMAND_TIMEOUT` | 각각 `1s` |
+| `CHAT_REDIS_REQUEST_QUEUE_SIZE` | `1024`; 허용 범위 1~65536 |
+
+운영 비밀값은 배포 환경에서 주입한다. `.env.example`을 Spring이 자동으로 읽지는 않는다.
+EC2 Docker Redis의 TLS 제공 여부는 클라우드 팀과 확인해야 한다. 사설 CA는 신뢰 파일로 제공하고
+인증서 검증을 우회하지 않는다. 운영 Core/Chat ACL 계정 분리와 Core 네트워크 허용도 별도 조치가 필요하다.
+
+명령 연결과 Pub/Sub 연결을 분리한다. `chatRedis` health와 `chat.redis.connected` 지표는 명령 연결,
+`chatRedisSubscriptions`와 `chat.redis.subscriptions.ready`는 실제 구독 ACK 준비 상태다.
+구독이 없거나 끊기면 구독 health는 DOWN이며 재접속 후 방·제어 구독 ACK를 모두 받아야 UP이다.
+기존 제품 readiness group에 이 항목을 자동 추가하지 않는다. 후속 relay가 관리 구독을 생성하고
+복구·배포 계약과 함께 readiness에 연결해야 한다. 사용자 연결 정리·전송 중단도 후속 작업이다.
+
+환경별 채널은 `<env>:chat:room:*`, `<env>:chat:control:v1`이다.
+Redis ACL의 `PSUBSCRIBE`는 실제 패턴과 같은 채널 권한을 요구하므로 두 패턴을 명시한다.
+Chat은 방·제어 발행/구독과 제한된 키·Lua 권한, Core는 제어 발행만 허용하는 분리를 검증한다.
+상태 키 생성기는 `<env>:chat:state:{room:<id>}:e:<epoch>:<component>` 형식만 제공한다.
+epoch 발급·원자 상태 전이·복구 알고리즘은 아직 구현하지 않았다.
+
+끊긴 연결의 신규 명령은 즉시 거절하고 명령 큐와 대기 시간을 제한한다.
+이미 전송된 명령의 성공 여부나 Pub/Sub 유실까지 보장하지 않으므로 후속 제품 로직에는
+멱등 처리와 MySQL 기반 복구가 필요하다. 종료 시 관리 구독·명령 연결·클라이언트를 정리한다.
+
+```sh
+./gradlew test --tests '*ChatRedisConfigurationTest' --no-daemon
+./gradlew chatRedisFoundationTest --no-daemon
+```
+
+명시적 통합 task는 Docker가 필요하며 기본 Redis 이미지는 `redis:8.10.2`다.
+`-PchatRedisImage=redis:<version>`으로 검증 이미지를 바꿀 수 있다.
+격리 MySQL 9.7.0·Redis와 실제 두 JVM으로 합성 이벤트 양방향 전달, 환경 격리,
+Redis 중단·재구독·정상 종료를 확인한다. 명명 ACL·Lua·권한 거부,
+합성 TLS의 CA 신뢰·호스트명 검증과 `noeviction` 메모리 초과 후 복구도 시험한다.
+테스트용 probe·인증서·비밀번호는 제품 JAR 및 운영 환경에 주입하지 않는다.
+이 검증은 실제 제품의 다중 서버 REST/STOMP나 운영 TLS·부하·배포 검증을 뜻하지 않는다.
+Redis 기반만 되돌릴 때는 활성화를 해제한다. 이번 단계에는 DB migration이 없다.
+
+2026-10-23 검증에서 Redis 전용 4개 전부, 채팅 회귀 201개 중 197개가 통과했다
+(채팅 조건부 제외 4개, 실패 0개). Spotless·Checkstyle main/test·bootJar도 통과했다.
+전체 테스트는 738개 중 705통과·10실패·23조건부 제외다. 실패 10개는 프로필 이미지 테스트의
+`AuthService` 구성 누락, 약관·동시 가입 테스트이며 변경 전 `dev` 7406ba5에서도 동일하게 재현했다.
+격리 검증 기록은 `build/redis-foundation-reintegration/summary.json`에 보존한다.
+
+## Core·Chat 독립 앱·이미지 (P1 3단계)
+
+같은 저장소의 `core`·`chat` 소스셋을 독립 컴파일한다. 공유 계약·모델은 기존 소스에서 재사용하며
+각 JAR에는 선택된 역할의 클래스·리소스·라이브러리만 들어간다. 기존 단일 앱 `bootJar`·`bootRun`은
+전환 전 회귀/실행 경로로 유지한다. 새 앱과 기존 단일 앱을 운영 DB에서 함께 실행하지 않는다.
+
+| 구분 | Core | Chat |
+| --- | --- | --- |
+| 진입점 | `com.muse.apps.core.CoreApplication` | `com.muse.apps.chat.ChatApplication` |
+| 산출물 | `build/libs/meomuneum-core.jar` | `build/libs/meomuneum-chat.jar` |
+| 소유 API | 인증·사용자·추천·음악·지도·위치 발급 | `/ws`, `/api/v1/chat-rooms/**`, `/api/v1/regions/{id}/chat-room` |
+| 배치/초기화 | 기존 인증 스케줄러 | 채팅 초기화·checkpoint·보관 기간 정리 |
+| 제외 | 채팅 런타임·WebSocket·마스킹 라이브러리 (4단계부터 인증 알림용 Lettuce 포함) | Core 서비스/컨트롤러·Hazelcast·AI·역지오코딩 클라이언트·Flyway |
+| 이미지 | `Dockerfile.core`, FFmpeg 포함 | `Dockerfile.chat`, FFmpeg 제외 |
+
+Core의 위치 토큰 발급과 Chat의 토큰 검증은 같은 계약을 쓴다. 세션 ID 형식 검사는 공통 코드로
+옮겨 Core가 채팅 연결 registry에 의존하지 않게 했다. JWT 필터의 사용자 확인도 읽기 인터페이스로
+분리해 Chat에서 로그인/BCrypt 서비스를 만들지 않는다. 공통 오류 응답의 예외 타입은 재사용한다.
+공개 REST/STOMP 필드·destination·기존 이력/재연결 정책·DB schema는 변경하지 않는다.
+
+```sh
+./gradlew coreBootJar chatBootJar bootJar --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest --no-daemon
+./gradlew appSeparationTest --no-daemon
+# 각 앱 실행 (필요한 환경 변수 주입 후):
+./gradlew coreBootRun --no-daemon
+./gradlew chatBootRun --no-daemon
+```
+
+앱별 설정은 `src/core/resources/application.yaml`, `src/chat/resources/application.yaml`이다.
+기존 단일 앱의 `application-dev/test/prod.yaml`을 새 앱에 복사하지 않아 역할별 DB 설정을 덮어쓰거나
+Chat에서 Core 비밀값을 요구하지 않는다. `.env.example`은 변수 예시이며 자동으로 로딩하지 않는다.
+
+| 설정 | 설명 |
+| --- | --- |
+| `CORE_DB_URL/USERNAME/PASSWORD`, `CHAT_DB_URL/USERNAME/PASSWORD` | 같은 schema의 앱별 접속 정보; 실제 DB 계정/권한 분리는 클라우드 조치 |
+| `CORE_DB_MAXIMUM_POOL_SIZE`, `CHAT_DB_MAXIMUM_POOL_SIZE` | 각각 기본 10; Core + Chat Task 수 × pool + migration/운영 여유분을 협의 |
+| `CORE_SERVER_PORT`, `CHAT_SERVER_PORT` | 각각 기본 8080; 같은 호스트에서는 서로 다른 포트 지정 |
+| `CORE_SHUTDOWN_TIMEOUT`, `CHAT_SHUTDOWN_TIMEOUT` | 각각 기본 30s; 프레임워크 종료 유예이며 WS drain 실측 완료를 뜻하지 않음 |
+| `AUTH_JWT_SECRET`, `LOCATION_TOKEN_SECRET`, JWT issuer/audience·허용 Origin | 양 앱의 토큰 계약 일치; Chat은 Hazelcast/AI 비밀값을 받지 않음 |
+| `CORE_FLYWAY_ENABLED` | 기본 false; 합의한 단일 migration 실행 주체만 명시적으로 활성화 |
+| `CHAT_RUNTIME_ENABLED` | 기본 false; 남은 공유 상태·복구 P1 완료 전 운영 진입 차단 |
+
+Chat은 Flyway 라이브러리·migration SQL을 패키징하지 않고 Hibernate `validate`만 수행한다.
+Core는 migration 원본을 보존하되 평상시 자동 실행을 하지 않는다. 두 앱은 이미 준비된 schema에
+접속해야 한다. DB 계정/권한·migration 실행 주체·SSM 매핑은 이번 코드 변경으로 생성되지 않는다.
+
+`GET /actuator/health/liveness`와 `/actuator/health/readiness`만 인증 없이 health를 확인할 수 있다.
+Core readiness는 기존 `authState` 조건을 유지한다. Chat readiness는 DB·런타임 활성화를 확인하고,
+기본 상태에서는 liveness 200·readiness 503과 채팅 경로 503을 반환한다. 이때 채팅 초기화·배치를
+생성하지 않는다. 상대 앱의 경로는 인증 처리 전에 404로 거절한다.
+
+현재 Chat 런타임 활성화는 **격리 검증 전용**이다. `CHAT_RUNTIME_ENABLED=true`와 `chat-isolated`
+profile을 함께 지정해야 하며 `prod`와 함께 사용하면 DB 연결 전에 기동을 거절한다.
+기존 JWT/사용자 확인만으로 Core의 폐기 sid를 확인했다고 간주하지 않기 위한 임시 전환 경계다.
+4단계에서 내부 인증 readiness를 연결했다. 이 활성화 제한의 교체와 Redis 실제 구독·공유 상태
+복구 조건은 남은 P1에서 연결해야 한다. 현 단계만으로 다중 Chat Task를 운영하지 않는다.
+
+```sh
+# 커밋된 소스로 빌드한다. 플랫폼은 ECS runtimePlatform과 맞춘다.
+docker build -f Dockerfile.core --build-arg BUILD_GIT_COMMIT="$(git rev-parse HEAD)" -t meomuneum-core:app-separation-check .
+docker build -f Dockerfile.chat --build-arg BUILD_GIT_COMMIT="$(git rev-parse HEAD)" -t meomuneum-chat:app-separation-check .
+./gradlew appSeparationTest -PappSplitImages=true --no-daemon
+```
+
+두 이미지는 JDK 25 builder/JRE 25 runtime과 UID/GID 10001을 사용한다. Java를 exec 형식으로
+실행해 종료 신호를 전달한다. `.dockerignore`는 소스·빌드 설정만 허용하며 `.git`, `.env`, 로컬
+`tools/`·문서·검증 결과를 build context에서 제외한다. 빌드 커밋과 소스 SHA를 JAR에 기록한다.
+이미지 검증은 위 로컬 태그와 Docker가 필요하다. 새 library/서비스의 자격 증명을 운영에서 가져오지 않는다.
+
+`appSeparationTest`는 격리 MySQL 9.7.0을 단일 시험 migrator로 준비하고 실제 JAR 프로세스를 실행한다.
+Core의 채팅 미초기화·API 경계·위치 토큰 발급, 차단 Chat의 부작용 없음, 단일 활성 Chat의
+REST 입장·STOMP 실제 구독/저장 ACK·세션 쿠키 미생성을 확인한다. Core 종료 후 Chat 유지 시험은
+앱 프로세스 분리 확인이며 Core 장애 중 인증 허용 정책을 확정하거나 검증한 것은 아니다.
+이미지 옵션은 컨테이너 기동·health·비루트 실행·Core FFmpeg/Chat 미포함을 추가 확인한다.
+실제 로그인/폐기·Redis 제품 전파·다중 서버 정원·운영 부하·ALB/ECS 배포는 후속 검증이다.
+
+전환은 후속 P1 구현·검증과 클라우드 협의가 끝난 뒤 짧은 채팅 중단을 두고 진행한다.
+기존 채팅 처리 중단과 연결/열람 경계 정리 → 단일 주체 migration → 새 Core/Chat 준비 → 라우팅 개방과
+smoke 확인을 맞춘다. 동시에 채팅 상태를 쓰는 구/신 앱이나 인증 Task 수 가정을 깨는 배포를 피한다.
+클라우드 팀에는 이미지/플랫폼, 경로 목록, 앱별 secret/DB pool, 두 health 경로와 실제 drain 측정값을 전달한다.
+롤백은 후속 데이터 변경과 호환되는 버전으로만 수행한다. 이번 단계 자체에는 DB migration이 없다.
+
+2026-10-26 최종 검증: 앱/JAR/이미지 통합 3개와 Redis 기반 회귀 4개 전부 통과·제외 0개.
+분리 Chat에서 실제 단절·동일 view 재연결 뒤 history/recovery의 저장 메시지 복원까지 확인했다.
+Spotless·Checkstyle main/core/chat/test·기존 및 분리 JAR 생성이 통과했다.
+일반 test는 738개 중 705통과·10실패·23조건부 제외이며 채팅은 197통과·4조건부 제외·실패0이다.
+실패 10개의 테스트 이름과 원인은 이전에 변경 전 dev에서도 재현한 프로필 이미지·약관·가입 실패와 같다.
+로컬 Linux arm64 이미지로 검증했으며 ECS 대상 플랫폼·운영 인증·AWS 배포 결과로 표시하지 않는다.
+증빙은 `build/app-separation-verification/`과 `build/app-separation/run-*/`에 보존한다.
+
+
+## Core 인증 연동 (P1 4단계)
+
+Core가 인증 원장(Hazelcast 세션 + 활성 사용자 DB)을 소유하고 Chat은 내부 API로 확인한다.
+Chat에 Hazelcast 클러스터·refresh 쿠키·로그인 서비스를 복제하지 않는다. JWT 서명/만료와 위치 토큰
+검증은 유지하고, **서명된 JWT라도 Core에서 폐기된 sid는 허용하지 않는다**.
+공개 REST 필드·STOMP destination·DB schema와 migration은 변경하지 않는다.
+
+| 변경 | 동작과 판단 근거 |
+| --- | --- |
+| Core 내부 검증 | `POST /internal/v1/auth/sessions/validate`; 1~100개의 `(user_id,sid)`를 엄격하게 검증. 사용자 소유·ACTIVE·idle/absolute 만료·활성 계정을 함께 확인해야 폐기/탈퇴가 반영된다. |
+| 서비스 인증 | 사용자 JWT와 별도인 32~256바이트 Bearer 현재/다음 키. TLS 인증서/호스트명 검증, 내부 경로 외부 차단은 클라우드에서 적용한다. 양 키의 동시 수용으로 순차 교체한다. |
+| 비용 상한 | 요청 32KiB·응답 64KiB·중복 sid/알 수 없는 필드 거절, bounded executor/queue·rate limit·전체 1초 deadline. Chat은 자동 재시도/redirect를 하지 않는다. |
+| REST·CONNECT | 매 요청 Core fresh 확인; 같은 pair의 진행 중 요청만 합친다. 기존 캐시를 사용해 새 요청의 Core 장애를 숨기지 않는다. |
+| 기존 연결 | 요청 시작 monotonic 시각 기준 `min(4초, 남은 세션 수명)`만 허용. 2초마다 최대100개씩 확인, 250ms watchdog. 긴 GC/대기 후에도 유효기간을 늘리지 않는다. |
+| 권한 검사 | SUBSCRIBE/SEND·DB transaction 시작/commit·메시지 전송 및 실행 대기열에서 꺼낼 때 재확인. JWT 자체의 만료도 검사한다. 이미 commit된 데이터나 OS에 전달한 frame을 회수하는 보장은 아니다. |
+| 폐기 전파 | Core의 실제 sid 폐기 지점에서 generation을 포함한 이벤트를 발행. Redis 제어 채널 알림은 빠른 경로이고 HTTP 주기 확인이 유실을 보완한다. 늦게 도착한 ACTIVE 응답은 폐기를 되돌리지 못한다. |
+| sid별 정리 | 해당 sid의 소켓부터 종료한 뒤 view/참여 정리; DB 실패는 재시도한다. 같은 계정의 다른 sid와 계정 history는 유지한다. 기존 단일 앱도 같은 sid 이벤트를 처리한다. |
+| 장애 구분 | INACTIVE는 REST401/소켓4100 계열의 인증 종료. Core 통신/서비스 키 오류·timeout은 REST503·기존 연결1013·readiness DOWN이며 영구 LEFT로 기록하지 않는다. 복구 후 기존 history/recovery로 재연결한다. |
+
+내부 API는 [OpenAPI](api/chat-core-auth.openapi.json), 이벤트 계약은 [JSON Schema](api/chat-core-auth-events.schema.json)에 기록했다. 인증 외 이벤트는 후속 P1 계약이며 이번 구현 범위가 아니다.
+모든 내부 API 응답은 `Cache-Control: no-store`다. 오류 상세·Bearer·비밀번호·sid를 로그/오류 본문으로
+전달하지 않는다. 사용자 INACTIVE 응답은 원래 요청 순서/쌍을 보존하며 저장소 실패는 전체503이다.
+Core 검증은 읽기 전용이며 refresh를 회전하거나 수명을 연장하지 않는다.
+
+폐기 이벤트는 `<env>:chat:control:v1`에 `AUTH_SESSION_REVOKED`로 발행한다.
+`schema_version=1`, UUID event_id, `core:<UUID>` producer_id, UTC occurred_at 및
+payload의 user_id/sid/session_generation/reason만 허용하고 epoch/토큰을 포함하지 않는다.
+Chat은 설정된 Core producer allowlist와 16KiB 상한을 검사한다.
+현재 발행 reason은 `SESSION_REVOKED`이며 로그아웃·개별 세션 삭제·비밀번호 변경·refresh 재사용의
+공통 revoke 경로를 사용한다. 정상 refresh 회전은 폐기 알림을 발행하지 않는다.
+자동 세션 만료와 사용자 비활성화는 Core HTTP 확인으로 차단한다.
+Core Redis 연결은 첫 알림 때 비동기로 열며 publish 실패가 Core 기동/로그아웃 성공을 되돌리지 않는다.
+
+| 앱 | 필수 설정/활성화 |
+| --- | --- |
+| Core 내부 API | `CORE_CHAT_AUTH_ENABLED=true`, `CHAT_AUTH_SERVICE_TOKEN_CURRENT`; 교체 중 `CHAT_AUTH_SERVICE_TOKEN_NEXT` |
+| Chat 검증 | `CHAT_CORE_AUTH_ENABLED=true`, `CORE_INTERNAL_BASE_URL` (HTTPS), `CORE_AUTH_SERVICE_TOKEN` (Core 현재/다음 키와 일치) |
+| Core 빠른 알림 | `CORE_AUTH_REDIS_ENABLED=true`, `CORE_AUTH_PRODUCER_ID`, `CORE_AUTH_REDIS_ENVIRONMENT/HOST/PORT/USERNAME/PASSWORD/SSL/CA_CERTIFICATE` |
+| Chat 알림 구독 | 기존 `CHAT_REDIS_ENABLED=true` 및 TLS/ACL 설정, `CHAT_AUTH_REDIS_ENABLED=true`, 쉼표로 구분한 `CORE_AUTH_PRODUCER_IDS` |
+
+기본값은 모두 비활성이다. 기존 앱·3단계 실행 경로와 호환되도록 전환을 명시적으로 선택한다.
+HTTP plaintext는 `chat-isolated`의 loopback/localhost 시험만 허용한다. 사설 CA는 Chat JVM trust store로
+제공한다. 내부 서비스 키는 JWT·위치 토큰·Redis 비밀번호와 구분하고 SSM/ECS에서 주입한다.
+교체 순서는 Core current+next 수용 → 모든 Chat next 적용/확인 → Core current 교체/old 제거다.
+Core/Chat Redis 사용자도 분리해 Core는 해당 제어 채널 PUBLISH만, Chat은 필요한 채널 구독만 허용한다.
+현재 클라우드가 보고한 plaintext/default 공유 Redis만으로 이 조건이 충족됐다고 보지 않는다.
+
+```sh
+./gradlew test --tests 'com.muse.meomuneum.chat.auth.*' --no-daemon
+# Docker + Testcontainers 필요. 운영 자격 증명/데이터를 사용하지 않는다.
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+인증 단위/계약 테스트 11개가 strict schema·키 교체·상한·전체 deadline·늦은 응답 경쟁·transaction
+rollback·전송 대기열 가드를 확인한다. `coreAuthIntegrationTest`는 실제 Core/Chat JAR 프로세스,
+실제 Hazelcast 세션, 격리 MySQL9.7.0/Redis8.10.2와 합성 TLS relay를 사용한다.
+실제 Core logout 후 두 Chat을 동시에 관찰해, 한쪽은 Core HTTP를 막은 상태에서 Redis 알림으로,
+다른 쪽은 알림 구독 없이 polling으로 종료되는 것을 확인했다. 다른 sid는 유지됐다.
+TLS 신뢰/호스트명 거부·현재/다음 키·정상 refresh 후 기존 access JWT·Core503/401을 서비스503으로
+구분·장애1013·readiness DOWN·재연결 history 복원을 포함한다.
+최종 격리 시험의 두 연결 종료까지 2,112ms였다. 이는 운영 부하에서의 5초 SLO 실측이 아니다.
+증빙은 `build/core-auth-integration/run-1793015716538/result.json`과 각 역할 로그에 보존한다.
+
+Core readiness의 기존 authState는 유지하며 Chat readiness에 `coreSessionAuth`를 추가했다.
+남은 공유 정원·owner/epoch·제품 메시지 relay·Redis 복구·drain이 완료되지 않았으므로
+`CHAT_RUNTIME_ENABLED`의 격리 환경 제한과 prod 거부를 유지한다. 두 Chat으로 수행한 시험은
+인증 전파만 검증한 것으로 전체 제품의 다중 서버 정합성/운영 개방 완료를 뜻하지 않는다.
+클라우드 후속 사항은 내부 API TLS/신뢰 CA·서비스 키 주입/교체·외부 `/internal/*` 차단,
+Core Redis SG 접근·TLS 및 앱별 ACL, 운영 부하에서의 deadline/5초 차단 측정이다.
+
+최종 일반 회귀는 749개 중 719통과·7실패·23조건부 제외다. 실패 7개는 변경 전 dev에서도 재현한
+프로필 이미지 테스트의 `AuthService` fixture 누락과 동일하며 새 실패는 없다. 기존에 실패했던
+약관/가입 3개는 이번 실행에서 통과했다. 채팅 회귀 212개는 208통과·4조건부 제외·실패0이다.
+인증 통합1개·Redis4개 전부 통과했고 앱 분리 검증은 JAR2개 통과·이미지1개 조건부 제외다.
+이번 단계는 실제 역할 JAR로 검증했으며 3단계 Docker 이미지 재빌드/운영 배포를 수행하지 않았다.
+증빙과 기존 dev 실패 이름 대조는 `build/core-auth-verification/summary.json` 및 XML에 보존한다.
+
+
+## 전역 정원·참여 상태 (P1 5단계)
+
+여러 Chat Task가 같은 방을 처리할 때 로컬 Map의 인원을 합산하지 않고 **MySQL 원장의 유효 view를
+계정별로 중복 제거**해 정원을 판단한다. Redis는 공유 투영이며 자리·권한을 승인하지 않는다.
+Redis의 유실/오래된 snapshot이 계정 정원1000을 늘리는 근거가 되지 않도록 하기 위한 선택이다.
+
+| 항목 | 구현·판단 근거 |
+| --- | --- |
+| DB 원장 | 추가형 migration의 `chat_runtime_control`, `chat_runtime_tasks`, `chat_room_runtime`, `chat_view_runtime`. 기존 membership/view/history는 유지하고 과거 membership을 접속자로 복원하지 않는다. |
+| 정원 확보 | READ COMMITTED에서 control → Task UUID순 SHARE → user → room ID순 UPDATE 잠금. 방 잠금 후 유효 view의 DISTINCT user를 조회하고 같은 transaction에서 예약을 저장한다. 별도 account-seat 물리 테이블을 중복 원장으로 두지 않는다. |
+| 상태 | RESERVED/CONNECTED/GRACE/OFFLINE/LEFT. 유효 예약·유예30초와 유효 CONNECTED가 계정 한 자리, 실제 구독 준비가 끝난 CONNECTED만 화면 인원이다. DB UTC의 `now < deadline`을 사용한다. |
+| 소켓/소유권 | REST에서 받은 view로 어느 Task에도 CONNECT할 수 있다. JWT sid와 membership sid를 직접 비교하고, 유효 owner가 있는 view의 중복 claim을 거절한다. Task UUID·소켓 token·증가 owner_generation을 기록하고 DB 잠금 안에서 현재 소유권을 재확인한다. |
+| 단절/재연결 | 정상 관측한 단절만30초 GRACE와 owner release. 이전 소켓의 지연 disconnect는 새 claim을 변경하지 않는다. 만료/OFFLINE에서 새 입장 자리를 다시 검사한다. |
+| 탭/sid 격리 | 탭 퇴장은 그 view만 LEFT. 지역 이동·로그아웃은 해당 sid만 종료한다. 목적지가 만원이어도 확인된 이전 방 퇴장을 commit하며 다른 sid는 유지한다. |
+| Task lease | DB heartbeat5초/lease15초와 요청 시작 기준 보수적 로컬14초 deadline. 만료한 동일 Task ID는 되살리지 않고 새 UUID로 등록한다. 만료 Task를 FENCED로 바꾸며 해당 열린 구간은 마지막 verified 경계로 닫는다. |
+| 만료 | 1초 정리 작업이 물리적으로 늦어져도 deadline/lease가 지난 view는 정원 계산에서 즉시 제외한다. 만료 후 재연결이 과거 부재 구간을 연장하지 않는다. |
+| Redis 투영 | 환경/room hash tag/epoch namespace에 인원·view 상태를 기록한다. 방과 view의 DB version을 각각 Lua CAS해 역순 갱신을 막고24시간 TTL을 사용한다. 원문 메시지·인증 토큰·소켓 객체는 넣지 않는다. |
+| 실패 | 잠금/statement 초기1초·transaction2초 예산과 commit 전 Task/인증 확인. timeout은 전체 rollback 후503. DB commit 후 투영 실패는 예약을 가짜 rollback하지 않고 Task를 차단·소켓1013/readiness DOWN으로 처리한다. |
+
+설정은 Chat의 `CHAT_DISTRIBUTED_PRESENCE_ENABLED=true`로 명시적으로 선택한다(기본false).
+`CHAT_CORE_AUTH_ENABLED=true`, `CHAT_REDIS_ENABLED=true`와 namespace·접속 정보가 필요하다.
+`CHAT_RUNTIME_ENABLED`의 **chat-isolated 전용·prod 거부를 유지**하므로 이번 작업만으로 운영 Task를
+증설하지 않는다. 기존 단일 앱과 분산 모드가 같은 채팅 DB 상태를 동시에 수정하지 않게 한다.
+공개 REST 경로/필드·STOMP destination은 유지한다. 분산 모드 CONNECT에는 최신 REST 입장에서 발급한
+`view_session_id`가 필요하며 다른 탭의 view를 임의로 선택하지 않는다.
+
+새 Task는 다른 정상 Task의 열린 구간을 재시작으로 닫지 않는다. 주기 checkpoint는 DB 소유권/lease를
+확인한 transaction에서만 수행한다. 분산 모드 조회는 임의로 now까지 checkpoint하지 않고 마지막
+검증 경계를 사용한다. **다른 Task로 배정된 REST history/recovery의 현재 view 권한 확인, 메시지와
+구간의 room_seq 경계 매핑·전파는 후속6/7단계다.** 이번 room_seq는 상태/투영 버전이며 완성된
+분산 메시지 순서 계약으로 표시하지 않는다. Redis 상태 유실의 전역 epoch 복구·outbox/relay·drain도
+후속이다. DB/Redis 실패로 차단된 Task는 이 단계에서 자동 개방하지 않으며 재기동/후속 복구 절차가 필요하다.
+
+새 SQL은 `V20261027002610__create_chat_participation_runtime.sql`이다. 기존 적용 SQL은 변경하지 않는다.
+실제 운영 적용 전에 지정한 단일 migrator·Chat 계정의 네 테이블 CRUD/locking read 권한·DB 연결 수를
+클라우드와 맞춘다. Core는 migration 원본을 패키징하지만 평소 Flyway=false, Chat은 migration을 실행하지 않는다.
+전환은 채팅 중단·구 처리 종료 → 단일 migration → 새 앱 확인 순서다. rollback도 채팅을 중단하고
+새 영속 상태와 호환되는 버전으로 수행한다. 테이블 삭제나 구 단일 서버로 단순 재라우팅은 자동 수행하지 않는다.
+
+Redis Chat ACL은 기존 권한에 환경별 `~<env>:chat:state:*`와 `EVAL/HGET/HSET/EXPIRE`가 필요하다.
+Core는 상태 key 권한을 받지 않는다. TLS·앱별 사용자/secret·Core 망 허용 등 기존 클라우드 준비 사항은
+여전히 별도이며 보고된 default 공유/plaintext 구성으로 충족됐다고 보지 않는다.
+
+```sh
+# Docker + Testcontainers, 합성 자격 증명/격리 DB만 사용한다.
+./gradlew chatParticipationTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+`chatParticipationTest`는 실제 MySQL9.7.0/Redis8.10.2로 상태 전이·999→마지막 자리 동시 경합,
+동일 계정 중복 제거·다른 sid 거절·탭 퇴장·이동 목적지 만실·만료 경계·옛 소켓/Task 차단,
+실제 DB lock timeout rollback·commit 후 투영 실패·실제 Lua 역순/키 유실을 검증한다.
+추가로 실제 Core/두 Chat JAR를 TLS로 연결해 REST/WS 교차 배정·live view 이후 새 Task 기동·폐기/장애/history
+복구를 확인한다. 계정 상태999개 fixture와 동시 요청 검증이며 실제1000 WebSocket 부하/SLO 시험은 아니다.
+
+2026-10-27 최종 검증: 전역 참여7개 + 실제 Core/Chat 프로세스1개 = `chatParticipationTest`8개 전부 통과.
+기존 인증 통합1개·Redis4개 전부 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+전체 회귀749개는718통과·8실패·23조건부 제외였다. 실패는 이전 dev에서도 재현한 프로필 이미지
+AuthService fixture 누락7개와 인증 scheduler 진단 로그 집계1개다. 후자는 분리 재실행에서 통과했으며
+그때 함께 실행한 채팅212개도208통과·4조건부 제외·실패0이었다. 전체 회귀 최초 실패를 삭제하거나
+전체green으로 표시하지 않는다. 인증 서비스/해당 진단 테스트 소스는 이번에 변경하지 않았다.
+최종 Spotless·Checkstyle main/core/chat/test·세 JAR 생성 통과. 증빙은
+`build/participation-verification/summary.json`과 full-test/targeted-regression/각 전용 task XML이다.
+이번 Docker 이미지 재빌드·push·운영 migration·AWS/배포는 수행하지 않았다.
+
+
+## 탭 소유권·열람 구간·복구 분산 처리 (P1 6단계)
+
+REST와 WebSocket이 서로 다른 Chat Task에 배정돼도 같은 권한·열람 경계를 사용한다.
+로컬 소켓 등록부는 실제 연결을 찾는 용도로 유지하고, **현재 view의 권한과 과거 열람 범위는 MySQL 원장**에서
+확인한다. 원격 REST 요청이 소켓 소유자의 접속 증거를 대신 만들지 않도록 하기 위한 선택이다.
+아래 내용은 앞선5단계 문서의 후속6단계 설명을 갱신한다. 제품 메시지 relay는 여전히7단계다.
+
+| 변경 | 동작과 판단 근거 |
+| --- | --- |
+| 현재 탭 소유권 | Task UUID·소켓 token·claim 때 캡처한 generation을 함께 검증한다. REST는 현재 view의 계정/membership/sid/epoch/CONNECTED·소유 Task lease를 공유 DB에서 확인한다. 다른 Task의 로컬 소켓 등록이 없다는 이유로 정상 조회를 거절하지 않는다. |
+| 방 순서와 시간 | 메시지 저장·구독·checkpoint·종료가 기존 control/Task/user/room 잠금 순서와 같은 transaction을 사용한다. 메시지에는 room_seq와 DB UTC를 부여한다. ID가 발급된 시점과 commit 순서의 역전, Task 시계 차이로 부재 구간이 열리는 것을 막는다. |
+| 열람 구간 | 소유자만 checkpoint를 갱신한다. 원격 조회는 열린 구간의 마지막 verified 경계까지만 읽는다. 기존5초 checkpoint 때문에 최신 메시지의 REST 노출이 그 주기만큼 늦을 수 있으며, REST 조회가 이를 임의로 확장하지 않는다. |
+| history/recovery | history는 같은 계정·방의 과거 유효 구간 합집합이므로 재로그인 후에도 복원한다. recovery는 현재 view의 구간만 사용한다. 과거 구간을 읽으려 해도 현재 탭/sid의 정상 권한은 먼저 필요하다. 다른 탭·sid의 현재 권한으로 대체하지 않는다. |
+| 고정 페이지 | 최초 조회 시 DB snapshot에 열람 구간·room_seq·as_of를 복사한다. 다음 페이지 중 다른 탭의 checkpoint가 갱신돼도 그 snapshot 범위가 늘지 않는다. 각 페이지는 현재 권한·DB 만료·24시간 보존 범위를 다시 검사한다. |
+| cursor | 서명에 기존 필드와 snapshot ID/epoch/generation을 포함하고 DB snapshot과 대조한다. 다른 계정/방/view/mode, 이전 generation/epoch, 만료 snapshot은 거절한다. 분산 snapshot의 만료는 DB UTC가 기준이며 JVM 시각으로 대체하지 않는다. |
+| 단절과 강제 종료 | 관측한 단절만30초 유예를 만든다. 기한과 같은 시각은 만료다. Task 강제 종료처럼 단절 증거가 없으면 lease 만료 후 마지막 verified 경계에서 닫고 OFFLINE으로 둔다. 다른 Task의 새 claim은 새 generation/구간으로 시작하며 부재를 소급해서 열지 않는다. |
+| 늦은 전송 | outbound enqueue/handler에서 현재 소유권과 메시지 room_seq가 현재 구독 구간에 속하는지 재확인한다. unsubscribe 후 새 구독으로 늦게 도착한 과거 frame을 전달하지 않는다. |
+| 물리 삭제 | 메시지가24시간 정리돼도 기존 verified ID 경계가 역행하지 않는다. 실제 메시지 내용은 기존 테이블에만 저장하고 순서 테이블에는 식별자만 기록한다. |
+
+공개 REST 경로·응답 필드·STOMP destination은 유지한다. cursor는 opaque 값이지만 **분산 모드 전환 또는
+새 소유권 획득 후에는 이전 cursor를 이어 쓰지 않고 재연결 ready/fresh 조회로 시작**해야 한다.
+연결 유지 중 신규 FE 자동 누락 복구/sync는 P2이며 이번에 추가하지 않았다.
+
+추가형 migration은 `V20261027131057__add_distributed_chat_read_boundaries.sql`이다.
+기존 migration/열람 구간은 삭제하거나 다시 작성하지 않고, interval에 환경/epoch/owner/순서 경계를 추가한다.
+`chat_message_order`는 방 메시지 순서, `chat_query_snapshots`와 `chat_query_snapshot_ranges`는 고정 페이지 범위를
+저장한다. snapshot은24시간 뒤 만료되며 Task별60초 정리 작업이 한 번에 최대1000개 header와 하위 범위를 삭제한다.
+정리가 늦어져도 조회 경로의 만료 검사가 권한을 연장하지 않는다.
+
+설정은 기존 `CHAT_DISTRIBUTED_PRESENCE_ENABLED=true`를 사용한다. 기본false·Core 인증/Redis 의존과
+`CHAT_RUNTIME_ENABLED`의 chat-isolated 전용·prod 거부를 유지한다. 이 단계만으로 운영 다중 Task를 개방하지 않는다.
+분산 receipt/정책/outbox/PubSub 제품 전파, Redis 유실의 전역 epoch 복구, 배포 drain은 남은 P1 작업이다.
+
+클라우드 협의와 전환 절차:
+
+1. 채팅 일시 중단 → 기존 처리 Task 종료 → 지정한 단일 migrator로 새 SQL 적용 → 새 앱 격리 검증 순서를 지킨다.
+   구 단일 앱과 새 분산 앱이 같은 상태를 동시에 쓰지 않는다. Chat 앱 자체는 Flyway를 실행하지 않는다.
+2. Chat DB 계정에 새 세 테이블 CRUD와 기존 interval/room runtime 추가 열의 읽기·쓰기/locking 권한이 필요하다.
+   snapshot의 페이지 수·구간 수에 따른 DB 저장량/청소 속도·풀 예산을 확인한다. 읽기도 권한 잠금과 snapshot 쓰기가
+   필요하므로 read replica/읽기 전용 DB 계정으로 보내지 않는다.
+3. 최초 room 잠금에서 기존 메시지를 ID순 room_seq에 매핑하고 기존 interval ID 경계를 연결한다.
+   원래 ID/시각/종료 경계는 유지하며 매핑 완료 표시와 같은 transaction으로 commit한다.
+   방별 메시지/구간 수가 큰 경우 기존1초 statement/2초 transaction 예산 안에 들어오는지 전환 전 측정한다.
+   초과하면 rollback·서비스503이며 자동으로 권한을 넓히거나 예산을 무제한 늘리지 않는다.
+4. rollback도 채팅을 중단하고 새 DB 상태와 호환되는 버전을 선택한다. 테이블 삭제나 구 cursor 재사용으로 우회하지 않는다.
+
+검증 명령은 앞선5단계와 같다. `chatParticipationTest`는 실제 MySQL/Redis 도메인13개와 실제 Core/두 Chat JAR의
+프로세스1개로 구성된다. 원격 history/recovery/by-client-id, 원격 checkpoint 금지, 고정 페이지·다른 epoch/generation·
+DB 만료·JVM 시계 차이, 재로그인 계정 합집합·부재·24시간, 메시지 commit/구독 경합, 지연 outbound,
+기존 구간 매핑·물리 삭제 후 경계 보존, Task lease 만료 복구를 포함한다.
+격리 fixture와 제한된 경합 시험이며 운영1000 WebSocket 부하/SLO·운영 migration 완료를 의미하지 않는다.
+
+
+2026-10-27 검증 결과: 전용 분산 시험14개, 기존 Core 인증1개·Redis4개는 전부 통과했고,
+앱 분리 JAR2개 통과·이미지1개는 조건부 제외다. 실제 소유 Chat 프로세스를 강제 종료해
+lease 만료→마지막 verified 경계 폐쇄/OFFLINE→조회403→다른 Task 재연결/조회200도 확인했다.
+전체 회귀749개는717통과·9실패·23제외였다. 이전 단계에서도 재현한 프로필 이미지 AuthService
+fixture 누락7개와 Hazelcast 진단 로그 집계/채팅 차단 각1개이며, 후자2개를 포함한 분리 재실행은
+213개 중209통과·4제외·실패0이었다. 최초 전체 실패를 보존하고 전체green으로 표시하지 않는다.
+관련 없는 인증/프로필 이미지 소스는 수정하지 않았다. Spotless·Checkstyle main/core/chat/test·세 JAR를
+검증하며 증빙은 `build/distributed-view-verification/summary.json`과 각 task XML,
+`build/core-auth-integration/run-*/cross-task-read.json`에 보존한다.
+Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 않았다.
+
+
+## 메시지 저장·Redis 전파 (P1 7단계)
+
+여러 Task에서 전송해도 메시지·정책·재시도 결과가 일치하도록 DB를 기준으로 처리한다.
+**DB commit은 저장 성공, Redis publish는 참조 알림 발행**이다. 어느 쪽도 모든 사용자의 수신 완료를 의미하지 않는다.
+발신 Task도 직접 방송하지 않고 다른 Task와 같은 Pub/Sub 경로로 `CHAT_MESSAGE`를 받는다.
+개인 `CHAT_ACK`만 원 요청 소켓에 보내므로 다른 탭의 ACK로 전송 상태를 잘못 바꾸지 않는다.
+
+| 항목 | 구현과 판단 근거 |
+| --- | --- |
+| 원자적 저장 | 기존 control/Task/user/room 잠금 안에서 메시지·room_seq·전송 제한·receipt·outbox를 같은 transaction으로 commit한다. Redis·Core·WS 네트워크 호출은 DB transaction 밖에서 수행한다. rollback이면 정책 횟수와 전파 알림도 남지 않는다. |
+| 재시도 | 환경/user/client UUID receipt를 조회해 같은 membership·방·trim한 원문 HMAC이면 원래 message_id로 ACK한다. 카운터·메시지·outbox를 다시 생성하지 않는다. 내용/문맥 충돌은 CLIENT_ID_CONFLICT, 보존 만료는 RETRY_UNAVAILABLE이다. 현재 socket 권한은 재시도에도 필요하다. |
+| 전송 제한 | 계정 전역1초 간격과 membership별 동일 원문 세 번째 거절을 DB로 유지한다. 다른 Task·재시작·정상 재연결·키 교체로 초기화하지 않는다. 분산 모드에서 임의의 짧은 minimum-interval 설정은 거절한다. |
+| 내용 지문 | 원문과 무키 SHA digest는 영속 저장하지 않는다. 별도 HMAC-SHA256 key ring의 ID와 fingerprint만 저장하며 공개 메시지에는 마스킹 결과만 저장한다. 마스킹 결과가 같아도 서로 다른 원문은 다른 지문이다. |
+| outbox claim | 방별 DB token·5초 lease로 가장 이른 pending room_seq를 claim하고 DB commit 후 발행한다. 발행 직전 token/만료/epoch/Task를 재확인하며 성공 표시는 같은 token 조건으로만 한다. 늦은 이전 worker가 새 claim을 완료하거나 해제하지 못한다. |
+| 재발행 | poll200ms·회당 최대100건·bounded worker/queue. 실패는0.5→1→2→최대5초와 jitter로 다시 시도한다. 발행 후 성공 표시 전 장애는 같은 event_id 재발행이 가능하다. 구독자 수0은 발행 성공일 수 있으며 사용자 수신 성공으로 해석하지 않는다. |
+| 참조 이벤트 | 기존 schema_version=1의 CHAT_MESSAGE_CREATED를 사용한다. event_id/producer/UTC occurred_at/epoch/room_id/room_seq/message_id만 보내고 본문·nickname·토큰은 보내지 않는다. 수신은16KiB·필드·중복 JSON키·UUID·safe integer·채널 일치·지원 버전을 엄격히 검사한다. |
+| 발행자 검증 | DB Task 등록과 같은 환경/epoch가 동적 Chat producer allowlist다. committed outbox의 event_id/producer/방/순서/메시지/시각과 모두 일치해야 한다. 종료된 발행 Task가 남긴 commit 알림을 다른 worker가 발행할 수 있어 원 발행자의 현재 ACTIVE 여부로 과거 저장을 지우지 않는다. Redis ACL이 서비스 인증 경계이며 producer 문자열 자체는 인증 수단이 아니다. |
+| 수신 권한 | Task마다 마스킹된 DTO를 한 번 읽고, 로컬 후보 socket의 최신 DB 권한을 묶음 조회한다. 활성 계정/제재·현재 epoch/소유권/lease·CONNECTED·구독 시작 순서·Core 확인·JWT 만료를 검사한다. 로컬 처리 직렬화와 기존 outbound guard가 실제 적재/handler 때도 재검사한다. |
+| 중복·역순 | 최대10000항목·10분의 로컬 event/message LRU로 중복을 줄이고 최종 화면 병합은 기존 message_id를 사용한다. 더 높은 room_seq를 먼저 받았어도 낮은 순서의 다른 메시지를 버리지 않는다. room_seq 차이를 누락 메시지 수로 해석하지 않는다. |
+| 실패 | 명령 또는 Pub/Sub 단절을 알림 callback에서 즉시 latch해 새 동작/적재를 막는다. readiness DOWN·WS1013으로 정리하며 큐 포화도 조용히 버리지 않고 서비스 중단으로 처리한다. 재접속 ACK만으로 자동 재개하지 않는다. 전역 marker/epoch 복구·자동 재개는 후속8단계다. |
+
+추가형 `V20261027142734__create_chat_message_delivery_state.sql`은 `chat_send_policy`,
+`chat_send_repetitions`, `chat_message_receipts`, `chat_message_outbox`와 방별 dispatch token/deadline을 추가한다.
+기존 migration·원문·열람 구간을 변경하지 않는다. receipt는 메시지의24시간 보존까지 유지하며,
+끝난 membership의 반복 지문·만료 receipt/outbox를60초마다 최대1000개씩 정리한다.
+메시지가 만료되거나 epoch가 지난 pending 알림은 EXPIRED로 끝내고 메시지 본문을 DLQ에 복제하지 않는다.
+새 snapshot/조회 권한을 부여하거나 계정 전송 정책을 복구 때 초기화하지 않는다.
+
+설정·호환성·클라우드 전달 사항:
+
+- `CHAT_MESSAGE_RELAY_ENABLED=true`는 기존 distributed presence/Core auth/Redis가 준비된 격리 Chat에서만 사용한다.
+  기본false와 기존 chat-isolated 전용·prod 거부를 유지한다. 전체 P1/운영 다중Task 개방 완료가 아니다.
+- `CHAT_MESSAGE_FINGERPRINT_KEYS`는 `key-id:base64-secret`을 쉼표로 연결한1~8개 key ring이다.
+  각 secret은32바이트 이상이며 첫 항목이 새 기록에 사용된다. JWT/서비스 Bearer/Redis 비밀번호와 별도다.
+  `.env.example`에는 실제 키를 넣지 않는다. 클라우드는 별도 SSM SecureString/ECS 주입·동일 ring 배포를 준비한다.
+- 키 교체는 모든 Task에 기존+새 키 검증 능력을 먼저 배포한 뒤 새 키를 첫 항목으로 승격한다.
+  구키는 해당 receipt가 모두 만료되고 해당 지문을 가진 membership이 모두 끝나며 구키를 쓰는 Task도 종료된 뒤 제거한다.
+  미보유 key ID가 남아 있으면 시작 또는 SEND를 거절한다. 원문 없이 기존 지문을 새 키로 변환하거나 반복 제한을 초기화하지 않는다.
+- Chat DB 계정에 새 네 테이블 CRUD와 room runtime dispatch 열/locking 권한이 필요하다.
+  Chat Redis ACL에는 기존 채널 범위의 PUBLISH가 추가로 필요하다. Core에 Chat 방/상태 권한을 확대하지 않는다.
+- 공개 REST·STOMP 경로와 기존 `type/data`, ACK의 `membership_id/message`를 유지하고 선택 필드
+  `deduplicated`만 추가한다. [wire schema](api/chat-message-delivery.schema.json)와 기존 Redis schema를 따른다.
+  저장 ACK 유실 시 같은 UUID를 유지한다. client UUID가 충돌하는 기존 메시지에 새 receipt를 추정 생성하지 않으며,
+  현재 권한을 통과한 기존 by-client-id/history로 확인한다.
+- 전환은 채팅 중단·구 Task 종료 → 단일 migrator → 동일 key ring·ACL 준비 → 격리 검증 순서다.
+  구 단일 앱과 동시에 같은 상태를 쓰거나 구 로컬 정책으로 재라우팅하지 않는다. rollback은 새 DB 상태와 호환되는 버전으로 수행한다.
+- 방별 DB 저장/claim 비용, 수신 Task당 조회 및 socket별 outbound 재검사, 큐/청소 처리량·DB 풀/연결 예산을
+  운영 부하로 측정해야 한다. 이 단계의 제한된 경합 시험은 실제1000소켓·운영 처리량/SLO 검증이 아니다.
+- 분산 퇴장·제재/상태 알림, 전역 epoch 복구·배포 drain은 후속 P1이다. 기존 DB 권한/소유권·인증 polling은 유지한다.
+  연결 유지 중 누락 자동 sync는 P2이며 기존 재연결 history/recovery를 사용한다.
+
+검증 명령:
+
+```sh
+./gradlew chatMessageRelayTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+`chatMessageRelayTest`는 실제 MySQL/Redis 도메인19개와 실제 Core/두 Chat JAR/TLS 프로세스1개다.
+같은 UUID의 두 Task 경합·owner 변경 재시도·다른 내용/문맥 충돌·계정 간격/세 번째 반복·HMAC 키 교체,
+저장 중 및 outbox insert 실패 rollback·commit 후 pending 보존·claim lease 만료/이전 token 거절·재시도/만료,
+실제 Redis 중복·역순·잘못된 참조/구epoch·새 구독 부재 경계를 검증한다.
+실제 두 Chat은 발신/상대 Task WS 전달·원 소켓 ACK·다른 Task 재시도 ACK·Core 폐기/장애·소유 Task 강제 종료/history,
+명령 PING 정상 중 Pub/Sub만 강제 종료→1013/readiness DOWN을 검증한다.
+분산 모드 저장·만료 정리도 DB UTC를 사용하며 Task 시계가48시간 빨라도 유효 메시지를 조기 삭제하지 않는다.
+SQL 오류 주입용 trigger는 binlog를 끈 격리 테스트 DB에서만 사용한다. 운영 DB 설정을 바꾸지 않는다.
+
+
+2026-10-27 최종 검증: 메시지 전용20개 전부 통과·제외0. 기존 Core 인증1개·Redis4개 전부 통과,
+앱 분리 JAR2개 통과·이미지1개 조건부 제외다. 전체 회귀749개는719통과·7실패·23조건부 제외였다.
+실패7개는6단계 보존 증빙과 이름이 동일한 프로필 이미지 AuthService fixture 누락/동일 context 실패다.
+최종 채팅 회귀212개는208통과·4조건부 제외·실패0이다. 전체green으로 표시하지 않고 최초 full XML도 보존한다.
+초기 trigger fixture 권한·하네스 임시 포트 경합·코드 줄 길이 실패는 보완 후 재실행으로 해소했다.
+wire schema는 기존 FE의 AJV6.15.0으로 compile하고 정상4/오류1 예시를 확인했으며 FE 코드는 수정하지 않았다.
+Spotless·Checkstyle main/core/chat/test·세 JAR를 확인하며 증빙은
+`build/message-relay-verification/summary.json`과 각 task XML,
+`build/core-auth-integration/run-*/message-relay.json`·`pubsub-interruption.json`이다.
+Docker 이미지 재빌드·push/PR·운영 migration·운영 Redis/AWS/배포는 수행하지 않았다.
+
+
+## 퇴장·지역 이동·인증 폐기 전파 (P1 8단계)
+
+2026-10-27 사용자 요청 범위는 여러 Chat Task에 연결된 탭의 종료 전파다.
+7단계의 “후속8단계” 표현 중 전역 Redis marker/epoch 복구·자동 재개·배포 drain은 이번 범위에 포함하지 않는다.
+기존 기록은 당시 이력으로 보존한다. 연결 중 신규 자동 sync는 P2이며 기존 재연결 history/recovery를 유지한다.
+
+| 결정 | 구현과 판단 근거 |
+| --- | --- |
+| 일반 퇴장은 해당 탭만 종료 | DB view에 LEFT 사유를 기록하고 CHAT_VIEW_ENDED 참조를 전파한다. 마지막 탭일 때만 membership도 끝낸다. 다른 탭·다른 sid를 닫으면 기존 사용자 계약을 위반한다. |
+| 지역 이동·Core 인증 폐기는 해당 sid의 참여 종료 | 기존 REGION_CHANGED / SESSION_REVOKED 진입점에서 CHAT_MEMBERSHIP_ENDED를 생성한다. 새 membership ID로 재입장한 소켓은 늦은 구 알림으로 닫지 않는다. 다른 sid는 유지한다. |
+| 상태 변경과 알림 예약은 한 DB transaction | 종료·열람 구간 닫기·사유·room_seq·outbox를 함께 commit한다. outbox 저장이 실패하면 종료도 rollback한다. DB만 변경되고 전파 예약이 사라지는 틈을 막는다. |
+| Redis는 종료 사실의 알림 | 구독 Task는 현재 epoch·채널·등록 producer·DB outbox의 정확한 canonical body와 실제 종료 상태를 확인한다. 알림 자체로 인증·참여 권한을 생성하지 않는다. |
+| 알림 유실은 독립 DB 조회로 보완 | 기존 참여 coordinator의250ms 조회에서도 종료 사유를 읽고 로컬 소켓을 정리한다. 조회 결과와 현재 소켓 ID/소유권을 다시 비교해 재연결 직후의 새 소켓을 보존한다.250ms는 무부하 조회 주기이며 종료 SLO 보장이 아니다. |
+| 인원 알림은 최신 DB 스냅샷 전달 | CHAT_PRESENCE_CHANGED는 room_seq를 가진 hint다. 수신 시 최신 DB 인원·version을 읽으므로 늦은 알림의 오래된 숫자로 되돌리지 않는다. 메시지 저장/checkpoint마다 인원 outbox를 만들지 않는다. |
+
+Core AUTH_SESSION_REVOKED는 기존 Core producer allowlist·sid 검증·HTTP 확인 fallback을 그대로 사용한다.
+Chat 제어 소비자는 Core 이벤트를 대신 승인하지 않는다. Core 일시 장애는 기존1013 일시 중단이며
+SESSION_REVOKED 영구 종료로 바꾸지 않는다. 기존 ACCESS_RESTRICTED 종료 경로의 사유는 보존하지만
+새 관리자 제재 정책·CHAT_ACCESS_INVALIDATED 생산자는 추가하지 않는다.
+
+로컬 종료 시 view/presence뿐 아니라 인증 문맥·소켓 owner generation claim도 지운다.
+뒤늦은 WebSocket disconnect가 이미 종료된 DB 참여를 다시 변경하지 않으며 계정 history의 유효 구간은 보존한다.
+마지막 탭의 DB 사유 LEFT는 membership 이벤트에서 기존 스키마의 LAST_VIEW_LEFT로 전달한다.
+기존 wire4100 CHAT_LEFT / CHAT_LOGGED_OUT,4101 CHAT_BANNED와 공개 API 경로를 유지한다.
+활성 ban 조회는 deleted_at·created_at·expires_at을 함께 검사한다.
+
+메시지와 제어 참조는 기존 chat_message_outbox 및 방별 dispatch claim을 공유한다.
+한 room_seq에 view/member/presence가 함께 생길 수 있어 순서 인덱스를 비고유로 확장했다.
+같은 seq 내부의 알림 순서는 권한의 근거가 아니며 소비자는 DB와 정확한 대상 ID를 재검사한다.
+기존200ms poll·100개 round·5초 claim·재시도·24시간 만료·bounded worker/queue·실패 시1013/readiness DOWN을 공유한다.
+CHAT_VIEW_ENDED / CHAT_MEMBERSHIP_ENDED는 기존 control 채널,
+CHAT_PRESENCE_CHANGED는 기존 room 채널을 쓴다.16KiB 상한·엄격한 필드/UUID/정수·중복 JSON key 거부를 적용한다.
+메시지 원문·토큰·새 Redis 계정 또는 새 비밀키는 추가하지 않는다.
+중복 event ID 캐시는 Task당 최대10000개/10분이며 캐시 만료 뒤에도 DB 상태 검사로 범위를 제한한다.
+
+설정·전환·클라우드 협의:
+
+- CHAT_CONTROL_EVENTS_ENABLED 기본false. true에는 CHAT_MESSAGE_RELAY_ENABLED와 기존 distributed presence/Core auth/Redis가 필요하다.
+  CHAT_RUNTIME_ENABLED의 chat-isolated 전용·prod 거부를 유지한다. 운영 다중Task 활성화 완료가 아니다.
+- 추가형 V20261027153823__extend_chat_outbox_for_control_events.sql이 view/member end_reason,
+  outbox event_type/event_body·nullable message_id·인덱스와 CHECK를 추가한다. 기존 SQL과 history를 보존한다.
+  새 앱은 flag가 꺼져 있어도 end_reason 열을 사용하므로 migration이 먼저 필요하다.
+- 구7단계 worker는 제어 outbox를 읽을 수 없다. 채팅 중단 → 구 Chat 전부 종료 → 단일 migrator →
+  모든 Chat에 호환 버전/동일 설정 배포 → 격리 검증 후 개방 순서이며 구버전과 혼합 rolling 운영하지 않는다.
+  rollback도 확장 schema/제어 row를 이해하는 버전이 필요하다. 운영 migration은 수행하지 않았다.
+- 클라우드는 기존 Chat DB 테이블 쓰기 권한과 단일 migration 주체·인덱스 변경 비용/시간,
+  기존 Chat control/room PUBLISH·구독 ACL을 확인한다. Core Redis 권한이나 외부 /internal 경로는 확대하지 않는다.
+  새 도메인·라우팅·secret은 요구하지 않는다. 실제 TLS/계정 분리/운영 부하·종료 시간은 별도 검증 사항이다.
+
+검증 명령:
+
+```sh
+./gradlew chatControlEventsTest --no-daemon
+./gradlew chatMessageRelayTest --tests 'com.muse.coreauth.CoreAuthProcessTest' --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+전용25개는 실제 MySQL/Redis 도메인24개와 실제 Core·두 Chat JAR·TLS 프로세스1개다.
+기존7단계 경계에 더해 탭만 퇴장/마지막 membership 종료·중복 요청·다른 sid 보존·지역 목적지 만원이어도
+이전 sid 종료·Core 폐기와 history 보존·알림 유실 polling·새 membership/재연결 소켓 보존을 확인한다.
+VIEW/MEMBER outbox 이후 PRESENCE insert 실패를 주입해 전체 rollback을 검증한다.
+잘못된 채널/epoch/미등록 참조/미종료 DB 상태·잘못된 JSON을 거절하고 역순 presence는 최신 DB version을 쓴다.
+실제 프로세스는 REST 처리 Task와 소켓 소유 Task가 다른 퇴장·이동 및 늦은 중복 알림도 검사한다.
+운영1000연결·모든 장애/kill 조합·종료 지연 SLO를 검증한 것은 아니다.
+
+전체749개는719통과·7실패·23조건부 제외이며 이전7단계와 실패 이름7개가 동일하다.
+프로필 이미지 테스트의 AuthService fixture 누락과 그 후속 context 실패로 전체green으로 표시하지 않는다.
+Core 인증1개/Redis4개 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+전체 최초 XML은 build/control-events-verification/full-test에 보존한다.
+전용/호환/최종 채팅 회귀와 빌드 결과는 같은 폴더 summary.json 및 task XML에 기록한다.
+실제 프로세스 증빙은 build/core-auth-integration/run-*/control-events.json 및 기존 message-relay.json이다.
+Docker 이미지 재빌드·push/PR·운영 DB/Redis/AWS/배포는 수행하지 않는다.
+
+2026-10-27 최종 전용25개 전부 통과·제외0, 기존 메시지 relay 프로세스 호환1개 통과다.
+최종 채팅 회귀212개는208통과·4조건부 제외·실패0이다.
+기존 FE AJV6.15.0으로 세 종류의 정상/추가필드 거부 예시와 실제 프로세스의 DB event_body 세 종류를 검증했다.
+최초 대조에서 마지막 탭의 membership 사유가 기존 스키마와 다른 점을 찾아 LAST_VIEW_LEFT로 보완한 뒤
+전용25개를 재실행했다. FE 코드와 기존 스키마 필드/enum은 변경하지 않았다.
+
+## 장애·종료 처리와 기본 지표 (P1 10단계)
+
+2026-10-27 사용자는 Redis 전체 장애/상태 유실 후 **전용 복구 명령 실행 후 Chat 재기동**을 선택했다.
+기존 설계의 자동 복구 담당자 선출·앱 자동 재개는 이번 최소 P1에서 제외하고 과거 설계는 이력으로 보존한다.
+9단계 FE의1013/503·같은 membership/view 재연결·history/recovery를 그대로 사용한다.
+
+| 결정 | 구현과 판단 근거 |
+| --- | --- |
+| 장애 때 로컬 입구부터 차단 | command/PubSub 단절 callback은 원자 flag만 닫는다. 500ms 감시가 DB mode/epoch/Task lease와 Redis marker·run_id·실제 구독을 확인한다. 확인 결과는 요청 시작 기준 최대1초만 사용한다. ALB health 제외를 기다리거나 Lettuce IO 스레드에서 DB/소켓 정리를 하지 않는다. |
+| 연결 복귀만으로 자동 개방 금지 | marker 유실·Redis 재기동·DB 확인 실패·큐 장애로 닫힌 Task는 그대로 닫힌다. 같은 marker를 돌려놓아도 열지 않는다. 단일 Task의 일시 연결 실패는 정상 의존성을 확인한 새 Task로 교체하고, 전체 Redis 상태/실행 세대가 바뀌면 오프라인 복구를 먼저 수행한다. |
+| 정상 종료도 일시 중단 | ContextClosed에서 ingress/HTTP·WS 업그레이드·SEND·outbound를 차단하고, 웹서버보다 먼저 drain한다. 본인 Task 소유 view만 OFFLINE·generation 증가·소유권 해제, Task FENCED 후 WS1013으로 닫는다. 다른 Task·membership·LEFT·계정 history는 보존한다. |
+| 종료 시 검증되지 않은 구간 확대 금지 | SIGTERM은 클라이언트의 정상 disconnect와 다르다. 마지막 verified 경계로 열린 구간을 닫고, 새 30초 열람 유예나 fresh 인증 없는 최종 checkpoint를 만들지 않는다. 기존 클라이언트 disconnect의30초 정책은 유지한다. 최대 정상 checkpoint 주기 약5초의 미검증 꼬리는 보존 근거가 없다. |
+| 정리 실패도 종료 예산 준수 | 기본 drain20초(1~25초), shutdown phase 기본30초보다 작아야 한다. DB chunk/statement1초·tx2초, transport별 close 예외 격리. DB 잠금·단절/예산 초과 시 Task lease/verified 경계 기반 회수로 fallback하며 무한 대기하거나 완료를 꾸미지 않는다. timeout/failure 지표와 elapsed_ms 로그를 남긴다. |
+| 관측과 서비스 권한 분리 | Prometheus는 별도 서비스 token으로만 조회한다. 사용자 JWT/무인증은 거절한다. gauge scrape에서 DB/Redis를 조회하지 않으며, DB 표본 실패는 NaN·available0으로 표현한다. 지표 조회 실패 자체로 채팅을 중단하지 않는다. |
+
+설정은 `CHAT_LIFECYCLE_ENABLED=false`가 기본이며 true에는 기존 presence·Core auth·Redis·message relay·control events가 필요하다.
+기존 `CHAT_RUNTIME_ENABLED` chat-isolated 전용/prod 거부는 유지한다. 운영 활성화 승인이 아니다.
+`CHAT_DRAIN_TIMEOUT=20s`, 선택 `CHAT_METRICS_SERVICE_TOKEN`(32~256자 별도 비밀)과 용도는 .env.example을 따른다.
+metrics token이 비어 있으면 수집을 거절한다. JWT·Core 인증 Bearer·Redis 비밀번호를 재사용하지 않는다.
+Chat Hikari 연결 대기1초/검증500ms, MySQL connectTimeout1초/socketTimeout2초를 설정한다.
+실제 JDBC URL에서 충돌하는 timeout을 덮어쓰지 않도록 운영 주입값을 확인한다. Core 설정은 바꾸지 않는다.
+
+### 전환·장애 복구 절차
+
+추가형 `V20261027205623__add_chat_runtime_recovery_control.sql`은 control의 recovery token/15초 lease,
+Redis generation·server run_id를 추가한다. 기존 SQL/이력은 수정하지 않는다. migration 실행은 기존 단일 migrator다.
+
+1. 새 FE 호환성 확인 → 채팅 라우팅 중단 → 구 Chat Task 전부 종료 → migration 적용.
+2. Chat DB/Redis 자격증명을 받은 단일 운영 job에서 아래 명령을 실행한다. 실제 비밀은 환경 주입하며 명령 인자에 넣지 않는다.
+3. 명령 성공·DB RUNNING 및 marker를 확인한 뒤 동일 버전/설정의 새 Chat UUID를 기동한다. readiness를 확인한 후 라우팅을 개방한다.
+4. FE는 기존 참여/view의 현재 권한·정원을 다시 확인하고 fresh READY/cursor로 복원한다. 종료/폐기된 view나 sid는 되살리지 않는다.
+
+```sh
+CHAT_RECOVERY_CONFIRM=chat-stopped java \
+  -Dloader.main=com.muse.meomuneum.chat.runtime.ChatRecoveryCommand \
+  -cp meomuneum-chat.jar org.springframework.boot.loader.launch.PropertiesLauncher
+```
+
+명령은 `CHAT_DB_URL/USERNAME/PASSWORD`, `CHAT_REDIS_ENVIRONMENT/HOST/PORT/USERNAME/PASSWORD/SSL`,
+필요 시 `CHAT_REDIS_SSL_CA_CERTIFICATE`를 사용한다. TLS 기본true, timeout1초·요청 queue1024이며 정상 구독 ACK까지 검사한다.
+웹 앱·Flyway·Core/Hazelcast를 시작하지 않는다. 예시 명령을 이번 작업에서 운영 환경에 실행한 것은 아니다.
+
+복구는 DB control UPDATE lock으로 RUNNING→RECOVERING·epoch 증가·token/lease를 commit한다.
+기존 쓰기의 SHARE lock과 직렬화되고, 동시 명령은 live lease가 있으면 거절한다.
+중단된 명령의15초 lease가 만료되면 새 token/generation으로 **같은 epoch**의 미완료 chunk를 이어간다.
+각 chunk는 최대100 Task/100 view/1000 outbox를 정리하고 token/유효 lease를 검사한다.
+구 Task FENCED, 비종료 view는 새 epoch의 OFFLINE/새 generation, 미확인 열린 구간은 마지막 verified로 닫는다.
+기존 GRACE의 이미 기록된 허용 끝을 늘리지 않는다. 구epoch pending outbox는 EXPIRED지만 메시지·receipt·계정 전송/반복 정책은 보존한다.
+room_seq도 초기화하지 않고 새 Redis 세대 투영은 이후 DB 스냅샷으로 생성한다. 과거 membership을 온라인 인원으로 환산하지 않는다.
+
+정리가 끝나고 command·실제 PubSub 구독·run_id·새 marker가 준비되면 token 조건으로 RUNNING을 commit한다.
+DB lock 안에서 Redis 네트워크 호출을 하지 않는다. DB와 Redis를 원자 transaction으로 간주하지 않는다.
+구 token의 DB 쓰기/완료는 거절한다. lease 경계의 오래된 Redis marker 쓰기는 DB generation과 불일치해 Task를 닫는 결과만 낼 수 있으며,
+이 경우 라우팅을 닫고 명령을 다시 수행한다. 두 저장소의 불일치를 권한 승인으로 보상하지 않는다.
+명령 실패에는 stage/예외 종류만 기록하고 연결 정보·비밀을 붙이지 않는다. RECOVERING이면 개방하지 않는다.
+구 cursor/owner epoch는 거절하고 fresh snapshot을 사용한다. 복구 명령/Task의 모든 kill 지점을 검증했다고 표시하지 않는다.
+
+### 기본 지표와 클라우드 전달 사항
+
+기계 판독 계약은 [운영 endpoint 명세](api/chat-runtime-operations.openapi.json)를 참고한다.
+
+`GET /actuator/prometheus`는 `Authorization: Bearer <CHAT_METRICS_SERVICE_TOKEN>`으로만 조회한다.
+외부 ALB/CloudFront에서는 이 경로를 차단하고 내부 scraper SG에서만 수집해야 한다. health 상세와 `/actuator/**`의 나머지는 공개하지 않는다.
+기존 health 경로 `/actuator/health/readiness`, `/actuator/health/liveness`와 HTTP 포트는 유지한다.
+readiness는 외부 의존성을 포함하지만 liveness는 외부 장애 때문에 내리지 않는다.
+
+| 지표 | 의미 |
+| --- | --- |
+| chat.connections / chat.connections.close.failures | 이 Task의 등록된 WS 수·transport close 실패 누적(계정 정원/OS TCP 수와 구분) |
+| chat.runtime.accepting / failures | runtime gate 개방 여부·감시 실패 누적. 최종 요청은 Core 인증/참여 권한도 통과해야 한다. |
+| chat.runtime.drain.duration / timeouts / failures | 종료 정리 경과·예산 초과·DB/상태 정리 실패 |
+| chat.message.store.duration{outcome} | 저장 시도 시간, stored/deduplicated/rejected/unavailable. ACK나 모든 사용자 수신 지연을 의미하지 않는다. |
+| chat.redis.publish.duration{outcome} | PUBLISH 호출 시간, published/unavailable. subscriber 수는 배달 확인이 아니다. |
+| chat.outbox.pending / oldest.seconds | 현재 epoch pending 수·가장 오래된 대기 시간(DB UTC 기준),5초 표본 |
+| chat.db.sample.available / age.seconds | 표본 성공 여부·표본 시도 이후 경과. 실패/미수집 수치는 NaN이며 오래된0을 정상으로 보이지 않는다. |
+| chat.relay.publisher.queued / receiver.queued | 기존 bounded 작업 queue의 대기 수 |
+| 기존 chat.redis.* / chat.message.relay.* / chat.control.events.* | 연결·구독 준비, 전파/거절·실패와 제어 이벤트 수 |
+
+사용자·방·소켓·sid·메시지·token·예외 원문을 label에 넣지 않는다. 기본 JVM/HTTP/Hikari 지표도 사용한다.
+타이머는 monotonic 시계, DB 만료/age는 DB UTC다. ID 없는 구조화 로그로 runtime_closed/recovery stage/drain 결과를 확인한다.
+표본·worker·방별 locking 비용, 복구 chunk 시간·종료 budget 및 실제1000연결/처리량은 운영 전 공동 측정 대상이다.
+
+클라우드 팀에는 (1) 기존 Chat state key 범위에 `env:chat:state:runtime` HGET/HSET 및 Redis `+info` 권한(코드에서는 `INFO server`만 호출),
+(2) 별도 metrics token의 SSM/ECS 주입·내부 scrape 접근·외부 경로 차단,
+(3) 단일 migration/중단 복구 job 실행 주체와 DB 권한,
+(4) readiness 경로와 앱 drain20초·다른 shutdown phase30초/자원 종료 여유를 포함한 ALB/ECS 종료 예산을 전달한다.
+현재 ACL/TLS/SG·SSM/ALB/ECS 설정을 이 코드 작업으로 변경하거나 완료 확인한 것은 아니다.
+rollback도 이 schema·epoch·marker/제어 이벤트를 이해하는 호환 버전으로 수행하며 구 단일 앱으로 단순 재라우팅하지 않는다.
+
+### 검증
+
+```sh
+./gradlew chatRuntimeLifecycleTest --no-daemon
+./gradlew coreAuthIntegrationTest appSeparationTest chatRedisFoundationTest --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest coreBootJar chatBootJar bootJar --no-daemon
+```
+
+전용 시험은 실제 MySQL/Redis 상태/복구, 실제 Core·여러 Chat JAR·격리 TLS·SIGTERM·Redis 재기동·DB pause 및 소켓 실패 격리를 포함한다.
+무인증/사용자 JWT의 metrics 거절·별도 token 수집, 다른 Task 보존, 마지막 verified 경계,
+marker 복원만으로 재개하지 않음·새 epoch 재기동·history/receipt 유지·DB 장애 liveness/readiness 분리,
+복구 중단/lease takeover/구 token 거절·DB 잠금 drain fallback·종료 timeout을 확인한다.
+실제 ALB/CloudFront·Fargate 종료·운영 인증/DB/Redis·물리 모바일·1000연결·SLO 승인은 별도다.
+증빙은 `build/runtime-lifecycle-verification/summary.json`, 최초 full XML/각 task XML,
+`build/core-auth-integration/run-*/runtime-lifecycle.json` 및 recovery/drain 로그다.
+전체 테스트에서 기존 프로필 이미지 AuthService fixture 실패7개는 이전 단계와 동일하며 전체green으로 표시하지 않는다.
+운영 migration/복구·AWS·이미지 재빌드·push/PR·FE 제품 변경은 수행하지 않는다.
+
+
+2026-10-27 최종 전용31개 전부통과·제외0(실제 MySQL/Redis 도메인29개·Core/여러Chat JAR 프로세스1개·소켓 종료 실패1개).
+기존 Core 인증1개/Redis4개 통과, 앱 분리 JAR2개 통과·이미지1개 조건부 제외다.
+최초 full749개는719통과·기존 프로필 이미지 fixture7실패·23제외(이전8단계 full과 실패 이름 동일)다.
+이후 추가된 소켓 종료 회귀1개를 포함한 채팅213개는209통과·4제외·실패0이다. 최초 full XML도 보존한다.
+초기 시간 타입/metrics401 기대값·Redis 재기동 중 임시 포트 변경·Checkstyle 위반은 보완 후 전용/정적 검사 재실행으로 해소했다.
+최종 통합 시험의 DB pause는 격리 MySQL 컨테이너에만 적용하고 즉시 해제했다. 기존 개발 환경은 유지한다.
+컨테이너에서 복구 job을 실행할 때는 기존 Chat 이미지의 ENTRYPOINT를 java로 override하고 classpath를 `/app/app.jar`로 지정한다.
+실제 ECS job/라우팅/종료 시간 설정은 클라우드 팀과 적용·검증해야 한다.
+
+
+## 지역 음악 신청 데이터 기반 (공동 재생 2단계)
+
+이 단계는 신청 자격 판정의 데이터 기반만 제공한다. 대기열·재생·신청 공개 API 및 FE는 후속이다.
+각 브라우저의 공식 YouTube 플레이어를 사용할 예정이며 오디오 추출·재송출은 하지 않는다.
+
+### 추천의 지역·곡 출처
+
+- `POST /api/v1/recommendations`의 선택 필드 `location_resolution_token`으로 위치 문맥을 제출한다.
+  현재 로그인 계정·sid로 발급된 서명·만료 유효 토큰과 활성 SIGUNGU/SIDO·도트를 검증한다.
+  임의 `region_id`나 다른 sid의 토큰을 신뢰하지 않는다. 토큰 자체는 DB·AI 요청에 저장/전달하지 않는다.
+- 한 지도 격자에는 여러 행정구역이 포함될 수 있으므로, 토큰의 `map_dot_id`와 `region_id`를 각각
+  검증·저장한다. `map_dots.region_id`와 사용자 행정구역의 일치를 요구하거나 사용자 지역을 격자의
+  대표 지역으로 덮어쓰지 않는다. `map_dot_id`는 메인 지도 앨범 커버 표시 기준이고, `region_id`는
+  음악 기록과 지역 채팅의 곡 소속 기준이다. 격자 존재·활성 상태와 시도–시군구 계층·활성 상태,
+  토큰의 서명·만료·계정·sid 검증은 유지한다.
+- 필드 생략/null은 기존 TEXT/VOICE·게스트·지역 미상 흐름을 유지한다. 토큰을 제출하면 검증 실패를
+  400으로 반환하며 지역을 조용히 생략하지 않는다. FE가 토큰을 보내는 변경은 이번 BE 작업 밖이다.
+- 위치 추천이 canonical `READY`로 발급될 때 같은 트랜잭션 안에서 `recommendation_sessions`에
+  `trigger_type=LOCATION`, `input_type=SYSTEM`, `status=COMPLETED`, 사용자·지역을 저장하고 곡을
+  `music`/`recommendation_items`에 연결한다. 원 요청은 `(user_id, location_request_id)`로 식별한다.
+- 팝업의 10분 TTL·표시 취소·tracks 정리는 완료 추천의 삭제가 아니다. 영속 추천 출처는 남는다.
+  EMPTY/FAILED/발급 전 CANCELLED·오래된 generation 결과는 완료 추천으로 만들지 않는다.
+  발급 영수증·READY·추천/곡 저장 중 어느 하나가 실패하면 같은 트랜잭션이 롤백된다.
+- 과거 region_id=NULL 추천은 위치를 역산하지 않는다. AI 내부 API 계약은 변경하지 않는다.
+
+### 신청 자격과 개인정보 경계
+
+`music.catalog.RequestableMusicRepository.findSources(userId, regionId, musicId)`는 후속 신청 API에서
+재사용할 내부 판정이다. 별도 신청 가능 목록 테이블·공개 조회 API를 만들지 않는다.
+
+- 요청 계정과 SIGUNGU/상위 SIDO가 유효해야 한다.
+- 출처는 같은 지역의 유효 음악 기록 또는 본인의 해당 지역 COMPLETED 추천이다.
+- 기록은 본인 기록 또는 지도 공개 범위가 PUBLIC인 다른 활성 계정의 기록만 인정한다.
+  비공개/설정 미존재 타인 기록·삭제 기록·탈퇴 계정의 기록은 제외하는 보수적 기준이다.
+  출시 전 이 공개 범위 기준을 기획과 재확인한다.
+- 출처가 겹쳐도 music_id 1개와 두 출처 플래그로 판정한다. 메모·추천 prompt·소유자 정보는 반환하지 않는다.
+- 검수된 VERIFIED 음원, 일치하는 영상 ID(대소문자 구분), KR 지원, 유효 검증 기간이 모두 필요하다.
+- 기존 검색/선택곡의 `is_queueable`도 이 음원 검증 조건을 사용한다. 이는 음원 사용 가능성이지
+  지역/현재 참여의 신청 권한이 아니다. 후속 API는 참여·출처를 신청 시 다시 검사해야 한다.
+
+### 공식 음원 검수·등록 도구
+
+초기 실제 곡 목록은 비어 있다. 사용자가 검수 목록 없음에 따라 등록 도구와 합성 테스트 데이터를
+구현하도록 선택했으므로 실제 곡·공식 채널을 임의 추정해 seed하지 않았다.
+
+1. 기존 music_id의 곡과 공식 아티스트/배급사/Topic 채널 영상을 사람이 대조한다.
+   곡/버전 일치와 공식 채널 근거를 `evidence`, 검수자 식별을 `reviewer`에 기록한다.
+   API의 채널 ID 일치·embeddable만으로 공식 음원임을 자동 인증하지 않는다.
+2. 다음 단일 항목 JSON을 작성한다. 예시는 실행용 실곡이 아닌 자리표시자다.
+
+```json
+{
+  "music_id": 123,
+  "video_id": "VIDEO_ID_11",
+  "channel_id": "UC_CHANNEL_ID_22_CHARS",
+  "channel_kind": "ARTIST",
+  "evidence": "공식 채널 근거와 해당 곡/버전 확인 기록",
+  "reviewer": "검수자 식별",
+  "valid_days": 7,
+  "expected_version": 0
+}
+```
+
+3. 셸/secret manager에서 `CATALOG_DATABASE_URL`(jdbc:mysql), `CATALOG_DATABASE_USER`,
+   `CATALOG_DATABASE_PASSWORD`, `YOUTUBE_DATA_API_KEY`, `CATALOG_CONFIRM=write-reviewed-source`를 제공한다.
+   Gradle이 `.env`를 자동 로드하지 않는다. 기존 앱 DB 환경변수를 자동 재사용하지 않는다.
+4. `./gradlew musicCatalog --args='verify /absolute/path/review.json'`을 명시적으로 실행한다.
+   Spring·HTTP 서버·Flyway는 기동하지 않는다. 외부 검증 완료 후에만 짧은 DB 트랜잭션을 연다.
+   HTTP timeout/크기 제한·redirect 금지, private/삭제/누락/비임베드/연령제한/KR제한/live 영상 거부,
+   영상 길이·예상 채널 일치를 확인한다. 실패 시 VERIFIED로 기록하지 않으며 API key·원문 오류를 출력하지 않는다.
+5. 최초 등록은 expected_version=0, 갱신은 현재 version을 사용한다. 버전 충돌은 실패하며 다시 검토한다.
+   단일 트랜잭션으로 `music_playback_sources` 검수 정보를 저장하고 `music.youtube_video_id`를 맞춘다.
+   검증 유효기간은 운영자가 1~30일로 명시한다. 만료 후 갱신 전에는 사용 불가다.
+6. 재생 실패/삭제 신고 등으로 중지할 때 `{"music_id":123,"expected_version":1}` 파일과
+   `./gradlew musicCatalog --args='disable /absolute/path/disable.json'`을 사용한다.
+   disable은 YouTube API key가 필요 없고 기존 source를 UNAVAILABLE로 변경한다. 재개는 재검수·verify를 거친다.
+
+명령은 성공 시 exit 0, 실패 시 비밀값을 제외한 일반 오류와 nonzero를 반환한다.
+네트워크 실패로 기존 검증이 연장되지는 않는다. 이미 등록된 검증은 명시 중지 또는 만료까지 남으므로
+재생 불가가 확인되면 disable을 별도로 실행한다. 임베드 메타데이터 통과는 개별 브라우저 재생 보장이 아니며
+광고·브라우저 자동재생·실제 지역 재생 오류는 후속 플레이어에서 처리한다.
+
+외부 근거: [YouTube videos.list](https://developers.google.com/youtube/v3/docs/videos/list),
+[영상 메타데이터](https://developers.google.com/youtube/data/reference/rest/v3/videos).
+
+### 배포·검증 경계
+
+- 새 `add_chat_music_catalog_foundation` Migration을 먼저 적용한 다음 새 Core를 배포한다.
+  신규 repository는 새 테이블을 조회하므로 DDL 선행이 필요하다. 구형 BE는 VERIFIED 의미를 알지 못하므로
+  음원 신청 기능 활성화 전 모든 소비자가 새 판정에 맞는지 확인한다.
+- 기존 schema·곡·추천은 보존하고 오래된 영상 ID를 일괄 VERIFIED 처리하지 않는다.
+  2단계에서는 queue/playback/명령/outbox DDL을 추가하지 않았으며, 이후 저장 구조는 아래 3단계를 따른다.
+  추천·기록 테이블의 인덱스 추가에 따른 운영 DDL 시간·잠금·여유 공간은 실제 데이터 규모에서 배포 전 확인한다.
+- rollback은 앱을 검증된 호환 버전으로 되돌리고 검수 테이블·출처를 보존한다. DDL 자동 역삭제는 하지 않는다.
+- `./gradlew test --tests '*MusicCatalogMySqlTest' --tests '*YouTubeVideoVerifierTest' --no-daemon`은
+  실제 Testcontainers MySQL(필수)과 로컬 HTTP 대역을 사용한다. 초기 실곡·실제 YouTube key·운영 DB·배포·
+  물리기기 재생 검증은 수행하지 않는다. 기존 추천·음악·위치 회귀 및 정적 검사·앱별 빌드도 함께 확인한다.
+
+
+## 통합 테스트 회귀 재현 환경 (2026-11-08)
+
+채팅·프로필·위치 추천의 기존 실패20건은 제품 코드 변경 전에도 재현됐다.
+이번 수정은 테스트 계약을 정렬하며 운영 CORS·인증·CSRF·추천 정책을 변경하지 않는다.
+
+- `ChatRoomEntryIntegrationTest`와 `UserProfilePatchIntegrationTest`는 브라우저 요청 Origin을
+  `http://localhost:5174`로 보내므로 테스트 클래스에 해당 허용 Origin을 명시한다.
+  공통 test 프로필의 기본5173을 무조건 넓히지 않는다. 비허용 Origin의 실제 WS handshake403과
+  프로필 PATCH403·DB값 보존을 별도 검증해 거부 정책을 유지한다.
+- 활성 제재 테스트는 앱의 Clock으로 이미 시작된 제재를 구성한다. DB `UTC_TIMESTAMP` 삽입 직후
+  앱 시각이 반드시 그 이후라고 가정하지 않는다. 입장·연결·구독에서 정확한 CHAT_BANNED를 검증한다.
+- 프로필 테스트의 인증 객체는 DB 프로필 변경 의미를 검증하기 위한 fixture다.
+  실제 Bearer·세션 폐기 검증은 기존 보안 테스트가 담당한다.
+- 위치 추천의 유효 READY 결과는 같은 계정·지역·scope에서 재사용한다. 이는 신규 일발급·AI호출이 아니다.
+  local-mock 반복 옵션이 꺼져 있거나 prod가 함께 활성화되면 재사용 후에도 일발급1회·쿨다운을 유지한다.
+  READY 만료 후에는 `SUPERSEDED / REGION_ISSUED_TODAY`로 추가 발급을 막는다.
+  기존 기대값2건은 재사용을 즉시 일발급 거절로 오인했으므로, 원요청·곡 일치와 만료 이후 제한·
+  마지막 AI시도 시각 불변을 함께 검사하도록 보완했다.
+
+검증에는 Docker와 격리된 MySQL9.7이 필요하다. 기존/운영 DB를 사용하지 않는다.
+`TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`를 테스트 전용 DB로 지정한다.
+직접 인증 MySQL 테스트는 별도로 `AUTH_TEST_MYSQL_ENDPOINT`, `AUTH_TEST_MYSQL_PASSWORD`를 요구하며,
+임시 schema를 만들고 정리할 수 있는 격리 DB의 root 계정을 사용한다. 실제 자격정보를 기록하지 않는다.
+
+```sh
+./gradlew test --tests '*ChatRoomEntryIntegrationTest' --tests '*UserProfilePatchIntegrationTest' --tests '*LocationRecommendationRepositoryTest' --no-daemon
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest test bootJar coreBootJar chatBootJar --continue --no-daemon
+```
+
+대상 테스트는 수정 후54건 중52통과·조건부2제외·실패0이었다. 조건부 FE 검증 제외를 실기기 성공으로
+표시하지 않는다. 전체 결과·재현 로그와 소스 fingerprint는 로컬
+`build/backend-integration-fix-verification/`에 보존하며, `build/`는 Git 미추적이므로 PR/CI 증빙은 별도 첨부한다.
+공동 재생 기능 브랜치의 병합·rebase, 운영 배포·DB 변경과 물리기기 검증은 이번 수정 범위 밖이다.
+
+최종 전체 검증은 892건 중 869통과·23조건부제외·실패0이며, 기존 실패20건이 모두 통과했다.
+Spotless·Checkstyle main/core/chat/test 및 기존/Core/Chat JAR 빌드도 통과했다.
+
+### 격리된 로컬 전체 검증
+
+Docker와 프로젝트에서 사용하는 Java를 준비한 뒤 다음 명령을 실행한다.
+
+```bash
+bash scripts/verify-local.sh
+# 특정 테스트만 실행할 때
+bash scripts/verify-local.sh test --tests '*MusicCatalogMySqlTest'
+```
+
+스크립트는 새 MySQL9.7 컨테이너를 로컬 임의 포트에 생성하고, 일반 통합 테스트와
+직접 인증 테스트에 각각 전용 계정과 root 접속 정보를 전달한다. `.env`를 읽지 않으며
+기존 DB와 Flyway 이력을 변경하지 않는다. 종료 시 자신이 생성한 컨테이너만 삭제하고
+Gradle 종료 코드를 유지한다. 새 DB에서도 검증이 생략되지 않도록 `--rerun-tasks`를 사용한다.
+테스트 결과는 `build/reports/tests/test/index.html`에 남는다.
+
+`AUTH_TEST_MYSQL_PASSWORD` 누락·root 인증 거부 및 기존 DB의 미적용 과거 migration으로
+인한 Flyway 검증 실패를 피하기 위한 실행 방법이다. 기존 DB에 `repair`나 `outOfOrder`를
+자동 적용하지 않는다. 카탈로그 테스트는 고정 버전 업그레이드를 검증한 뒤 최신 migration을
+적용하므로 최신 Repository의 `recommendation_message` 컬럼도 함께 검증한다.
+Redis 설정 단위 테스트는 로컬 `.env`의 `CHAT_REDIS_ENABLED` 등에 영향을 받지 않도록
+환경 변수 소스를 제외하고 기본값·테스트에 명시한 설정을 검증한다.
+
+
+## 지역 음악 대기열·재생 저장 구조 (공동 재생 3단계)
+
+`V20261109103259__create_chat_music_state_storage.sql`은 기존 테이블을 변경하지 않고 다음 네 테이블을 추가한다.
+2단계의 곡·추천·검수 데이터와 기존 채팅 데이터는 보존한다. 이 단계는 저장 기반이며 음악 API·전이 서비스·
+Outbox worker·Redis 전파·FE·자동 종료 타이머를 활성화하지 않는다.
+
+| 테이블 | 책임·제약 |
+| --- | --- |
+| music_queue_items | 방·곡·신청자·BIGINT 순번·상태·생성/시작/종료 시각. 방별 순번 UNIQUE, 방별 PLAYING 최대1개 |
+| playback_states | 방별 현재 항목·IDLE/PLAYING/PAUSED·DECIMAL(10,3) 기준 위치·시각·aggregate version·다음 순번 |
+| chat_music_command_receipts | 환경·계정·방·명령 UUID별 완료 결과, 원래 sid/member/view·명령 유형·HMAC key ID/fingerprint·결과 버전·HTTP 상태·만료 시각 |
+| chat_music_outbox | 기존 메시지 Outbox와 분리. 환경·epoch·producer·방·room_seq·음악 버전·변경 참조 JSON·claim·재시도·만료·발행 시각 |
+
+### 무결성과 초기화
+
+- 큐 상태는 WAITING/PLAYING/PLAYED/SKIPPED/CANCELED이며, 취소·종료는 물리 삭제와 구분한다.
+  WAITING은 시작/종료 시각 없음, PLAYING은 시작만, PLAYED/SKIPPED는 시작·종료 모두 필요하다.
+  CANCELED는 종료 시각이 필요하고 시작 시각은 선택이다. 현재 곡의 전원 퇴장 취소도 표현 가능하지만
+  실제 전이 정책과 빈 방 확정·재연결 유예·장애 구분은 5/9단계에서 확정·구현한다.
+- generated playing_room_id UNIQUE로 한 방의 PLAYING 행은 최대1개다. 일시정지 중 큐 항목은 PLAYING을 유지한다.
+- playback PK는 chat_room_id이며 복합 FK `(chat_room_id,current_queue_item_id)`가 다른 방 항목 참조를 차단한다.
+  IDLE은 현재 항목 없음·위치0, PLAYING/PAUSED는 현재 항목이 필요하다. 음수 위치·버전·순번과 잘못된 상태는 거부한다.
+- 여러 테이블에 걸친 ‘현재 항목이 실제 PLAYING인가’, version/next_sequence_no와 큐의 대응은 CHECK로
+  보장한다고 주장하지 않는다. 4/5단계가 아래 잠금·원자적 전이 계약을 지켜야 한다.
+- version은 재생만이 아닌 큐+재생의 aggregate version이다. 한 공통 변경 트랜잭션당1회 증가한다.
+  단순 조회·시각 보정에는 증가시키지 않는다. next_sequence_no는 항목 취소·정리 후에도 감소/재사용하지 않는다.
+  순번·버전은 JSON 안전정수 범위를 사용하며 상한 도달 시 재설정하지 않고 변경을 거절해야 한다.
+- 위치 정밀도는1ms, 시각은 UTC DATETIME(6)이다. 새 시각 default는 UTC_TIMESTAMP(6)를 사용한다.
+- Migration은 기존 모든 방(비활성 포함)에 현재 항목 없는 IDLE/version0/next_sequence_no1을 생성한다.
+  기존 방·참여·메시지·곡의 ID·상태·시각과 온라인 인원은 변경하지 않는다.
+- 신규 방에는 `ChatMusicStateRepository.initializeRoom(roomId)`를 방 생성 또는 최초 음악 변경 트랜잭션에서
+  호출한다. 재호출은 곡·위치·버전·카운터·시각을 초기화하지 않는다. 현재 방 provisioning 흐름은 변경하지 않았으며
+  후속 음악 서비스가 이 초기화 경계를 연결한다. `lockRoom`은 쓰기 트랜잭션을 요구하고 초기화 후 FOR UPDATE한다.
+
+### 후속 서비스의 트랜잭션 계약
+
+1. 기존 Core 세션/참여/runtime 검증을 적용한다. 음악 state 존재나 과거 영수증으로 권한을 승인하지 않는다.
+2. 기존 runtime control → room runtime → playback state → 큐 순서로 잠근다. 여러 방은 방 ID 오름차순이다.
+   신규 방 초기화도 동일 규칙에 포함하고, 외부 네트워크 호출·Redis PUBLISH 중 DB 잠금을 유지하지 않는다.
+3. 현재 권한과 원래 명령 tuple·HMAC/key ID를 확인한다. 같은 UUID의 다른 요청은 충돌이며 단순 재시도를
+   새 신청/skip으로 실행하지 않는다. sid/member/view는 검증 근거 기록이지 현재 권한 자체가 아니다.
+4. next_sequence_no로 순번을 배정하고 큐·현재 항목·기준 위치/시각·version을 같은 트랜잭션으로 변경한다.
+   updated_at은 자동 갱신이 아니므로 실제 변경 SQL에서 UTC_TIMESTAMP(6)로 명시한다. 초기화 재호출은 갱신하지 않는다.
+5. 완료 영수증과 QUEUE_UPDATED/PLAYBACK_UPDATED 참조를 같은 트랜잭션으로 저장한다. 하나라도 실패하면 모두 롤백한다.
+   같은 음악의 별도 신청은 허용하며, 원래 명령 재전송과 구분한다. 구현은4/5단계의 책임이다.
+6. 커밋 후6단계 worker가 음악 outbox를 선점·발행한다. claim_token+claim_until과 현재 epoch를 확인해
+   만료 후 인계된 claim을 구 worker가 완료하지 못하게 한다. 선점/완료 SQL과 consumer 검증은6단계에서 구현한다.
+
+### 영수증·Outbox·보관 경계
+
+- 영수증은 완료 결과만 저장한다. PK는 `(environment,user_id,room_id,command_id)`이며 원문 요청/토큰 대신
+  canonical 요청의 HMAC fingerprint와 key ID를 저장한다. 결과는 허용된 응답 정보만 포함하는 JSON object/16KiB 이하,
+  HTTP2xx~4xx이며 일시적 저장소 실패를 완료 성공으로 기록하지 않는다. request 정규화·key rotation은4단계에서 정한다.
+- member/view에 FK를 걸지 않아 채팅의24시간 이력 정리가 영수증 보관을 강제하거나 반대로 차단하지 않게 한다.
+  방·계정 FK는 보존하며 계정 soft delete·현재 접근 권한 검사는 기존 정책을 따른다.
+- Outbox event_id는 UUID, `(environment,epoch,room_id,music_version,event_type)`는 UNIQUE다.
+  한 변경에 큐/재생 두 이벤트를 저장할 수 있고 같은 유형은 snapshot/hint 하나로 병합한다. PLAYBACK_SYNC는
+  시각 보정이므로 저장 이벤트에 넣지 않는다. room_seq는 기존 room runtime의 커밋 순서와 맞추며 음악 버전과 혼동하지 않는다.
+- 상태는 PENDING/SENT/EXPIRED, claim은 PENDING에서 token/until 쌍으로만 저장한다. SENT는 발행 확인 시각이 필요하다.
+  SENT는 모든 브라우저 수신 보장이 아니다. 이벤트 본문은 JSON object/16KiB 이하이며 개인정보·토큰을 넣지 않는다.
+- 환경·epoch는 전파/영수증 격리 정보다. 큐·재생 상태는 DB의 room_id별 공통 데이터이므로 서로 다른 배포 환경은
+  DB/schema를 분리해야 한다. Redis namespace만 바꿔 같은 DB의 음악 상태를 격리했다고 설명하지 않는다.
+- receipt/outbox의 expires_at은 필수이며 작성자가 명시한다. 이번 단계에서 보관 기간 수치를 정하거나 cleanup을
+  실행하지 않는다. 만료 영수증을 지운 후 오래된 UUID를 새 명령으로 실행하지 않도록,4단계의 요청 유효성/재시도 계약과
+  함께 정하기 전에는 자동 purge하지 않는다. key rotation도 유효 영수증 검증 기간과 함께 관리해야 한다.
+- 종료 큐 항목은 finished_at 인덱스로 정리할 수 있으나 현재 FK 참조를 먼저 해제하고 보관 정책을 합의해야 한다.
+  방당1행의 playback 상태는 취소/정리 때도 유지해 version/순번이 되돌아가지 않게 한다.
+
+### 적용·복구·검증
+
+- 새 additive DDL을 먼저 적용하고 후속 서비스를 배포한다. 기존 앱은 새 테이블을 사용하지 않아 이번 DDL만으로
+  공동 재생이 켜지지 않는다. 운영 DDL 시간·FK metadata lock·공간·권한과 단일 migrator는 배포 전 확인한다.
+- MySQL DDL은 전체 자동 rollback이 아니므로 일부 테이블 생성 후 실패하면 적용 이력·실제 DDL을 확인한 뒤
+  검토된 보정 절차를 사용한다. 제품 DB에 무조건 repair·outOfOrder·테이블 삭제를 적용하지 않는다.
+- 앱 rollback 시 네 테이블과 기존 데이터를 보존한다. 후속 writer가 만든 큐/영수증/outbox를 제거해 복구하지 않는다.
+- 두 로컬 migration 선택 목록에도 새 파일을 추가했다. 기존 catalog migration은 수정하지 않는다.
+- `bash scripts/verify-local.sh test --tests '*ChatMusicStorageMySqlTest'`는 격리 MySQL에서 upgrade1건·validate·재실행0건,
+  기존 데이터 보존, 초기화·잠금, FK/UNIQUE/CHECK, 동시 순번·claim 인계, 원자적 rollback, 대표 쿼리 실행계획을 검증한다.
+  테스트의1시간 expiry·5초 claim은 fixture일 뿐 운영 기간 확정이 아니다. 여러 JDBC 연결 경합을 다중 Task 전체 검증으로
+  표시하지 않으며, 실제 두 Chat JAR·Redis·FE 전파·운영 부하는6/9/10단계에서 검증한다.
+  실행계획 테스트는 FORCE INDEX로 대표 쿼리의 인덱스 사용 가능성을 확인한다. 소량 fixture에서 특정 인덱스를
+  optimizer가 반드시 선택한다고 단정하지 않으며 실제 규모의 실행계획·성능은 후속 부하 검증 대상이다.
+
+3단계 최종 검증은 신규 저장 구조7건을 포함한 전체919건 중896통과·23조건부제외·실패0이었다.
+Spotless·Checkstyle main/core/chat/test와 기존/Core/Chat JAR 모두 통과했다. 증빙은 로컬
+`build/chat-music-state-verification/summary.json`·`final-full/`에 보존한다. 운영 DB 적용·배포 검증 결과는 아니다.
+
+### 지역 채팅 음악 신청·대기열 API (공동 재생 4단계)
+
+`feature/chat-music-queue`는 2단계 검수 카탈로그와 3단계 저장 구조 위에 다음 API를 추가한다.
+공개 경로는 기존 Chat 라우팅 안에 있으며 응답은 `{message,data}`이다.
+
+| 메서드·경로 (`/api/v1/chat-rooms/{room_id}` 기준) | 입력 | 결과 |
+| --- | --- | --- |
+| `GET /requestable-music` | `query`(제목·가수 부분 검색, 최대100자), `size`(1~20, 기본20), `cursor` | `data.items`, `next_cursor`. 항목은 `music_id`, `title`, `artist_name`, `album_cover_url`, `youtube_video_id`, `duration_millis`, `sources` |
+| `POST /queue-items` | JSON `{"music_id":123}`, `Idempotency-Key` UUID | 201, `data.queue_item_id`, `music_id`, `sequence_no`, `status=WAITING`, `version` |
+| `GET /queue-items` | `size`, `cursor` | 현재 항목 `current`(없으면 null), WAITING `items`, `next_cursor`, `version`, `state`, `position_seconds`, `state_changed_at`, `server_time` |
+| `DELETE /queue-items/{queue_item_id}` | `expected_version`, `Idempotency-Key` UUID | 204, 본문 없음 |
+
+- 네 API 모두 현재 JWT와 `membership_id`, `view_session_id`가 필요하다. 계정·sid·방·현재 CONNECTED view·epoch·소유 Task lease·정지/탈퇴·활성 지역/방을 확인한다. 다른 Task가 소유한 연결의 REST 요청도 기존 참여 원장 트랜잭션에서 처리한다. GRACE/예약/퇴장 상태는 조작·조회할 수 없으며 UUID 재시도도 권한을 다시 검사한다. 위치는 입장 시 검증된 지역 참여와 기존 지역 이탈 종료 정책을 사용하며 음악 API에서 GPS를 새로 요구하지 않는다.
+- 신청 가능 곡은 해당 지역의 공개 기록 또는 본인 기록(`RECORDED`), 본인이 완료한 해당 지역 추천(`RECOMMENDED`)의 합집합이다. 출처 두 개여도 `music_id` 하나를 반환한다. 다른 계정의 비공개 기록·추천, 삭제된 기록/계정, 미검수·만료·사용 불가/영상 ID 불일치는 제외한다. `sources`에는 허용된 출처명만 담으며 타인의 기록·추천 세션 ID는 반환하지 않는다. 실제 신청 시 같은 조건을 다시 조회하고, 검수 도구와 같은 music 행 잠금으로 소스 교체를 직렬화한다. 뒤늦은 출처 변경은 이미 신청된 곡을 취소하지 않으며 재생 직전 소스 확인은 아래5단계에서 연결한다.
+- 후보는 music_id 오름차순 keyset으로 페이지를 넘기고 각 페이지에서 자격을 다시 평가한다(검색 결과 전체 고정 snapshot은 아님). 대기열은 sequence_no 오름차순이며 현재 곡은 별도로 반환한다. 커서는 계정·sid·방·membership·view·검색어·페이지 크기에 묶인 HMAC 서명과 5분 기한을 가진다. 큐 버전이 바뀌면 다음 페이지는 409 `QUEUE_CHANGED`로 처음부터 재조회한다. 커서 변조/다른 문맥은400, 만료는410이다.
+- 모든 활성 참여자는 다른 사람이 신청한 WAITING 곡도 취소할 수 있다. PLAYING/종료/다른 방 항목은409 `QUEUE_ITEM_NOT_WAITING`, 오래된 취소 버전은409 `VERSION_CONFLICT`다. 동일 곡의 별도 신청은 허용한다. 취소한 순번은 재사용하지 않는다.
+- 기본 WAITING 상한은 방당100곡, 신규 성공 명령 간격은 계정 전체1초다. 상한409 `QUEUE_FULL`, 속도429 `COMMAND_RATE_LIMITED`와 `Retry-After`를 반환한다. 제한은 DB 계정·방 잠금과 영수증으로 Task·탭을 넘어 적용한다. 페이지당20곡·검색어100자 및 기존2초 참여 트랜잭션 예산으로 조회를 제한한다. 별도 전체 검색 RPS 제한이나 검색 전문 인덱스는 추가하지 않았다.
+- 같은 `(environment,user_id,room_id,UUID)`와 원래 sid/member/view/명령/대상/expected_version이면 원래 HTTP 결과를 반환하고 큐·순번·버전·Outbox를 늘리지 않는다. 다른 원 요청이면409 `COMMAND_ID_CONFLICT`다. 새 성공 변경에만 aggregate version·room_seq를 각각 한 번 증가시키고 큐·상태·24시간 완료 영수증·24시간 PENDING `QUEUE_UPDATED` Outbox를 같은 트랜잭션에 기록한다. 저장/commit 인증 실패는 전부 롤백한다. 실패한 명령의 영수증은 저장하지 않는다.
+- 24시간이 지난 성공 UUID는410 `COMMAND_EXPIRED`이며 같은 UUID로 다시 신청하지 않는다. **만료 영수증도 삭제하지 않는 tombstone**이다. 늦은 UUID 재등장 방지 계약이 마련되기 전에는 purge하지 않는다. `CHAT_MUSIC_KEYS`는 메시지 키와 분리한 `id:base64` 1~8개(각32바이트 이상)이고 첫 키가 신규 서명을 한다. 모든 Task에 신/구 키를 먼저 배포하고 새 키를 첫째로 승격한다. tombstone을 포함해 남아 있는 모든 영수증 키를 보존해야 하며 빠진 키는 기동을 차단한다. 키 유실/삭제 후 임의 재신청으로 우회하지 않는다.
+- 기동 기본값 `CHAT_MUSIC_QUEUE_ENABLED=false`. 활성화에는 기존 distributed participation/Core 인증과 `CHAT_MUSIC_KEYS`가 필요하다. `CHAT_MUSIC_QUEUE_CAPACITY` 기본100(1~1000), `CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS` 기본1000(0~60000, 0은 제한 해제·격리 테스트용)이다. 운영 환경 값·비밀·DB 권한은 이번 작업에서 변경하지 않았다. 3단계 DDL 선행 적용과 Chat의 기존 행 잠금/CRUD 권한이 필요하며 새 migration은 없다.
+- 4단계 단독 활성화는 최초 신청을 WAITING/IDLE로 유지하며 아래5단계 활성화 시 자동 재생한다. 재생 제어·정상 전원 퇴장 정리는 아래5단계, 장애·재연결 복구는9단계이며, 실제 Outbox 발행·여러 Task로 상태 전파는6단계, YouTube UI·브라우저 자동재생은8단계다. 청취 opt-in이나 방 전체 음량 설정 API는 추가하지 않는다.
+
+계약은 `api/chat-music-queue.openapi.json`, 격리 검증은 `python3 scripts/verify-backend.py`를 사용한다.
+MySQL 테스트는 합성 곡/검수·현재 CONNECTED 원장을 사용하며 외부 YouTube/실제 로그인 브라우저·1000연결 부하·운영 배포 완료를 뜻하지 않는다.
+
+4단계 검증 결과(2026-11-09): 전체938개 중915통과·23조건부제외·실패0, 신규19개(실제 MySQL12·HTTP4·커서2·기동설정1) 통과.
+전체 실행 후 기동설정 테스트에 정상 활성화 검사를 보강해 해당1개와 Spotless·Checkstyle test를 재실행했다.
+Spotless·Checkstyle main/core/chat/test 및 최종 일반/Core/Chat 세 JAR 빌드 통과, 세 manifest의 소스 SHA256 일치 확인.
+`build/chat-music-queue-verification/summary.json`·`full-test`·`startup-check`에 증빙을 보존한다.
+OpenAPI JSON 파싱·로컬 참조67개를 확인했으며 전체 OpenAPI 메타스키마 검증으로 표시하지 않는다.
+
+### 지역 채팅 공통 재생 제어·자동 다음 곡 (공동 재생 5단계)
+
+`feature/chat-music-playback`은 4단계 API에 최초 신청 자동 재생과 서버 기준 재생 상태 전이를 연결한다.
+브라우저 플레이어와 실제 이벤트 발행은 각각8·6단계다. PLAY는 방 전체의 재생 명령이며 개인의 함께 듣기 opt-in이 아니다.
+
+`POST /api/v1/chat-rooms/{room_id}/playback/commands`는 기존 JWT와 `membership_id`, `view_session_id`,
+`Idempotency-Key`를 사용한다. JSON은 아래 세 필드만 허용하며 중복 필드·추가 필드·소수 ID·이어 붙인 JSON은400이다.
+
+```json
+{"action":"PAUSE","queue_item_id":123,"expected_version":4}
+```
+
+| action | 적용 조건·결과 |
+| --- | --- |
+| PLAY | IDLE에서 `queue_item_id:null`과 현재 버전으로 FIFO 첫 곡 시작. 빈 큐409 `QUEUE_EMPTY`. 이미 PLAYING인 같은 현재 곡은 no-op. PAUSED에는 RESUME 사용 |
+| PAUSE | 현재 PLAYING 곡의 서버 위치를 저장하고 PAUSED로 전환. 이미 PAUSED면 no-op. 서버 종료 시각이 지난 곡은409 `TRACK_FINISHED` |
+| RESUME | PAUSED의 저장 위치에서 PLAYING으로 재개하고 남은 길이로 종료 시각 계산. 이미 PLAYING이면 no-op. 재개 전 고정 영상의 검수 유효성 재확인, 불가하면409 `MUSIC_UNAVAILABLE` |
+| SKIP | 현재 곡을 SKIPPED로 종료하고 다음 곡을 위치0/PLAYING으로 시작. PAUSED에서의 건너뛰기도 다음 곡을 재생한다. 이미 서버 종료 시각을 넘었으면 현재 곡은 PLAYED로 기록 |
+
+- 200 응답은 `{message,data}`이며 data는 `state`, `version`, `current_queue_item_id`, `current`,
+  `position_seconds`, `estimated_position_seconds`, `state_changed_at`, `server_time`, `source_video_id`,
+  `duration_millis`, `due_at`를 포함한다. UTC ISO8601 시각을 사용한다. `position_seconds`는 기준 시각의 저장 위치이고
+  PLAYING의 예상 현재 위치는 `min(길이, 저장 위치 + server_time - state_changed_at)`이다. PAUSED에서는 동결한다.
+  `estimated_position_seconds`에 경과 시간을 다시 더하지 않는다. IDLE은 current/영상/길이/종료 시각이 null, 위치0이다.
+- 모든 활성 참여자가 신청자와 무관하게 제어한다. 현재 sid/member/view/CONNECTED/epoch/Task lease·Core 권한을
+  4단계와 같은 참여 트랜잭션으로 검사한다. `expected_version`과 현재 곡 ID가 하나라도 달라지면409 `VERSION_CONFLICT`다.
+  늦은 SKIP/종료 처리가 이미 시작된 다음 곡까지 넘기지 않는다. 상태에 맞지 않는 명령은409 `INVALID_PLAYBACK_STATE`다.
+- 대기열과 재생 명령은 UUID/HMAC·만료 tombstone·계정 속도 제한을 공유한다. ADD에 사용한 UUID를 PAUSE 등에 재사용하면409다.
+  현재 권한 검사 후 원래 성공 응답을 재현하며 이전 응답 snapshot이 최신 상태라는 뜻은 아니다. no-op도200 완료 영수증을
+  저장하고 속도 제한에 포함하지만 버전·이벤트는 늘리지 않는다. 볼륨·개인 음소거·seek·브라우저 ENDED API는 없다.
+- PLAYING 중 ADD는 현재 기준 시각을 바꾸지 않고, PAUSED 중 ADD는 일시정지를 유지한다. IDLE에서 첫 신청은 같은 ADD
+  트랜잭션 안에서 시작한다. 따라서201의 `status`는 WAITING 외에 PLAYING 또는 시작 직전 사용 불가가 된 CANCELED일 수 있고,
+  `data.playback`에 결과 snapshot을 추가한다. `GET /queue-items`도 고정된 현재 영상과 공통 재생 필드를 반환한다.
+  4단계 API의 경로·필수 입력과 기존 영수증 결과는 유지한다. 실제 UI는 이 status 확장과 추가 필드를 반영해8단계에서 연동한다.
+- 재생 직전 공식 검수 영상·KR·유효 기한·ID 일치·길이를 DB에서 다시 확인한다. 이미 승인된 신청의 기록 공개 범위나
+  신청자의 현재 참여 여부는 다시 요구하지 않는다. 해당 소스를 사용할 수 없는 WAITING 곡은 CANCELED로 정리하고 다음 곡을
+  찾는다. 한 트랜잭션에서 최대20곡만 검사하며, 전부 불가하면 IDLE로 남은 큐를 다음 worker 순회에서 이어 처리한다.
+- 시작 시 영상 ID·길이·종료 시각을 playback_states에 고정한다. 카탈로그 수정으로 재생 중인 곡의 영상/길이가 바뀌지 않는다.
+  RESUME은 같은 고정 영상이 여전히 유효한지 확인하며 길이는 원래 값으로 유지한다. 서버 위치 저장 범위를 넘는 길이는
+  시작하지 않는다(최대9,999,999,999ms). 클라이언트 종료 통보로 공통 곡을 끝내거나 시각/위치를 덮어쓸 수 없다.
+- 전용 단일 scheduler가250ms 간격으로 만료/IDLE 대기 방을 최대20개씩 keyset 순회한다. 일반 Spring scheduler의
+  heartbeat를 막지 않는다. 모든 Task가 순회해도 control→Task→room runtime→playback→queue/music 순서의 DB 잠금과
+  현재 종료 시각 재확인으로 같은 곡을 한 번만 종료한다. 원래 현재 곡은 PLAYED, 다음 곡은 처리 시점부터 새 PLAYING이다.
+  지연 동안 대기곡을 여러 개 소급 종료하지 않는다. 방 잠금·DB 장애 시 다음 순회에서 다시 시도하고 메모리 타이머를 신뢰하지 않는다.
+- 정상 마지막 탭 퇴장/참여 종료와 만료 정리에는 같은 참여 TX의 hook이 현재 곡과 WAITING 전체를 CANCELED로 만들고
+  IDLE로 전환한다. 다른 탭/참여자가 남아 있으면 유지한다. 유효한30초 RESERVED/GRACE는 기존 참여 정책대로 보존하며,
+  유예가 끝난 뒤 기존 sweep이 참여를 종료하면 큐도 정리한다. 잠깐의 lease 상실만으로 새 유예를 만들거나 다음 곡을 시작하지 않는다.
+  Core의 세션 폐기 판정·기존 참여 종료 경로를 재사용하며 매250ms마다 모든 계정에 새 Core RPC를 보내지 않는다.
+  전역 장애·epoch 복구·입장/재연결 클라이언트 처리는9단계에서 추가 검증한다.
+- 한 실제 변경에서 aggregate version은 한 번만 증가한다. 큐가 바뀌면 QUEUE_UPDATED, 재생이 바뀌면 PLAYBACK_UPDATED를
+  같은 버전·room_seq로 저장한다. 마지막 퇴장의 presence 변경과도 room_seq를 중복 증가시키지 않는다. Outbox에는 변경 이유와
+  공통 재생 snapshot을 저장하며 큐 전체를 싣지 않는다. 큐 변경은 최신 목록 조회의 힌트다. 전파·claim·발행은6단계다.
+
+설정·DDL·전환:
+
+- `CHAT_MUSIC_PLAYBACK_ENABLED=false`가 기본값이다. 활성화에는 `CHAT_MUSIC_QUEUE_ENABLED=true`와 기존 참여/Core 인증,
+  별도 HMAC 키가 필요하다. 큐 서비스 없이 재생만 켜면 기동을 차단한다. 실제 운영 값은 변경하지 않았다.
+- 새 `V20261109132852__add_chat_music_playback_timing.sql`을 기존 단일 migrator가 먼저 적용한다. 고정 영상·길이·due_at과
+  종료 조회 인덱스만 추가하며 기존 IDLE/버전/순번/시각을 보존한다. 두 로컬 선택 migration 목록에도 포함했다.
+  MySQL DDL의 metadata lock·인덱스 공간·시간과 기존 ACTIVE에 고정 소스 누락이 없는지 확인해야 한다. 누락된 ACTIVE는
+  기동 검사가 차단하며 임의 재생 시각/영상으로 복원하지 않는다. 운영 DB 적용을 수행한 것은 아니다.
+- 모든 Task에 동일 코드/키/플래그를 맞춘 뒤 제어된 활성화로 전환한다. 재생 켠 Task와 구형 카탈로그 조회 Task를 섞어 운영하지 않는다.
+  롤백은 음악 진입·worker를 중단하고 공통 상태를 점검한 뒤 기능 플래그/앱을 되돌린다. 추가 컬럼을 즉시 DROP하거나 큐·영수증을
+  삭제하지 않는다. PAUSED는 입장/worker 재시작만으로 PLAYING으로 바꾸지 않는다.
+- 계약: `api/chat-music-playback.openapi.json` 및4단계 OpenAPI1.1.0. 브라우저의 자동재생 허용, 오디오 도달 지연,
+  실제 다중 Chat 프로세스/1000연결 부하·SLO·운영 배포는 이번 서버 상태 전이 검증과 구분한다.
+
+5단계 검증 결과(2026-11-09): 전체956개 중933통과·23조건부제외·실패0.
+그 뒤 비활성 hook의 조회 생략 분기를 보완해 최종 음악44개·기존 참여 전용49개(MySQL·Redis)를 재실행했고 전부 통과했다.
+신규18개는 MySQL 재생14·HTTP3·기동설정1이며 migration upgrade·기존 IDLE 데이터 보존·validate·재실행도 확인했다.
+Spotless·Checkstyle main/core/chat/test 및 일반/Core/Chat 세 JAR 통과, 최종 세 manifest의 소스 SHA256 일치 확인.
+증빙 `build/chat-music-playback-verification/summary.json`, `full-test`, `final-music`, `final-participation`, 실행 로그.
+두 OpenAPI 파일의 JSON 파싱과 내부/파일 간 참조82개를 확인했으며 전체 메타스키마 검증으로 표시하지 않는다.
+두 참여 서비스의 동시성 테스트는 한 JVM에서 수행했고 실제 두 Chat 프로세스·YouTube/브라우저·운영 배포 검증은 아니다.
+
+### 여러 Task의 음악 상태 변경 전파 (공동 재생 6단계)
+
+`feature/chat-music-events`는5단계의 같은 트랜잭션에 저장된 음악 Outbox를 실제 Redis Pub/Sub와 기존 STOMP 방 구독에 연결한다.
+정본은 MySQL이며 Redis payload나 브라우저 종료 알림으로 공통 음악 상태를 덮어쓰지 않는다. UI는7·8번, 입장·재연결 추가 복구는9번이다.
+
+전파 경로:
+
+1. 각 Task의 음악 publisher가 현재 environment/epoch의 PENDING 방을25개씩 keyset 순회한다. control/자신의 Task lease/
+   room runtime 잠금 아래 방의 가장 오래된 `(music_version,event_type,event_id)`를5초 claim한다. 아직 claim 중이거나
+   backoff 대기 중인 head를 뒤의 이벤트가 추월하지 않는다. 방 잠금 경합은 SKIP LOCKED로 넘기고 다음 순회에서 다시 시도한다.
+2. claim TX를 닫은 뒤 token/만료/epoch/Task를 재확인하고 `<env>:chat:music:<room_id>`에 참조만 PUBLISH한다.
+   `schema_version`, `event_id`, `environment`, `producer_id`, `epoch`, `room_id`, `room_seq`, `music_version`,
+   `event_type`, `occurred_at`만 담고 곡/이용자/토큰/원문/재생 snapshot은 Redis에 싣지 않는다.
+3. 성공은 같은 유효 token으로 SENT/sent_at, 실패는 PENDING과0.5→1→2→최대5초+jitter backoff를 기록한다.
+   완료 전 장애는 같은 event_id가 재발행될 수 있다. claim 기한이 지난 이전 작업자는 새 claim을 완료할 수 없다.
+   네트워크 호출 동안 DB 잠금을 유지하지 않는다. PUBLISH의 subscriber 수와 SENT는 모든 브라우저의 수신 확인이 아니다.
+4. 발신 Task도 다른 Task와 같은 음악 구독 경로로 받는다. 채널/환경/엄격 JSON/producer 형식/epoch를 확인하고,
+   등록된 producer와 만료되지 않은 실제 Outbox 행의 모든 참조 필드를 대조한다. 구 epoch/잘못된 방·환경·가짜 UUID는 거절한다.
+5. 각 Task가 현재 control/epoch/lease/방 잠금 아래 DB의 최신 재생 snapshot을 읽는다. 원래 이벤트보다 최신 버전이어도
+   최신 snapshot을 전달하며 오래된 Outbox body를 재생하지 않는다. `(epoch,방,type)`별 high-water를 유지하므로
+   같은 버전의 QUEUE_UPDATED와 PLAYBACK_UPDATED는 각각 전달하고 같은 유형의 중복/뒤늦은 이벤트는 합친다.
+   캐시는 최대2048개·10분이며 만료/Task 재시작 후 중복 전송은 가능하다. snapshot은 여전히 최신 DB에서 읽는다.
+6. 현재 Task 소유 CONNECTED 소켓의 sid/계정/방/세대/lease·정지·탈퇴·현재 구독·JWT/Core 권한을 확인한 뒤
+   `/topic/chat-rooms/{room_id}`로 `{type,data}`를 보낸다. 비동기 outbound handler에서도 현재 권한을 새 batch DB 조회와
+   Core 확인으로 재검증한다. 다른 방·퇴장·예약·이전 연결/소유권의 소켓에 전송하지 않으며 기존 채팅의 전파·history는 유지한다.
+
+공개 STOMP 계약(`api/chat-music-events.schema.json`):
+
+| type | 의미 |
+| --- | --- |
+| QUEUE_UPDATED | 최신 큐 조회 힌트와 공통 재생 snapshot. 큐 전체/기록 ID/신청 원문을 싣지 않음 |
+| PLAYBACK_UPDATED | 시작·정지·재개·건너뛰기·자연 종료·방 비움의 최신 재생 snapshot |
+| PLAYBACK_SYNC | 현재 위치 보정용 최신 snapshot. 영수증/Outbox/버전 증가 없이 조회만 수행 |
+
+- `data`는 `room_id`, `epoch`, `version`(최신 aggregate version), `event_id`, `event_version`(원래 참조 버전),
+  `queue_refresh_required:true`, `playback`(5단계와 같은 snapshot)이다. SYNC의 event_id/event_version은 null이다.
+- FE는 현재 연결·방·epoch를 확인하고 낮은 버전을 버린다. 같은 버전의 두 변경 유형을 하나로 무시하지 않으며,
+  같은 버전의 SYNC는 시각 보정에 쓴다. 큐의 로컬 버전이 뒤처진 경우에만 최신 GET /queue-items를 호출한다.
+  snapshot 조회 뒤 다른 명령이 커밋되거나 REST 응답이 먼저 도착할 수 있으므로 FE의 버전 비교도 필요하다.
+- 로컬 구독 방을250ms 단위로 최대25개씩 확인하고 방별5초 이상 간격으로 SYNC한다. 참여자마다 DB snapshot을
+  따로 조회하지 않는다. PAUSED/IDLE은 그대로 유지하고 자동 재생 명령을 만들지 않는다. 방별 시각 캐시는 최대1024개다.
+  부하/경합에 따른 지연은 가능하며 실제1000연결·전체 지연 SLO 검증은10단계다. 기존 일반 채팅의 FE 누락 sync를 추가한 것은 아니다.
+
+제한·장애·보관·설정:
+
+- publisher1개/대기1개, receiver1개/대기128개로 bounded executor를 사용한다. 한 Task에서 snapshot 조회·broker enqueue를
+  직렬화하고 기존 preservePublishOrder를 유지한다. 수신 큐 초과/DB·transport 실패는 Task를 fail-closed하고1013 재연결로
+  전환한다. 조용히 이벤트를 버리거나 Redis 연결 복구만으로 latch를 자동 개방하지 않는다. 복구는 기존 lifecycle/운영 복구와9번을 따른다.
+- 다른 정상 Task는 미완료 claim 만료 후 전파를 이어갈 수 있다. Redis 전체 장애는 기존 전역 중단 정책을 유지한다.
+  음악 transport 준비 상태를 참여의 승인/commit/outbound guard에 결합해 불확실한 상태의 새 조작을 승인하지 않는다.
+- 60초 주기로 최대500개씩 구 epoch/만료 PENDING을 EXPIRED로 정리하고, 보존 기한이 지난 SENT/EXPIRED를 삭제한다.
+  실제 삭제 시각은 처리량·경합에 따라 늦을 수 있지만 만료 이벤트는 전송하지 않는다. 음악 영수증 tombstone과 큐 이력은 삭제하지 않는다.
+  미완료 음악 Outbox가 남아 있는 producer Task 등록 정보를 먼저 지우지 않는다. 방 정본은 환경별 별도 DB/schema를 사용한다.
+- `CHAT_MUSIC_EVENTS_ENABLED=false`가 기본값이다. 활성화에는 기존 music queue/playback, message relay/permission batcher,
+  distributed participation/Core 인증과 Redis가 필요하며 빠진 의존성은 기동 실패다. 새 DDL은 필요 없고3·5단계 DDL을 사용한다.
+  음악 기능 비활성화 시 추가 음악 구독·worker·음악 DB 조회를 만들지 않는다.
+- Redis Chat ACL에는 기존 room/control 권한에 더해 `&<env>:chat:music:*`의 PUBLISH/PSUBSCRIBE가 필요하다.
+  기존 TLS/인증/namespace 설정을 그대로 사용한다. 이번에는 실제 ACL·SSM·AWS·Redis·운영 DB 설정을 변경하지 않았다.
+  모든 Task에 동일 코드/키/플래그/ACL을 준비하고 제어된 활성화로 전환한다. 롤백은 음악 진입/worker를 중단하고
+  플래그/앱을 되돌리며 정본·미완료 Outbox·영수증을 삭제하지 않는다. 운영 배포 완료가 아니다.
+- `musicRelay` health와 `chat.music.relay.ready/published/rejected/failures` 지표를 제공한다. 개인·방 ID label은 없다.
+  활성화 시 기존 전체 readiness의 참여/Redis subscription 검사에도 반영된다.
+
+재현: `python3 scripts/verify-backend.py`는 격리 DB 전체 검증,
+`./gradlew chatMusicEventsProcessTest`는 실제 Core·두 Chat JAR/MySQL/Redis 및 격리 HTTPS Core 검증 경로의 전용 하네스다.
+후자는 합성 로그인 세션·서명·검수 곡을 사용하며 실제 YouTube 오디오·브라우저·운영 인증·실제1000연결 검증은 아니다.
+
+6단계 검증 결과(2026-11-09): 전체969개 중946통과·23조건부제외·실패0.
+기존 참여 전용49개와 실제 Core·두 Chat JAR/MySQL/Redis 전용 프로세스1개도 전부 통과했다.
+신규 회귀13개(음악 MySQL/Redis8·참조계약2·기동1·수신 한도1·outbound 음악 권한1)를 포함한다.
+실제 프로세스에서 REST를 연결 소유 Task와 다르게 보내고 양쪽 STOMP의 동일 버전 두 유형·정지 중 신청·명령 재시도·
+건너뛰기·서버 자동 종료·SYNC를 확인했다. publish 후 완료 누락·claim 인계·구 token/epoch·퇴장/Core 폐기는 도메인 검증에 포함했다.
+실제 수신 예시14개와 합성 Redis 참조1개는 FE의 기존 AJV6.15.0으로 검증했고 변조 예시8개는 거부했다.
+처음 OpenAPI에서 가져온 int64 format은 표준 JSON Schema의 type/integer·안전정수 범위로 정리했다.
+Spotless·Checkstyle main/core/chat/test·세 앱 JAR와 최종 manifest 소스 SHA256 일치를 확인했다.
+증빙 `build/chat-music-events-verification/summary.json`·`full-test`·`participation-test`·`process-test`·`schema.json`,
+프로세스별 `build/core-auth-integration/run-*/music-events.json`·`music-event-examples.json`·자식 로그에 보존한다.
+전체 회귀 이후에는 프로세스의 wire 예시 저장만 보강했고 제품 코드 변경 없이 최종 프로세스/참여 검증을 재실행했다.
+실제 OAuth 로그인·YouTube/브라우저 오디오·1000연결/SLO·전체 장애 조합·클라우드 배포 완료가 아니다.
+
+## 공동 재생 9단계 서버 입장·재연결·Task/Redis 장애 복구 (2026-11-09~10)
+
+`feature/chat-music-recovery`(시작 f875f51)에서 FE 선행9단계에 이어 BE를 구현했다.
+앞서5·6단계에서 후속으로 남긴 서버 복구는 이 절을 따른다. 공개 경로/UUID/큐·재생 정책과 플래그 기본false를 유지하며
+새 migration/영속 필드·운영 설정은 추가하지 않았다. 기존 view 검증 시각·runtime epoch·음악 Outbox를 사용한다.
+
+- Task 종료/lease 상실과 명시적 퇴장을 구분한다. 유효 CONNECTED·RESERVED/GRACE가 없더라도
+  아직 종료하지 않은 view의 마지막 DB 검증 시각이30초 이내라면 음악 복구를 기다린다.
+  장애를 발견한 시각부터 새30초를 주거나 읽기 구간/참여 권한을 연장하지 않는다.
+  이 유예 동안 PAUSED의 위치·고정 소스·버전과 대기열은 유지하고, PLAYING의 기준 시각은 서버 DB에 유지한다.
+- 유예가 만료된 부재는 현재/WAITING을 CANCELED·IDLE로 정리한다. 명시적 마지막 퇴장은 기존처럼 즉시 정리한다.
+  user/ban/view 만료·Task epoch/lease를 함께 확인하며 종료한 view의 과거 기록으로 유예를 만들지 않는다.
+  `join`의 새 예약 및 같은 view의 `claim` **이전**에 방 잠금 안에서 부재를 확인해,
+  늦게 들어온 예약/재연결이 오래된 일시정지 큐를 되살리지 못하게 한다.
+- bounded worker는 PAUSED를 포함한 활성 상태를20방/250ms keyset 단위로 확인한다.
+  hook이 이미 지난 비정상 종료도 정리 대상이며 실제 판단은 control/Task/방/재생 잠금 아래 다시 한다.
+  건강한 방의 no-op은 음악 version·room_seq·영수증·Outbox를 늘리지 않는다.
+- 권한 있는 GET queue-items는 같은 transaction에서 지연된 종료를 reconcile한 뒤 snapshot을 반환한다.
+  오래 지연된 곡을 여러 개 소급 종료하지 않고 현재 곡을 한 번 종료한 뒤 다음 곡을 새 기준 시각으로 시작한다.
+  이미 고정된 video/duration은 유지한다. queue cursor의 version이 바뀌면 기존409→첫 페이지 재조회 계약을 따른다.
+  자동 전이·버전·Outbox는 한 TX이며 실패하면 함께 롤백한다. GET은 사용자 명령 영수증/새 신청을 만들지 않는다.
+- QueueSnapshot에 선택 `epoch`를 추가했다(OpenAPI1.2.0). 기존 필드/응답과 영수증 재현 형식은 유지한다.
+  FE는 이 값을 알림보다 먼저 세대 기준으로 고정하고 다른epoch는 새 채팅 연결/fresh조회 전까지 승인하지 않는다.
+  구 BE의 필드 누락과 구 FE의 추가필드 무시는 호환된다. 플레이어는8단계 기본 위치 보정·개인 음량 정책을 유지한다.
+- 기존 전용 `ChatRecoveryCommand`는 구epoch의 음악 PENDING Outbox도1000행씩 EXPIRED 처리하고
+  claim token/until을 해제한다. 미처리 음악 행이 남으면 finish가 RUNNING을 승인하지 않는다.
+  음악 테이블 도입 전 DB도 지원하도록 테이블 존재를 확인한다. 음악 큐/완료 영수증·tombstone은 삭제하지 않는다.
+  마지막 검증 유예가 지난 큐는 새 Task의 worker 또는 join/claim 경계에서 정리한다.
+  같은 sid/member/view·원 UUID 재확인은 원 응답을 재현해도 현재 재생을 되돌리지 않는다.
+
+복구/전환은 기존 운영 계약대로 라우팅·구 Task 중단→전용 명령→새 UUID Chat 기동이다.
+Redis가 돌아왔다는 이유만으로 차단된 Task를 자동 개방하지 않는다. 최신 Chat JAR로 복구 명령을 실행해야 음악 Outbox도 닫힌다.
+rollback 시 기존 음악/참여 테이블·영수증을 보존하고 플래그를 내린다. 이 작업에서 운영 DB/Redis/AWS를 변경하지 않았다.
+음악 worker의 스캔/DB 부하는 bounded하나 실제1000연결/전체 방 수·SLO 승인은10번 운영 준비에서 확인해야 한다.
+
+검증 재현:
+
+```sh
+./gradlew spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest --no-daemon
+./gradlew test --tests 'com.muse.meomuneum.chat.music.*' --no-daemon
+./gradlew chatMusicRecoveryTest --no-daemon
+./gradlew chatParticipationTest --tests '*ChatParticipationMySqlTest' --no-daemon
+./gradlew test --tests '*ChatRuntimeRecoveryStorageTest' --no-daemon
+python3 scripts/verify-backend.py spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest test bootJar coreBootJar chatBootJar
+# FE 저장소: 커밋 전 BE 소스도 명시적으로 임시 사본에 반영
+npm run verify:chat:music:sync:integration -- --worktree
+```
+
+`chatMusicRecoveryTest`는 실제 MySQL/Redis와 Core/여러 Chat JAR를 실행한다.
+SIGTERM→동일 view 인계·실제 SIGKILL→강제 lease 만료 주입→재기동에서 PAUSED/pin/큐를 확인했다.
+lease 만료/30초 경과는 기다리기 대신 DB 시각 fault를 주입하므로 실제 장애 복구 시간/SLO 측정과 구분한다.
+Redis 컨테이너 실제 재시작→1013/readiness503/음악503→Chat 중단→CLI 새epoch→재기동을 검증했다.
+구 Outbox expire·영수증 보존/원응답 재현·만료 부재 정리·재연결 뒤 최신 epoch/IDLE도 확인했다.
+
+도메인 시험은 조회 중 종료·두 Task 단일 전이·유예/만료·PAUSED orphan scan·늦은 REST join/claim·명시 퇴장·원자적 실패 회귀를 포함한다.
+기존 참여 복구 시험에는 음악 PENDING을 남기면 finish가 거부되고 재개 chunk 후 claim이 해제되는 검증을 추가했다.
+FE 통합 하네스의 `--worktree`는 src/build.gradle의 추적 변경만 임시 archive에 적용하고 SHA256을 남긴다.
+환경 파일·원본 BE를 바꾸지 않으며 미추적 src가 있으면 조용히 누락시키지 않고 중단한다.
+합성 인증/GPS/곡과 격리 MySQL/Redis·HTTPS Core·실제 두 Chat/FE를 사용하는 시험이며 실제 OAuth/YouTube·운영 배포가 아니다.
+증빙은 build/chat-music-recovery-verification/와 build/core-auth-integration/run-*/music-recovery.json,
+FE node_modules/.tmp/chat-music-sync-verification/backend-worktree.json·process-result.json·harness-path.txt를 따른다.
+커밋·push·PR·실제 배포는 수행하지 않았다.
+
+복구 계정은 음악 Outbox SELECT/UPDATE 권한도 필요하다. 테이블의 실제 미존재(MySQL1146/42S02)만
+도입 전 DB 호환 예외로 허용하며, 권한 부족·연결 오류를 테이블 없음으로 간주하지 않는다.
+운영 권한 부여는 이번 작업에서 실행하지 않았다.
+
+최종 검증 결과: 전체 회귀975개 중952통과·23조건부 제외·실패0(최초 전체 XML 보존).
+이후 DB 권한/구 DB 호환 가드2개·수정된 참여 복구49개 전부 통과,
+최종 chatMusicRecoveryTest20개(음악 DB19+실제 Core/Chat/Redis 프로세스1) 전부 통과했다.
+Spotless·Checkstyle main/core/chat/test·세 JAR 빌드 통과, 최종 소스 지문과 세 manifest 일치를 확인했다.
+FE 전체991개 중984통과·7조건부 제외·실패0이며 포맷/린트/타입/빌드 통과했다.
+첫 FE 실행의 기존 음악 기록200곡 시험5초 timeout1건은 worker2 전체 재실행으로 통과했고 원본 JSON을 보존했다.
+실제 소스 overlay를 포함한 FE/Core/두 Chat 통합도 통과했다. 최종 CLI 테이블/권한 probe 보완은
+그 이후 권한 가드·실제 복구/참여 회귀에서 검증했다. 서로 다른 검증 실행 범위를 전체 단일 E2E로 표시하지 않는다.
+
+## 공동 재생 10단계 통합 검증·운영 반영 준비 (2026-11-10)
+
+양쪽 `feature/chat-music-verification`에서2~9단계의 릴리스 후보 검증과 운영 인계 자료를 준비한다.
+상세 실행·반영·중단·롤백/전역 복구·기능 플래그·운영 승인 조건은 [아래 운영 절차](#10단계-운영-체크리스트와-반영-절차)를 따른다.
+
+```sh
+python3 scripts/verify-chat-music-release.py --live-youtube
+```
+
+이 명령은 격리 BE 전체/서버 복구/참여 회귀·세 JAR, FE 전체 검사/빌드,
+실제 Core/두 Chat/MySQL/Redis에 연결한2계정·3브라우저, 계약 검증·미디어 smoke를 묶는다.
+실행별 `build/chat-music-release-verification/<UTC시각>/summary.json`은 소스/HEAD/JAR SHA와
+단계 결과·조건부 제외·운영 gate를 구분한다. 소스 변경이나 실패를 성공 증빙으로 재사용하지 않는다.
+`localVerificationPassed`가true여도 `operationalActivationAllowed`는별도필수gate가남으면false다.
+검수카탈로그가없고운영환경/물리기기/1000연결확인전이므로기본음악플래그는false를유지한다.
+
+이번 검증 전용 Core fixture는 다른 계정의 서명 토큰/세션/위치 근거를 발급할 수 있게 확장했다.
+운영 인증을 대체하지 않으며 실제 곡을 등록하지 않는다. 최종 동작 검증은 auth/GPS/YouTube SDK 경계만 합성이고
+React/ChatParticipation/REST/STOMP/Core 인증 확인/DB/Redis/두 Chat은 실제 구현이다.
+기존 모의 브라우저/실제 YouTube 데모 시험과도 구분한다. 운영 DB/Redis/AWS·배포·커밋/push/PR 변경은 없다.
+
+### 10단계 운영 체크리스트와 반영 절차
+
+2026-11-10 · 2~9단계 BE/FE 대상. 이 문서는 실제 배포 승인서가 아니다.
+로컬 통합 통과와 운영 활성화 승인은 분리하며 `api/chat-music-release-gates.json`에 후자를 기록한다.
+
+#### 재현과 검증 범위
+
+BE 저장소에서 실행한다. Docker·JDK25·Node·npm 의존성·설치 Chrome이 필요하다.
+실행 시작 전에 `./gradlew spotlessApply`와 FE `npm run format:check`를 끝내 소스를 고정한다.
+
+```sh
+python3 scripts/verify-chat-music-release.py --live-youtube
+```
+
+FE에서도 `npm run verify:chat:music:readiness -- --live-youtube`로 같은 명령을 실행한다.
+대체 FE 경로는 BE 명령의 `--frontend-dir`로 지정한다. 운영 주소/계정/토큰은 인자로 넣지 않는다.
+
+- 격리 MySQL 전체 회귀·정적 검사·일반/Core/Chat JAR, 실제 Task 종료/Redis 재시작/CLI 복구, 참여 회귀.
+- FE 포맷·린트·전용 타입·전체 시험·빌드, 실제 서버에 연결한 세 브라우저, 음악 이벤트/조회 계약 대조.
+- 기존 수신 누락/조회503/online·UI 차단·개인 음량 회귀. 선택한 실제 YouTube SDK/공식 데모 smoke.
+- 실행별 `build/chat-music-release-verification/<UTC시각>/summary.json`과 단계 로그/XML·응답 예시를 보존한다.
+  JAR/source SHA256과 양쪽 HEAD를 기록하고 실행 중 소스가 바뀌거나 명령이 실패하면 성공을 승인하지 않는다.
+  기존 조건부 제외는 XML에 남기고 전용 프로세스 검증으로 주요 경로를 따로 확인한다.
+
+실제 서버 브라우저 시험은 서로 다른2계정·3탭의 실제 ChatParticipation/REST/STOMP/React를 사용한다.
+GPS/로그인 저장 경계와 YouTube SDK만 합성이다. Core 인증 검사·DB·Redis·두 Chat·큐/명령·전파는 실제 구현이다.
+신청→첫 자동 재생→이웃 곡 취소→전체 일시정지→정지 중 새 탭 입장→건너뛰기→개인 음량 격리→음악 중 채팅→
+일부 탭 퇴장 유지→마지막 탭 퇴장→재입장 빈 큐를 확인한다. 실제 OAuth/음원/동시1000기기의 시험은 아니다.
+별도 실제 YouTube smoke는 공식 API 데모만 재생하며 운영 카탈로그를 등록하지 않는다.
+
+#### 고정 정책·계약
+
+- 모든 활성 참여자가 신청·재생·일시정지·재개·건너뛰기·대기 곡 취소를 한다. 호스트/신청자 전용 권한을 두지 않는다.
+- 입장 시 공통 상태를 따른다. 청취 시작/중지 선택은 없고 개인 음량·음소거만 제공한다. PAUSED 입장은 cue만 한다.
+- 큐/재생/명령 영수증/Outbox는 DB 정본, 위치/종료는 DB UTC와 고정 video/duration이 기준이다.
+  클라이언트 ENDED/영상 오류로 자동 다음 곡을 정하지 않는다. 공식 iframe 재생이며 오디오 추출·중계는 없다.
+- 마지막 유효 참여 종료는 현재/WAITING 취소·IDLE이다. Task 장애의 미종료 view는 마지막 검증 시각30초 안에서만 보존한다.
+- UUID는 원 sid/member/view/명령 tuple로만 명시적 확인한다. 불확실한 명령의 자동 재전송·새 UUID 재신청은 없다.
+- music version/epoch·현재 곡/expected_version을 검증한다. cursor 충돌은 첫 페이지 재조회한다.
+  연결 ready→fresh 음악 조회 전과 음악 확인 실패 중에는 재생·공통 조작을 허용하지 않는다.
+- 기본 위치 보정은1초 확인/2초 초과 오차/반복 seek 최소5초다. 음악15초 침묵은 재조회한다.
+  전달 지연·광고·브라우저 버퍼 차이가 제거된 무오차 동시 재생 보장은 아니다.
+
+#### 배포 전 확인: 담당자·증빙이 필요한 차단 조건
+
+| 항목 | 확인할 내용 |
+| --- | --- |
+| 검수 곡 | 검수 목록이 현재 없음. 지역에서 신청 가능한 KR/VERIFIED·공식영상·길이·근거·유효기한과 임베드 가능 여부를 확인 후 등록한다. 합성 fixture를 운영으로 옮기지 않는다. |
+| DB | 모든 선행 migration과 V20261108192420/20261109103259/20261109132852를 단일 migrator로 적용·validate한다. Chat의 음악 DML/잠금, 복구 계정의 음악 Outbox SELECT/UPDATE 권한과 풀/저장량을 확인한다. |
+| Redis | 기존 namespace/TLS/인증에 음악 `&<env>:chat:music:*` PUBLISH/PSUBSCRIBE 권한을 추가 확인한다. 기존 메시지/제어/marker/INFO server 권한도 필요하다. |
+| 키·플래그 | 음악 키는 메시지/서비스 인증 키와 분리한다. 영수증/tombstone의 구 키를 삭제하지 않는다. 모든 Task에 동일한 코드·키·플래그를 준비한다. |
+| 런타임 | 운영은 Chat JAR의 prod 프로필과 현재 기동 검사를 사용한다. chat-isolated는 격리 시험용이며 prod와 함께 사용하지 않는다. 실제 ECS profile·Core 내부 HTTPS/서비스 키 매핑을 확인한다. |
+| 라우팅·캐시 | 공용 origin의 음악 REST는 Chat, 기존 auth는 Core, /ws는 WebSocket upgrade. Authorization·membership/view/expected_version·쿼리를 보존하고 음악 응답/인증 응답을 캐시하지 않는다. |
+| 미디어·기기 | 실제 origin/Referer·CSP script/frame·Permissions-Policy와 실제 iOS Safari/Android Chrome의 자동재생/복귀/음소거를 확인한다. Chrome 데스크톱만으로 승인하지 않는다. |
+| 부하·관측 | 1000개 실제 계정/연결의 음악 변경·snapshot/재연결·채팅 혼합, 합의한 지연/누락/DB·CPU·메모리 기준과 반복 결과를 확보한다. 기존 채팅 단독 수치를 음악 부하로 대체하지 않는다. |
+| 운영 책임 | staging 검증·관측/경보·중단/복구/롤백 담당 및 실행할 정확한 이미지 digest·JAR/FE artifact SHA를 남긴다. |
+
+공식 확인 근거: [YouTube IFrame API](https://developers.google.com/youtube/iframe_api_reference),
+[Chrome 자동재생 정책](https://developer.chrome.com/blog/autoplay/).
+iframe은 최소200×200을 유지하고 자동재생 차단을 정상 재생으로 표시하지 않는다. 재생 허용 버튼은 방 명령을 보내지 않는다.
+
+#### 반영 순서
+
+1. 이 문서의 운영 gate마다 담당자·증빙을 채운다. `pending`을 로컬 시험 통과만으로 `passed`로 바꾸지 않는다.
+2. 단일 migrator가 선행 DDL을 적용하고 validate한다. 기존 음악/참여 데이터와 영수증·구 키를 보존한다.
+3. 백엔드 코드/음악 ACL·키·Core 인증/참여·relay·lifecycle 의존성을 전체 Task에 준비한다. 음악 세 플래그는 false 유지한다.
+4. FE artifact를 배포하되 `VITE_CHAT_MUSIC_QUEUE_ENABLED`·`VITE_CHAT_MUSIC_PLAYER_ENABLED`는 false로 빌드한다.
+   Vite 변수는 build-time 값이다. 실행 컨테이너 환경만 바꿔 이미 빌드한 FE가 바뀐다고 가정하지 않는다.
+5. 검수 곡과 staging 결과를 확인한 뒤 Chat 라우팅을 제어하고 동일 구성으로 모든 Task의
+   `CHAT_MUSIC_QUEUE_ENABLED`/`CHAT_MUSIC_PLAYBACK_ENABLED`/`CHAT_MUSIC_EVENTS_ENABLED`를 함께 활성화한다.
+   부분 Task에만 플래그/키가 다른 상태로 요청을 받지 않는다. 기존 lifecycle/relay 준비가 먼저다.
+6. readiness·음악 서비스·신청 가능 곡을 확인한다. FE 두 플래그를 true로 새 빌드한 후보를 검증/반영한다.
+7. 서로 다른 계정의 신청/취소/일시정지/재개/건너뛰기·정지 입장·개인 음량·마지막 퇴장 smoke 후 관측한다.
+   실패하면 새 조작을 중단하고 아래 절차를 따른다. 일정/관측 기간·SLO 수치는 담당자가 합의해야 한다.
+
+#### 관측과 중단
+
+- readiness/musicRelay DOWN·음악 REST503/WS1013 증가, 음악 relay failure/rejected·Outbox pending/oldest age,
+  DB lock/transaction 시간·풀 포화, 사용자별 상태 version/epoch 불일치·수신 누락을 관찰한다.
+- 기존 private `/actuator/prometheus` 전용 토큰/내부 경로만 사용한다. 실제 scrape·경보 연결은 운영 gate다.
+  지표 label이나 로그에 사용자/방 ID·토큰·명령 본문·위치·실제 소스 근거를 추가하지 않는다.
+- 미디어 오류는 자동 전역 SKIP으로 덮지 않는다. 특정 영상 문제와 Core/Redis/DB 공통 장애를 구분한다.
+
+#### 롤백·전역 복구
+
+- 음악 진입/조작을 먼저 닫는다. FE 플래그를 내린 artifact로 되돌리고 해당 탭이 갱신됐는지 확인한다.
+  이미 열린 구 FE 세션이 남을 수 있으므로 FE 롤백만으로 서버 음악 중단이 끝났다고 보지 않는다.
+- Chat 라우팅/구 Task를 닫고 worker/전파가 멈춘 상태에서 동일한 음악 off 구성으로 재기동한다.
+  파괴적 down migration이나 큐/Outbox/영수증 삭제를 롤백으로 사용하지 않는다. 참여·음악 플래그 의존성을 지킨다.
+- Redis generation/marker가 유실되면 복원만으로 Task를 개방하지 않는다. 모든 구 Chat 종료를 확인한 담당자가
+  최신 Chat JAR의 `ChatRecoveryCommand`를 기존 README의 전용 환경변수로 실행한다.
+  `CHAT_RECOVERY_CONFIRM=chat-stopped`는 실제 라우팅/구 Task 종료 확인 후에만 설정한다.
+- 복구 CLI 성공·구 음악 Outbox 만료·새epoch/새 Task UUID·readiness 확인 후 라우팅을 연다.
+  FE는 새 연결/fresh snapshot을 확인한다. 구 영수증 재현 응답을 현재 재생으로 덮어쓰지 않는다.
+  복구 실패 시 닫힘을 유지하며 DB/Redis를 임의 초기화하지 않는다.
+
+운영 증빙용 읽기 전용 집계는 `api/chat-music-operations-check.sql`에 제공한다. 대상 환경을 확인한 담당자가 실행한다.
+DB 전역의 유효 소스 수는 해당 지역/사용자의 신청 가능 곡 수와 같지 않으므로 실제 requestable-music 응답도 확인해야 한다.
+이 SQL은 migration·권한 부여·정리·키 삭제를 하지 않으며 비밀값/메시지/사용자ID를 출력하지 않는다.
+
+### 10단계 최종 로컬 검증 결과
+
+2026-11-10 `20261110T011615Z` 실행은 `localVerificationPassed=true`,
+`operationalActivationAllowed=false`다. 증빙은 BE
+`build/chat-music-release-verification/20261110T011615Z/summary.json`과 단계 로그/XML에 있다.
+
+- BE 전체 977개: 954 통과·23 조건부 제외·실패0. 별도 음악 복구20개·참여49개 전부 통과.
+- FE 전체 994개: 987 통과·7 조건부 제외·실패0. 포맷/린트/채팅 타입/빌드 통과.
+- 실제 Core·두 Chat·MySQL/Redis·2계정3탭에서 공동 제어/타인 대기 곡 취소/정지 입장/개인 음량/채팅/마지막 퇴장 정리 통과.
+- 실제 STOMP30건·queue20건을 스키마/FE 파서로 검사하고 OpenAPI 참조82개·잘못된 이벤트3개 거부 확인.
+- 기존 복구 UI 브라우저 회귀 통과. 별도 실제 YouTube SDK/iframe1개/PLAYING 관측·오류/실패 요청0.
+  공식 데모·합성 방 상태의 smoke이며 운영 곡·물리 모바일 동시 청취 검증은 아니다.
+- BE 소스 SHA256 `b7193d22e0ce23835a1f9cf7ae44c33344575e2457ba48f3cd981edfa69fecb5`와 세 JAR manifest가 일치한다.
+  FE 소스 SHA256 `ad5983fc5cacb5b152795a3721b1383b450cd5900c07d891ffe081bdd965ae9d`도 실행 중 변경이 없었다.
+
+검수 곡·운영 migration/권한/ACL/키/라우팅·물리 모바일·1000연결/SLO·관측/복구 훈련·릴리스 승인 gate는 모두 pending이다.
+기본 플래그false를 유지하며 운영 활성화·DB/클라우드 변경·커밋·push·PR·배포는 수행하지 않았다.
+
+
+### 운영 활성화 설정 변경 (2026-11-10 사용자 요청)
+
+기존 10단계 기록은 당시 검증 결과로 보존한다. 이후 사용자 요청으로 운영용 Chat 프로필과 FE 빌드의 음악 기능 기본값을 true로 변경했다. 실제 서버 적용·운영 gate 통과·검수 곡 등록은 별도이며 이 변경만으로 완료 표시하지 않는다.
+
+- Chat 전용 JAR의 `SPRING_PROFILES_ACTIVE=prod`에서 `CHAT_MUSIC_QUEUE_ENABLED`, `CHAT_MUSIC_PLAYBACK_ENABLED`, `CHAT_MUSIC_EVENTS_ENABLED`의 기본값은 true다. 공통/로컬 설정은 false를 유지한다. 운영 환경에 기존 false 값이 있으면 명시적으로 true로 바꿔야 한다.
+- FE `.env.production`에 `VITE_CHAT_MUSIC_QUEUE_ENABLED=true`, `VITE_CHAT_MUSIC_PLAYER_ENABLED=true`를 추가했다. 빌드 환경 또는 `.env.production.local`의 false 값은 파일 기본값을 덮어쓰므로 두 값 모두 true로 설정하고 `npm run build` 후 배포한다.
+- Core는 Core JAR, Chat은 Chat JAR를 사용한다. 기존 단일 앱의 prod 설정이나 chat-isolated+prod 조합으로 대체하지 않는다. prod 기동 가드는 유지한다.
+
+#### Chat 실행 환경에 주입할 값
+
+```dotenv
+SPRING_PROFILES_ACTIVE=prod
+CHAT_MUSIC_QUEUE_ENABLED=true
+CHAT_MUSIC_PLAYBACK_ENABLED=true
+CHAT_MUSIC_EVENTS_ENABLED=true
+CHAT_MUSIC_QUEUE_CAPACITY=100
+CHAT_MUSIC_QUEUE_COMMAND_INTERVAL_MILLIS=1000
+CHAT_RUNTIME_ENABLED=true
+CHAT_CORE_AUTH_ENABLED=true
+CHAT_AUTH_REDIS_ENABLED=true
+CHAT_REDIS_ENABLED=true
+CHAT_DISTRIBUTED_PRESENCE_ENABLED=true
+CHAT_MESSAGE_RELAY_ENABLED=true
+CHAT_CONTROL_EVENTS_ENABLED=true
+CHAT_LIFECYCLE_ENABLED=true
+CHAT_REDIS_SSL=true
+```
+
+다음 값은 실제 배포 자원/비밀 관리 시스템의 값을 넣는다. 아래 설명 문자열을 실제 값으로 주입하지 않는다.
+
+| 변수 | 주입할 값 |
+| --- | --- |
+| CHAT_MUSIC_KEYS | `music-v1:<32바이트 이상 난수의 base64>` 형태의 별도 음악 HMAC key ring. 신규 키 재료는 `openssl rand -base64 32`로 생성해 Secret에 보관한다. 모든 Chat Task에서 동일하게 사용하고 기존 영수증 키는 유지한다. JWT/위치/서비스/Redis/메시지 키를 재사용하지 않는다. |
+| CHAT_DB_URL / CHAT_DB_USERNAME / CHAT_DB_PASSWORD | migration 적용된 동일 서비스 schema의 실제 JDBC URL과 Chat 전용 DB 자격정보. 기존 값을 유지하고 환경을 바꾸지 않는다. |
+| CHAT_REDIS_HOST / CHAT_REDIS_PORT | 실제 Redis endpoint·port. port 기본6379이며 실제 TLS listener 값에 맞춘다. |
+| CHAT_REDIS_USERNAME / CHAT_REDIS_PASSWORD | 운영 Redis ACL 계정·비밀. prod는 default 계정을 허용하지 않는다. |
+| CHAT_REDIS_ENVIRONMENT | 기존 서비스의 운영 namespace. Core producer의 CORE_AUTH_REDIS_ENVIRONMENT와 동일하며 local/test/dev/staging을 사용하지 않는다. 기존 운영 namespace를 임의 변경하지 않는다. |
+| CORE_INTERNAL_BASE_URL | 실제 Core 내부 HTTPS origin. 경로 없는 주소이며 Chat에서 인증서 검증이 가능해야 한다. |
+| CORE_AUTH_SERVICE_TOKEN | Core의 CHAT_AUTH_SERVICE_TOKEN_CURRENT 또는 NEXT와 같은 전용 서비스 키(32~256자). |
+| CORE_AUTH_PRODUCER_IDS | 실제 Core의 CORE_AUTH_PRODUCER_ID allowlist. 여러 값은 쉼표로 구분한다. |
+| AUTH_JWT_SECRET / AUTH_JWT_ISSUER / AUTH_JWT_AUDIENCE / LOCATION_TOKEN_SECRET / AUTH_CORS_ALLOWED_ORIGINS | 기존 Core와 호환되는 서명·issuer/audience·위치 토큰과 실제 HTTPS 웹 origin. 기존 보안 설정을 유지한다. |
+| CHAT_MESSAGE_FINGERPRINT_KEYS | 기존 채팅 메시지 전용 HMAC ring. 음악 키와 별도이며 유효 영수증에 필요한 구 키를 유지한다. |
+| CHAT_METRICS_SERVICE_TOKEN | 내부 metrics scrape용 별도 토큰. 기존 관측 설정과 일치시킨다. |
+
+Core의 기존 `CORE_CHAT_AUTH_ENABLED=true`, `CORE_AUTH_REDIS_ENABLED=true`와 DB·Redis·서비스 키 설정도 준비돼 있어야 한다. 이 설정은 음악 전용 추가값이 아니라 기존 분산 채팅의 전제조건이다. migration은 단일 실행 주체로만 수행하며 모든 Core/Chat Task에 Flyway를 켜지 않는다.
+
+음악 Redis 채널 `&<운영namespace>:chat:music:*`의 PUBLISH/PSUBSCRIBE 권한, 선행 DDL, 검수된 신청 가능 곡이 필요하다. 키나 저장소 전제가 누락되면 기존 가드가 기동을 차단하며 이를 우회하지 않는다.
+
+적용 순서는 DDL·권한·키 준비 → 모든 Chat Task에 같은 설정 적용·재기동 → readiness와 음악 API 확인 → FE production 빌드·배포다. 끌 때는 FE 두 플래그와 BE 세 플래그를 false로 명시하고 재빌드/재기동한다. 데이터·영수증·구 키는 보존한다.
+
+
+## 지역 곡·영상 선택 저장 기반 — 최소 P1 1단계 (2026-11-11)
+
+이 단계는 본인 지역 곡 탐색과 영상 선택의 저장 기반이다. YouTube 검색/선택 ADD/고정 영상으로의
+worker 전환은 2단계, FE 위치 전달/목록/영상선택 UI는 3단계다. 외부 호출·FE·운영 설정은 변경하지 않는다.
+
+### 출처와 검색
+
+- `GET /api/v1/chat-rooms/{room_id}/requestable-music`는 기존 활성 sid/member/view 권한을 유지한다.
+  본인의 동일 SIGUNGU 유효 기록 또는 본인의 COMPLETED 추천(CHATBOT TEXT/VOICE/IMAGE,
+  LOCATION SYSTEM)만 music_id로 중복 제거한다. 타인의 PUBLIC 기록도 이제 제외한다.
+- 목록은 영상이 없어도 곡을 반환한다. `youtube_video_id`/`duration_millis`는 null일 수 있고
+  `is_queueable`은 기존 music_id-only ADD에 유효 검수 소스가 있는지를 뜻한다. 새로운 영상 선택 승인과 다르다.
+  구 FE는 영상/길이를 필수로 파싱하므로 새 FE의 nullable 처리와 공동 적용해야 한다. 이 BE만 운영 반영하지 않는다.
+- 검색은 기본/한국어/미국 제목·가수의 부분 일치다. NFC·공백·대소문자를 정규화하고 서버 전체 대상에서
+  조회한다. 기존20곡 keyset·서명 cursor·5분 만료·no-store를 유지한다. 전체 결과 고정 snapshot은 아니다.
+- `RequestableMusicRepository.findProvenance`는 영상과 분리한 내부 출처 확인이다.
+  기존 `findSources`와 legacy ADD는 여전히 유효한 기존 검수 소스를 요구한다. 미검수 ADD를 허용하지 않는다.
+
+### 이미지 추천 지역 계약
+
+- 기존 multipart `POST /api/v1/recommendations/images`에 선택 문자열 `location_resolution_token`(최대4096)을
+  추가한다. 생략은 기존 지역 미상 추천을 유지하며, 제출 시 인증된 계정/sid·서명·만료·활성 지역/도트를 검사한다.
+  잘못된 토큰은 접수/이미지 복사/저장 전에400, 검증기 부재는503이다. 임의 region_id/map_dot_id는 거절한다.
+- 여러 개의 같은 multipart 필드·추가 파일/prompt도 거절한다. 외부 AI 요청에는 토큰·지역을 보내지 않는다.
+  DB에는 검증된 region_id/map_dot_id만 저장한다. 기존 TEXT/VOICE 위치 계약과 LOCATION 완료 보관을 재사용한다.
+  과거 region_id=NULL 추천을 소급하지 않으며 위치 없는 추천 자체를 차단하지 않는다.
+
+### 영상·후보·대기열 DDL
+
+`V20261111104317__create_music_video_selection_storage.sql`을 추가한다. 기존 SQL은 수정하지 않는다.
+두 로컬 migration 선택 목록에도 포함한다.
+
+- `music_video_sources`: (music_id,youtube_video_id)별 여러 소스. PLAYABLE/UNKNOWN/UNAVAILABLE와
+  공식 UNREVIEWED/CONFIRMED를 분리한다. 재생 검사만 통과한 후보를 공식 확인으로 표시하지 않는다.
+- `music_video_search_results`: 불변 READY/EMPTY 검색 캐시 batch, 메타데이터 지문/국가/정책 버전·TTL 인덱스.
+  PROCESSING/job/lease는 추가하지 않는다. 실패는 EMPTY로 저장하지 않는다. batch와 후보의 원자 저장/TTL 검사는2단계다.
+- `music_video_candidates`: 서버 UUID·검색 batch·음악·영상·순서·제목/채널/커버/길이.
+  복합 FK가 다른 곡의 batch/source 연결을 막고 rank/video 중복을 제한한다.
+- `music_queue_items.source_video_id/duration_millis`: 쌍/길이 CHECK와 영상별 소스 FK.
+  기존 ACTIVE는 playback의 실제 pin/길이를 복사한다. 이미 대표 영상이 바뀐 과거 pin은 UNKNOWN/UNREVIEWED로
+  식별만 보관하며 검증 시각을 만들지 않는다. 유효 검수 WAITING만 pin을 채우고 불명확 WAITING은 null로 보존한다.
+  큐 상태/순서·playback 상태/위치/버전·기존 검수/영수증/outbox를 변경하지 않는다.
+
+이 migration은 신규 선택 기능 활성화가 아니다. legacy 코드가 이후 만든 null pin과 기존 검수 도구의 변경은
+새 테이블에 자동 동기화하지 않는다. 2단계는 호환 writer·검수 변경 경로·고정 소스 재생을 연결하고,
+전환 시 기존 WAITING/ACTIVE를 다시 점검해야 한다. null pin 항목에 임의 영상을 넣지 않는다.
+
+### 소비자 계약·전환·검증
+
+- 기존 조회 계약: `api/chat-music-queue.openapi.json` 1.2.0.
+- 전체 기반/후속 계약: `api/chat-music-video-foundation.openapi.json`.
+  implemented-foundation과 planned-step-2를 구분한다. 새 영상 검색 POST는 동기200이며202/상태GET/폴링은 없다.
+  후보 ID 신청 body와 신규 오류는2단계 목표이고 이번에는 handler가 없다.
+- 배포는 migration 전 DB백업/DDL 잠금·공간·테이블 권한을 확인하고 DDL→호환 BE→nullable 대응 FE로 진행한다.
+  최초 새 소스 계약 활성화 때 구 worker 혼합을 금지한다. 운영 migration/권한/배포는 이번 작업에서 실행하지 않는다.
+- rollback 시 추가 테이블/컬럼을 자동 삭제하지 않는다. 기존 데이터/검수/영수증을 보존하고 호환 앱으로 복구한다.
+  새 영상 선택이 쓰이기 시작한 뒤에는 구 worker에 새 대기곡을 그대로 넘기지 않는다.
+- 로컬 개발 이슈: `api/issues/chat-music-video-foundation.md` (기존 ignore 정책 유지, 외부 번호 임의 생성 없음).
+- 재현: `./gradlew test --tests '*MusicCatalogMySqlTest' --tests '*MusicVideoStorageMySqlTest' --tests '*ChatMusicQueueMySqlTest' --tests '*ChatMusicQueueControllerTest' --tests '*ImageRecommendationServiceTests' --tests '*ImageRecommendationSecurityIntegrationTest' --tests '*RecommendationLocationAdmissionTest' --no-daemon`.
+  전체 회귀와 Spotless/Checkstyle main/core/chat/test, Core/Chat/기존 앱 JAR도 확인한다.
+- 초기 targeted42건은 신규 제약의 MySQL3819 예외 분류2건과 mock bean의 setter 주입9건이 실패했다.
+  생성자 주입·실제 제약명 검증으로 보완했다. 최초 XML은 `build/chat-music-video-foundation-verification/initial-targeted`에 보존한다.
+  최종 검증 결과와 한계는 아래 완료 기록 및 같은 디렉터리의 summary로 구분한다.
+
+
+최종 완료 검증: 기존 `python3 scripts/verify-backend.py`로 임시 MySQL/앱 환경을 격리하여
+`spotlessApply test spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest bootJar coreBootJar chatBootJar --no-daemon`
+실행을 완료했다. 전체1019개 중996통과·23기존조건부제외·실패0, 변경 관련7개 suite47건 전부통과/제외0이다.
+실제 MySQL9.7 upgrade/validate/재실행0건, ACTIVE의 기존 pin·PAUSED/위치/버전·검수 이력과
+불명확 WAITING 보존, 복합FK/중복순번/검증상태/만료 CHECK, 본인 출처·다국어검색·24곡페이지,
+이미지 sid 전달/중복·과대필드 거절/검증 후 지역저장을 확인했다.
+
+최초 환경 미격리 full994개는78실패·23제외였으며 원본을 `initial-full/`에 보존했다.
+기존 인증 테스트의 전용 MySQL 환경 누락과 앱 test DB 연결 실패가 있었고, 재생/relay의
+‘최신 migration은1개’ 가정도 확인했다. 해당 두 시험은 검증할 타이밍 migration 버전을 고정하고
+이후 현재 스키마로 migrate해 기존 검증을 유지했다. 두 번째 targeted의 PROCESSING 길이 오류도
+result_kind 길이와 명시 CHECK를 맞춰 보완했으며 원본 `second-targeted/`를 보존했다.
+
+증빙: `build/chat-music-video-foundation-verification/summary.json`, `final-full/`, `isolated-full.log`,
+`contracts.json`. OpenAPI2파일 JSON/로컬참조73개를 검사했고 전체 메타스키마 검증은 아니다.
+
+최종 소스 SHA256 `e9519537867978fdd544dd5a023bb5314c0ebde61664b215827563fd6e6e1c2a`와
+일반/Core/Chat 세 JAR manifest가 일치한다. 검증 당시 변경은 미커밋 상태였으며 manifest의 commit은 검증 당시 기반HEAD다.
+임시 MySQL은 기존 검증 스크립트가 종료 시 정리했다. FE는 변경하지 않았다.
+실제 YouTube 검색/선택 ADD·새 고정 영상 worker·실기기/1000연결·운영 DB/설정/배포·외부 이슈/PR/push는 수행하지 않았다.
+
+## 지역 음악 영상 검색·선택 신청·고정 재생 — 최소 P1 2단계
+
+작업 브랜치 `feature/chat-music-video-queue`. 아래 내용이 위 1단계의 미구현 예고를 대체한다.
+FE 신청 창·위치 전달·화면 경계 개선은 3단계이며 이번 변경에 포함하지 않는다.
+
+### 처리 구조와 계약
+
+- `POST /api/v1/chat-rooms/{room_id}/music/{music_id}/video-searches`는 기존 Bearer 인증과
+  `membership_id`, `view_session_id`를 사용한다. 본인의 해당 지역 기록·완료 추천과 현재 CONNECTED 참여를
+  캐시 조회 전과 외부 검색 후 다시 검사한다. 다른 사람의 공개 기록은 검색 권한이 아니다.
+- 곡의 저장된 표시 제목·가수로 공식 YouTube Data API `search.list`를 한 번 호출하고,
+  최대 10개 ID를 `videos.list` 한 번으로 검사한다. 공개·처리 완료·임베드 허용·KR 허용·비라이브·
+  비연령 제한·양의 확정 길이만 후보로 저장한다. 자동 결과의 공식 확인은 UNREVIEWED다.
+  다운로드·음원 추출·중앙 오디오 스트리밍은 구현하지 않는다.
+- `ChatMusicVideoService`는 짧은 권한 TX → 잠금 없는 HTTP → 권한·곡 메타데이터 재확인 TX로 나뉜다.
+  후보 batch는 MySQL에 불변 저장하며 곡의 다국어 메타데이터 SHA-256/국가/정책 버전으로 캐시를 구분한다.
+  이전 검색이 바뀐 곡의 캐시를 덮어쓰지 않는다. 다른 Chat Task에서 같은 후보를 조회·신청할 수 있다.
+- 응답은 동기 200 `{message,data}`이며 data는 `search_id`, `music_id`, `result_kind`, `expires_at`, `items`다.
+  후보는 `candidate_id`, `music_id`, `video_id`, 제목·채널·썸네일·길이·PLAYABLE 및 공식 확인 상태·만료를 포함한다.
+  정상 후보 없음은 EMPTY+빈 items이고, 네트워크·쿼터·응답 오류는 EMPTY로 캐시하지 않는다.
+  202/job/상태 GET/폴링·언어 대체 자동 검색·사전 검색은 없다.
+- 새 FE는 기존 `POST .../queue-items`에 `{music_id,candidate_id}`와 `Idempotency-Key`를 보낸다.
+  후보 관계·만료·메타데이터 지문, 현재 참여·출처·정원, 영상 최신 검증을 확인한다.
+  성공 TX에서만 대표 `music.youtube_video_id`를 갱신하고 선택 영상/길이를 대기열에 고정한다.
+  큐·버전·영수증·outbox와 대표 ID 갱신은 함께 commit/rollback한다. 검색만으로 대표 ID를 바꾸지 않는다.
+- 후보 ID가 바뀌면 같은 명령 UUID는 COMMAND_ID_CONFLICT다. 성공 영수증 재현은 현재 참여가 필요하지만
+  만료 후보·provider 장애에 의존하지 않으며 과거 playback 응답으로 현재 상태를 복원하지 않는다.
+  기존 music_id-only ADD와 기존 영수증은 유지하되 현재 유효한 legacy 검수 소스가 있어야 신규 신청된다.
+  영상별 최신 사용 불가·운영자 차단을 과거 legacy 검수로 덮어쓰지 않는다.
+- 재생·다음 곡·재개·복구·대기열 조회는 대표 영상 대신 항목의 영상/길이를 사용한다.
+  시작 전 검증이 오래되면 WAITING/FIFO를 보존하고 별도 bounded metadata executor에서 재검증한다.
+  확정 불가/운영자 차단은 WAITING을 CANCELED 처리하고 다음 곡으로 넘어간다.
+  외부 일시 오류는 취소/영상 자동 교체 없이 보존하며 Task별 최대 1024개 backoff(60초)와 공유 호출 예산을 적용한다.
+  재개 시 재확인되지 않으면 PAUSED를 유지하고 503을 반환한다. 진행 중인 곡의 pin/길이를 바꾸지 않는다.
+  기존 전원 퇴장 취소·장애 복구·30초 유예·개인 음량·자동 합류 정책을 유지한다.
+
+### 설정과 호출 제한
+
+Chat/일반 앱 모두 아래 환경변수를 해석한다. 서버의 비밀 저장소에서 키를 주입하고 FE에 전달하지 않는다.
+
+```dotenv
+CHAT_MUSIC_VIDEO_SEARCH_ENABLED=true
+CHAT_MUSIC_VIDEO_SEARCH_API_KEY=<server-side YouTube Data API key>
+CHAT_MUSIC_VIDEO_SEARCH_CONCURRENCY=2
+CHAT_MUSIC_VIDEO_SEARCH_DAILY_SEARCH_BUDGET=100
+CHAT_MUSIC_VIDEO_SEARCH_DAILY_DETAILS_BUDGET=10000
+CHAT_MUSIC_VIDEO_SEARCH_POSITIVE_SECONDS=3600
+CHAT_MUSIC_VIDEO_SEARCH_EMPTY_SECONDS=300
+CHAT_MUSIC_VIDEO_SEARCH_VERIFICATION_SECONDS=300
+```
+
+저장소 기본값은 검색 false다. 기존 queue/playback/events 설정을 함께 유지해야 한다.
+true인데 키가 없거나 형식이 잘못되면 기동 때 거절한다. 외부 일시 장애는 일반 채팅 readiness를 내리지 않는다.
+캐시 조회 포함 계정당 10회/분, provider 전체 60 HTTP 호출/분과 종류별 일일 예산을 MySQL에 공유한다.
+일일 예산은 UTC 고정 창이고 실제 Google 프로젝트의 잔여 quota를 계산하는 기능이 아니다.
+외부 HTTP는 Task당 동시성 제한, 호출당 전체 body 4초·256KiB·redirect 금지다. 검색은 최대 2회 호출이다.
+TTL 설정은 정상 최대3600초/빈 최대300초/검증 최대300초이며 더 짧게 조정할 수 있다.
+신규 예산 테이블의 오래된 window는 요청 시 100행씩 정리한다. 만료 후보는 조회·신청에 사용하지 않는다.
+
+오류는 기존 `{message,data:{code}}`와 no-store를 사용한다.
+400 INVALID_CANDIDATE, 410 CANDIDATE_EXPIRED, 409 MUSIC_NOT_REQUESTABLE/MUSIC_METADATA_CHANGED/
+VIDEO_UNAVAILABLE, 429 VIDEO_REQUEST_RATE_LIMITED(+Retry-After),
+503 VIDEO_SEARCH_DISABLED/VIDEO_SEARCH_UNAVAILABLE/VIDEO_PROVIDER_BUSY/VIDEO_VERIFICATION_REQUIRED를 구분한다.
+API 키·provider 원문·요청 URI는 반환하거나 원인 예외로 보존하지 않는다.
+정확한 공개 계약은 `api/chat-music-queue.openapi.json` 1.3.0 및
+`api/chat-music-video-foundation.openapi.json` 1.1.0이다.
+
+### DB·worker 전환과 복구
+
+- 추가 migration은 `V20261111114715__create_music_video_request_limits.sql`과
+  `V20261111131732__add_music_video_operator_block.sql`이다. 기존 적용 SQL은 수정하지 않았다.
+  Core migration 실행 역할과 Chat 런타임 역할을 구분한다. Chat은 신규 테이블 SELECT/INSERT/UPDATE와
+  예산 테이블 DELETE 권한이 필요하다. 후보/search batch는 런타임에서 UPDATE하지 않는다.
+- 운영 검수 도구는 영상별 소스도 같은 TX에서 갱신한다. 명시적인 사용 불가는 operator_blocked로 남기므로
+  대표 영상을 바꾸거나 자동 재검증해도 해제되지 않는다. 같은 영상의 명시적 재검수만 해제한다.
+  자동 확인은 기존 공식 검수 근거를 덮어쓰지 않는다.
+- 최초 전환은 DDL 적용 → 기존 writer/worker 중지 → 새 BE로 단일 버전 전환 → 새 FE → 선택 흐름 활성화다.
+  1단계의 nullable 목록을 처리하지 못하는 구 FE와 함께 운영하지 않는다. 구/신 worker 혼합은 금지한다.
+  기동 검사는 그 사이 legacy writer가 만든 WAITING 중 현재 유효 검수 근거가 있는 항목만 pin하며,
+  ACTIVE는 실제 playback pin을 보존한다. 근거 없는 WAITING은 임의 영상으로 채우지 않고 정상 취소 전이한다.
+  이 작업은 중지된 writer를 전제로 하며 일반적인 다중 버전 rolling 전환을 보장하지 않는다.
+- 장애 시 검색 flag를 끄면 신규 검색/선택을 막을 수 있다. 기존 고정 대기곡은 유효 검증 기간에만 시작하며
+  재검증이 필요한 항목은 키/설정 복구 전까지 보존한다. 일반 채팅과 진행 중 playback은 유지한다.
+  rollback 때 추가 DDL/영수증/검수 이력을 삭제하지 않는다. 새 선택 대기곡을 구 worker에 그대로 넘기지 않는다.
+- 로컬 이슈: `api/issues/chat-music-video-queue.md` (기존 ignore 유지).
+  재현: `python3 scripts/verify-backend.py`와 `python3 scripts/verify-backend.py chatMusicRecoveryTest`.
+  실제 키를 사용한 YouTube 후보/브라우저 재생, FE 창/키보드, 운영 DB 적용·권한·배포·1000연결은
+  이번 단계의 로컬 DB/HTTP fixture 회귀와 구분하여 후속 확인한다.
+
+검증 완료: 최종 소스를 고정한 `python3 scripts/verify-backend.py spotlessCheck checkstyleMain checkstyleCore checkstyleChat checkstyleTest test bootJar coreBootJar chatBootJar chatMusicRecoveryTest --console=plain` 실행이 통과했다.
+전체1037건 중1014통과·23기존조건부제외·실패0, 음악 관련89건 모두통과, 별도 실제 서버 복구20건 모두통과다.
+실제 MySQL의 공유 후보/동시 선택·UUID 충돌/응답 재현·만료/권한·대표/큐/outbox rollback,
+고정 영상의 재개·다음 곡·기동 전환/복원, 일시 오류 보존/확정 불가 취소·운영자 차단·legacy 우회 거부를 확인했다.
+HTTP fixture는 검색/상세 조회·필터·중복 ID·빈 응답/403·과대/잘못된 응답·키 비노출을 확인한다.
+실제 Core/두 Chat/Redis의 기존 장애·재연결 복구도 통과했으며 실제 YouTube 후보/브라우저 재생을 검증한 것은 아니다.
+초기 targeted43건 중1건은 Mockito 재설정 오류, 최초 full1034건 중4건은 설정 mock 의존성2건과
+과거 PAUSED fixture에 pin이 없던 영향2건이었다. production 가드를 완화하지 않고 fixture를 보완했고 원본을 보존했다.
+증빙은 `build/chat-music-video-queue-verification/summary.json`, `final-full/`, `final-recovery/`,
+`final-run.log`, `artifacts.json`, `contracts.json`이다. JSON/로컬참조73개 확인은 전체 OpenAPI 메타스키마 검증과 다르다.
+소스 SHA256 `13f6311408ddc0063dfe79b51bbbfb733c1ea4bf1f319545df9418b3f8fcd7e0`와 세 JAR manifest가 일치한다.
+임시 MySQL은 스크립트가 정리했다. 검증 당시 변경은 미커밋 상태였으며 manifest의 commit은 검증 당시 기반 HEAD다. push/PR·운영 DB/설정/배포는 실행하지 않았다.
+
+
+## 검색 한도 대응: 저장 영상 재사용·최대50개 후보
+
+`fix/chat-music-video-reuse` 후속 변경이 위 초기 10개/새 검색 중심 설명보다 우선한다.
+앱 일일 검색·상세 예산 기본값과 예시는 각각100/10000으로 올렸다. Chat/일반 앱 YAML과 Java 기본값이 같다.
+배포 환경에 기존75/500을 명시했다면 해당 환경변수도100/10000으로 변경하고 Chat을 재기동해야 한다.
+Google 실제 잔여 할당량을 늘리거나 사용 횟수를 초기화하는 변경은 아니다. 계정10회/분·provider60회/분은 유지한다.
+
+- 최초 새 검색은 `search.list(maxResults=50)` 한 번과 `videos.list` 한 번으로 재생 가능한 후보를 모두 저장한다.
+  결과가50개보다 적거나 재생 불가 영상이 있으면 실제 후보 수는 줄어든다. 다음 검색 페이지는 자동 조회하지 않는다.
+- 저장된 후보는 선택 유효기간이 끝나도 ID 발견 이력으로 활용한다. 같은 곡/다국어 메타 지문/KR/정책의
+  최근 최대50개 고유 ID를 한 번에 상세 조회한다. 일부가 누락돼도 과거 원본 후보를 삭제하지 않아 이후 재확인할 수 있다.
+  최근5분 검증·정상 상태를 갖는 캐시는 재사용하고, 후보1시간 TTL이 남아도 검증이 오래됐으면 재검증한다.
+- 과거 대표 영상/영상별 소스만 있는 곡도 상세 조회부터 시작한다. 다른 메타 지문 이력이 있으면 이를 섞지 않는다.
+  대소문자가 다른 영상 ID는 별개로 유지한다. 기존 공식 검수 근거는 보존하고 자동 후보를 공식 확인으로 만들지 않는다.
+- 재검증 성공 시 새 후보 batch/UUID·최대1시간 유효기간을 발급한다. 만료된 원 후보는 그대로 만료 상태이며,
+  원 신청 영수증 재현·대표 ID 갱신 시점·큐 영상/길이 pin·현재 참여/본인 출처 검사는 유지한다.
+- 저장 ID 없음 또는 성공한 상세 조회에서 저장 영상 모두 불가가 확정된 경우에만 새 검색을 수행한다.
+  상세 조회 timeout/오류/예산 소진은 저장 데이터를 보존하고 오류로 반환한다. 실패를 EMPTY로 캐시하지 않는다.
+  전부 불가 후 새 검색까지 정상 빈 결과인 경우에만 기존5분 EMPTY cache를 만든다.
+- 외부 호출은 DB/방 잠금 밖에서 수행한다. 소스 버전·수정 시각과 운영자 차단을 확인해 늦은 응답의 덮어쓰기를 막고,
+  다른 Task가 이미 발급한 정상 최신 batch는 재사용한다. 대표/기존 큐 pin을 검색으로 변경하지 않는다.
+- 검증1회 → 새 검색1회 → 상세1회까지 이어질 수 있으므로 전체 외부 조회는8초 deadline을 공유한다.
+  개별 HTTP 상한4초·256KiB를 유지하며, 50개 응답이 설명/태그 때문에 과대해지지 않도록 필요한 fields만 요청한다.
+- 기존10개 후보를50개로 채우기 위한 자동 재검색은 하지 않는다. **새 키워드 검색부터 최대50개**이며,
+  기존 후보는 정상적으로 재사용해 검색 할당량을 절약한다.
+
+### 적용·호환성
+
+1. `V20261112212227__expand_music_video_candidates_to_fifty.sql`을 적용한다.
+   기존 후보와 길이 제약을 유지하고 rank 상한만10→50으로 확장한다. 기존 적용 SQL은 수정하지 않는다.
+2. 후보50개를 허용하는 FE `fix/chat-music-video-reuse`를 먼저 배포한다. 구 FE는11개 이상을 잘못된 응답으로 거절한다.
+3. 새 BE와100/10000 환경변수를 배포한다. Core migration 역할과 Chat의 기존 소스/후보/예산 쓰기 권한을 유지한다.
+4. 저장 후보 재사용으로 search 호출이 증가하지 않는지, 상세·검색 예산과429/503, 최대50개·마지막 후보 신청을 확인한다.
+
+rollback 때 새 후보/영수증/검수 이력을 삭제하거나 rank 제약을10으로 줄이지 않는다.
+새 FE는10개 응답도 수용한다. 50개 batch가 존재하는 상태에서는 구10개 parser FE로 함께 되돌리지 않는다.
+공개 경로·body·응답 필드·오류 코드는 유지하며 `api/chat-music-video-foundation.openapi.json`은1.2.0이다.
+로컬 이슈는 `api/issues/chat-music-video-reuse.md`이며 원격 이슈·PR·운영 적용은 별도다.
+
+
+### 이번 변경 검증 결과
+
+- Spotless·Checkstyle(main/core/chat/test), 전체 테스트1059건 중1036통과·23기존조건부제외·실패0,
+  별도 실제 서버 복구20건 모두통과, 일반/Core/Chat JAR 빌드가 통과했다.
+- MySQL에서 기존 rank10→50 migration·재실행·51거부, 저장 후보50개 보존/일괄 재검증,
+  검색 예산 소진 중 재사용·오류 시 보존·동시성/권한/큐 pin 회귀를 확인했다.
+- 실제 서비스/DB가 생성한50개 응답을 FE parser가 전부 수용했고 마지막 영상 ID까지 확인했다.
+  로컬 HTTP fixture Chrome320×568/390×844/1280×900에서50번째 후보 선택·스크롤·창 경계를 확인했다.
+- 증빙: `build/music-video-reuse-verification/summary.json`, `final-full/`, `final-recovery/`,
+  `candidate-page-50.json`. 소스 SHA256 `c17ff110909bcf928d59bfc018c8eca925d5998f60ff4a4e909bc224b341fd81`와 세 JAR manifest가 일치한다.
+- OpenAPI JSON 구문·로컬 참조4개를 확인했다. 전체 메타스키마 검증이나 실제 Google 호출 검증은 아니다.
+  운영 DB·환경변수·배포·실 YouTube 재생·1000연결은 실행하지 않았다. 검증 당시 변경은 미커밋 상태였으며 이후 사용자 요청으로 목적별 커밋을 생성했다.

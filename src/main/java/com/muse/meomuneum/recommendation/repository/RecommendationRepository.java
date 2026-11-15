@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.muse.meomuneum.music.domain.MusicMetadataPolicy;
 import com.muse.meomuneum.recommendation.dto.TrackData;
+import com.muse.meomuneum.recommendation.dto.request.ImageRecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.request.RecommendationRequest;
 import com.muse.meomuneum.recommendation.dto.response.RecommendationResponse;
 import com.muse.meomuneum.recommendation.exception.RecommendationException;
@@ -43,13 +44,68 @@ public class RecommendationRepository {
         return new RecommendationResponse(id, "COMPLETED", request.conversation_key(), findItems(id), completedAt);
     }
 
-    public long createSession(RecommendationRequest request, String guestSessionId, Long userId, Instant now) {
+    public long createImageSession(ImageRecommendationRequest request, Long userId, Instant now) {
+        return createImageSession(request, userId, now, null, null);
+    }
+
+    public long createImageSession(ImageRecommendationRequest request, Long userId, Instant now,
+            Long regionId, Long mapDotId) {
         var keys = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO recommendation_sessions
-                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'PROCESSING', ?)
+                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at,
+                     region_id, map_dot_id)
+                    VALUES (?, NULL, ?, ?, ?, NULL, 'PROCESSING', ?, ?, ?)
+                    """, new String[]{"id"});
+            statement.setObject(1, userId);
+            statement.setString(2, request.trigger_type());
+            statement.setString(3, request.input_type());
+            statement.setString(4, request.conversation_key());
+            statement.setTimestamp(5, Timestamp.from(now));
+            statement.setObject(6, regionId);
+            statement.setObject(7, mapDotId);
+            return statement;
+        }, keys);
+        Number generatedId = keys.getKey();
+        if (generatedId == null) {
+            throw new RecommendationException(500, "추천 세션의 저장 ID를 확인할 수 없습니다.");
+        }
+        return generatedId.longValue();
+    }
+
+    @Transactional
+    public RecommendationResponse completeImageSession(long id, String conversationKey, List<TrackData> tracks) {
+        for (int i = 0; i < tracks.size(); i++) {
+            TrackData track = tracks.get(i);
+            saveItem(id, saveMusic(new TrackData(track.provider(), track.externalId(), track.title(),
+                    track.artistName(), track.coverUrl(), track.previewUrl(), track.storeUrl(), null)), i + 1);
+        }
+        Instant completedAt = Instant.now();
+        complete(id, completedAt);
+        return new RecommendationResponse(id, "COMPLETED", conversationKey, findItems(id), completedAt);
+    }
+
+    public int failOrphanedImageSessions(Instant now) {
+        return jdbc.update("""
+                UPDATE recommendation_sessions SET status = 'FAILED', completed_at = ?
+                WHERE input_type = 'IMAGE' AND status = 'PROCESSING'
+                """, Timestamp.from(now));
+    }
+
+    public long createSession(RecommendationRequest request, String guestSessionId, Long userId, Instant now) {
+        return createSession(request, guestSessionId, userId, now, null, null);
+    }
+
+    public long createSession(RecommendationRequest request, String guestSessionId, Long userId, Instant now,
+            Long regionId, Long mapDotId) {
+        var keys = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO recommendation_sessions
+                    (user_id, guest_session_id, trigger_type, input_type, conversation_key, prompt, status, created_at,
+                     region_id, map_dot_id)
+                    VALUES (?, ?, ?, ?, ?, ?, 'PROCESSING', ?, ?, ?)
                     """, new String[]{"id"});
             statement.setObject(1, userId);
             statement.setString(2, guestSessionId);
@@ -58,6 +114,8 @@ public class RecommendationRepository {
             statement.setString(5, request.conversation_key());
             statement.setString(6, request.prompt().trim());
             statement.setTimestamp(7, Timestamp.from(now));
+            statement.setObject(8, regionId);
+            statement.setObject(9, mapDotId);
             return statement;
         }, keys);
         Number generatedId = keys.getKey();
@@ -116,11 +174,12 @@ public class RecommendationRepository {
 
     public SavedSession findSession(long id) {
         return jdbc.query("""
-                SELECT id, user_id, guest_session_id, status, conversation_key, completed_at
+                SELECT id, user_id, guest_session_id, status, input_type, conversation_key, completed_at
                 FROM recommendation_sessions WHERE id = ?
                 """,
                 (row, index) -> new SavedSession(row.getLong("id"), row.getObject("user_id", Long.class),
-                        row.getString("guest_session_id"), row.getString("status"), row.getString("conversation_key"),
+                        row.getString("guest_session_id"), row.getString("status"), row.getString("input_type"),
+                        row.getString("conversation_key"),
                         row.getTimestamp("completed_at") == null ? null : row.getTimestamp("completed_at").toInstant()),
                 id).stream().findFirst().orElseThrow(() -> new RecommendationException(404, "추천 결과를 찾을 수 없습니다."));
     }
@@ -164,12 +223,13 @@ public class RecommendationRepository {
             return List.of();
         }
         String markers = String.join(",", Collections.nCopies(sessionIds.size(), "?"));
-        String sql = "SELECT i.recommendation_session_id, i.rank_no, m.id, m.title, m.artist_name "
-                + "FROM recommendation_items i JOIN music m ON m.id = i.music_id "
+        String sql = "SELECT i.recommendation_session_id, i.rank_no, m.id, m.title, m.artist_name, "
+                + "m.album_cover_url, m.preview_url FROM recommendation_items i JOIN music m ON m.id = i.music_id "
                 + "WHERE i.recommendation_session_id IN (" + markers + ") "
                 + "ORDER BY i.recommendation_session_id DESC, i.rank_no ASC";
         return jdbc.query(sql, (row, index) -> new HistoryItem(row.getLong("recommendation_session_id"),
-                row.getInt("rank_no"), row.getLong("id"), row.getString("title"), row.getString("artist_name")),
+                row.getInt("rank_no"), row.getLong("id"), row.getString("title"), row.getString("artist_name"),
+                row.getString("album_cover_url"), row.getString("preview_url")),
                 sessionIds.toArray());
     }
 
@@ -177,13 +237,23 @@ public class RecommendationRepository {
         return new HistorySession(id, status, completedAt.toInstant());
     }
 
-    public record SavedSession(long id, Long userId, String guestSessionId, String status, String conversationKey,
+    public record SavedSession(long id, Long userId, String guestSessionId, String status, String inputType,
+            String conversationKey,
             Instant completedAt) {
     }
 
     public record HistorySession(long id, String status, Instant completedAt) {
     }
 
-    public record HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName) {
+    public record HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName,
+            String albumCoverUrl, String previewUrl) {
+        public HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName,
+                String albumCoverUrl) {
+            this(recommendationId, rankNo, musicId, title, artistName, albumCoverUrl, null);
+        }
+
+        public HistoryItem(long recommendationId, int rankNo, long musicId, String title, String artistName) {
+            this(recommendationId, rankNo, musicId, title, artistName, null, null);
+        }
     }
 }

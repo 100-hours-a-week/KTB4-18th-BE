@@ -60,6 +60,21 @@ class LocationControllerTest {
     }
 
     @Test
+    void forwardsOnlyTheVerifiedSessionWhenResolvingForAnAuthenticatedClient() throws Exception {
+        var authentication = new UsernamePasswordAuthenticationToken(7L, null);
+        String sid = "550e8400-e29b-41d4-a716-446655440000";
+        authentication.setDetails(new com.muse.meomuneum.global.security.TokenClaims(7L, java.util.List.of("USER"),
+                java.time.Instant.now().plusSeconds(60), sid, "fixture"));
+        mockMvc.perform(post("/api/v1/locations/resolve").principal(authentication)
+                .header("auth_session_id", "550e8400-e29b-41d4-a716-446655440001")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"latitude\":37.0,\"longitude\":127.0,\"accuracy_meters\":10.0}"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(service).resolve(org.mockito.ArgumentMatchers.eq(7L), any(),
+                org.mockito.ArgumentMatchers.eq(sid));
+    }
+
+    @Test
     void returnsSpecifiedErrorForInsufficientAccuracy() throws Exception {
         when(service.resolve(any(), any())).thenThrow(new LocationException(LocationErrorCode.INVALID_COORDINATES));
 

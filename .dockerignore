@@ -1,0 +1,14 @@
+# Explicit allowlist: never send .env, .git, local tools/results or documents to the builder.
+**
+!gradlew
+!gradle/
+!gradle/**
+!build.gradle
+!settings.gradle
+!gradle.properties
+!config/
+!config/**
+!src/
+!src/**
+!Dockerfile.core
+!Dockerfile.chat

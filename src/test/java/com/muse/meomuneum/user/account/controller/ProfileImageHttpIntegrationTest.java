@@ -30,6 +30,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.muse.meomuneum.auth.application.AuthService;
 import com.muse.meomuneum.global.config.JwtProperties;
 import com.muse.meomuneum.global.config.SecurityConfig;
 import com.muse.meomuneum.global.security.JwtTokenProvider;
@@ -46,7 +47,8 @@ import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 @SpringBootTest(classes = ProfileImageHttpIntegrationTest.HttpConfiguration.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "auth.jwt.secret=development-only-secret-with-at-least-32-bytes",
-        "auth.cors.allowed-origins=http://localhost:5173"})
+        "auth.cors.allowed-origins=http://localhost:5173",
+        "management.endpoint.health.group.readiness.include=readinessState"})
 class ProfileImageHttpIntegrationTest {
 
     @TempDir
@@ -65,7 +67,7 @@ class ProfileImageHttpIntegrationTest {
         User user = org.springframework.beans.BeanUtils.instantiateClass(User.class.getDeclaredConstructor());
         ReflectionTestUtils.setField(user, "id", 1L);
         ReflectionTestUtils.setField(user, "role", UserRole.USER);
-        String token = tokens.createAccessToken(user);
+        String token = tokens.createAccessToken(user, "550e8400-e29b-41d4-a716-446655440000");
         for (int size : new int[]{10_000_000, 10_000_001, 10 * 1024 * 1024 + 1}) {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             body.write(("--profile-boundary\r\nContent-Disposition: form-data; name=\"image\"; " +
@@ -93,9 +95,15 @@ class ProfileImageHttpIntegrationTest {
     @EnableAutoConfiguration(excludeName = {"org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
             "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
             "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"})
-    @Import({SecurityConfig.class, UserAccountController.class, UserAccountExceptionHandler.class,
+    @Import({com.muse.meomuneum.support.BearerSecurityTestSupport.class, SecurityConfig.class,
+            UserAccountController.class, UserAccountExceptionHandler.class,
             CurrentUserResolver.class})
     static class HttpConfiguration {
+
+        @Bean
+        AuthService authService() {
+            return mock(AuthService.class);
+        }
 
         @Bean(destroyMethod = "")
         ProfileImageStorage profileImageStorage() throws Exception {

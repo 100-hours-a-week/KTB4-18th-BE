@@ -66,6 +66,12 @@ class MusicSearchStorageMySqlIntegrationTest {
                     "db/music-search-legacy/V20261110093705__create_music_search_ingest_jobs.sql"));
             ScriptUtils.executeSqlScript(connection, new org.springframework.core.io.ClassPathResource(
                     "db/migration/V20261115190842__add_music_search_storage_recovery.sql"));
+            ScriptUtils.executeSqlScript(connection, new org.springframework.core.io.ClassPathResource(
+                    "db/migration/V20261115204849__align_music_search_ingest_metadata_columns.sql"));
+            ScriptUtils.executeSqlScript(connection, new org.springframework.core.io.ClassPathResource(
+                    "db/migration/V20261115233805__align_music_catalog_compatibility.sql"));
+            ScriptUtils.executeSqlScript(connection, new org.springframework.core.io.ClassPathResource(
+                    "db/migration/V20261115233818__extend_music_search_dlq_payload.sql"));
         }
     }
 
@@ -114,17 +120,27 @@ class MusicSearchStorageMySqlIntegrationTest {
                 new MusicSearchIngestJobRepository(jdbc))) {
             var repository = context.getBean(MusicRecordRepository.class);
             var itunes = mock(ItunesMusicSearchClient.class);
-            var first = item("21", "first");
-            var duplicate = item("21", "updated duplicate");
-            var second = item("22", "second");
-            when(itunes.search("query")).thenReturn(List.of(first, duplicate, second));
+            var snapshot = new java.util.ArrayList<MusicItem>();
+            for (int index = 21; index < 46; index++) {
+                snapshot.add(new MusicItem(null, "ITUNES", Integer.toString(index), "query " + index,
+                        "artist", "cover", "preview", null, false,
+                        new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames(
+                                "US " + index, "US artist", "한국 " + index, "한국 가수", false),
+                        100L + index));
+            }
+            snapshot.add(snapshot.getFirst());
+            when(itunes.search("query")).thenReturn(snapshot);
+            when(itunes.country()).thenReturn("KR");
             var service = new MusicRecordService(repository, itunes, mock(LocationResolutionTokenProvider.class),
-                    new MusicSearchCursorCodec("test-secret"), context.getBean(MusicSearchStorageService.class));
-
-            var response = service.search("query", "ITUNES", null, 20);
-
-            assertThat(response.items()).hasSize(2);
-            assertThat(jobCount()).isEqualTo(2);
+                    new MusicSearchCursorCodec("test-secret"),
+                    new com.muse.meomuneum.musicrecord.service.MusicSearchCandidateCache(java.time.Clock.systemUTC()),
+                    context.getBean(MusicSearchStorageService.class));
+            var response = service.search("query", "ITUNES", null, 1);
+            assertThat(response.items()).hasSize(1);
+            assertThat(jobCount()).isEqualTo(25);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM music_search_ingest_jobs WHERE title_us IS NOT NULL "
+                    + "AND artist_name_us IS NOT NULL AND title_ko IS NOT NULL AND artist_name_ko IS NOT NULL "
+                    + "AND release_epoch_second IS NOT NULL", Integer.class)).isEqualTo(25);
             assertThat(jobStatus("21")).isEqualTo("QUEUED");
             assertThat(jobStatus("22")).isEqualTo("QUEUED");
         }

@@ -27,6 +27,26 @@ import ch.qos.logback.core.read.ListAppender;
 
 class MusicSearchStorageServiceTest {
     @Test
+    void optionalStorefrontNamesAreValidatedBeforeAnyAdmissionAtUnicodeBoundaries() {
+        var jobs = mock(MusicSearchIngestJobService.class);
+        var storage = new MusicSearchStorageService(jobs);
+        var valid = new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames(
+                "🎵".repeat(255), "🎵".repeat(1000), "한".repeat(255), "가".repeat(1000), false);
+        MusicSearchStorageService.validate(new MusicItem(null, "ITUNES", "1", "title", "artist", null, null,
+                null, false, valid));
+        for (int index = 0; index < 4; index++) {
+            String[] names = {null, null, null, null};
+            names[index] = "🎵".repeat(index % 2 == 0 ? 256 : 1001);
+            var invalid = new MusicItem(null, "ITUNES", "2", "title", "artist", null, null, null, false,
+                    new com.muse.meomuneum.musicrecord.dto.MusicRecordDtos.StorefrontNames(
+                            names[0], names[1], names[2], names[3], false));
+            assertThatThrownBy(() -> storage.store(List.of(item("1", "valid"), invalid)))
+                    .isInstanceOf(MusicMetadataException.class);
+        }
+        verifyNoInteractions(jobs);
+    }
+
+    @Test
     void emptyOrNullSnapshotDoesNotAdmitWork() {
         var jobs = mock(MusicSearchIngestJobService.class);
         var service = new MusicSearchStorageService(jobs);

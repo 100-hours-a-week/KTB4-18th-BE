@@ -1,0 +1,409 @@
+{
+  "uid": "chat-local-resources",
+  "title": "Chat Local — Server & Mac Resources",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "run_id",
+        "label": "Run",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "chat-local-prometheus"
+        },
+        "query": "label_values(k6_chat_sent_total, run_id)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Resource sample age",
+      "description": "Only updated during run-chat.py sampling. Old samples remain stored; age above 20s means stale.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - chat_local_resource_sample_timestamp_seconds{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Container CPU — 100% = one logical core",
+      "description": "Docker stats CPU: can exceed 100%. Backend has 2-core quota, so 200% is approximately its CPU limit. Includes each project service separately.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_container_cpu_percent{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Container memory used",
+      "description": "Docker stats working-set style usage; not JVM heap or Mac host RAM. Legend identifies the container.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_container_memory_bytes{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Container memory limit",
+      "description": "Container configured memory limit. A/B must keep equal per-server limits.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_container_memory_limit_bytes{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "k6 CPU — 100% = one logical core",
+      "description": "macOS ps %cpu. May exceed 100%; not directly the same averaging window as Docker stats.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_k6_cpu_percent{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "k6 resident memory",
+      "description": "macOS ps RSS in KiB converted to bytes.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_k6_rss_bytes{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Mac CPU busy — all cores normalized",
+      "description": "100 minus top idle; 0–100% across all Mac cores. This host has 10 logical cores.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_mac_cpu_busy_percent{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Mac memory categories",
+      "description": "vm_stat page count × reported page size. Categories are shown separately; do not sum as a total or assume free pages alone indicate memory pressure.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_mac_memory_bytes{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Mac swap used",
+      "description": "sysctl vm.swapusage used. Increasing swap together with load may indicate host resource pressure.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_local_mac_swap_used_bytes{run_id=~\"$run_id\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "JVM heap per server",
+      "description": "Server-labeled JVM heap. Does not include other JVM/native/container memory.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(server,instance) (jvm_memory_used_bytes{job=\"backend\",area=\"heap\"})",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Application-reported WebSocket sessions per server — integration pending",
+      "description": "Required future metric contract: each server must export its own current active chat WebSocket count, with server/instance labels. Current product does not expose it. No data means unavailable, not zero. Ready/subscribed is still checked by k6.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chat_active_websocket_connections{job=\"backend\"}",
+          "legendFormat": "{{container}} {{kind}} {{server}} {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

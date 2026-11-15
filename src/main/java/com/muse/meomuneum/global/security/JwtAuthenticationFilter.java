@@ -8,13 +8,13 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.user.service.UserAuthenticationService;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -27,20 +27,43 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final SecurityErrorResponseWriter errorResponseWriter;
-    private final UserAuthenticationService userAuthenticationService;
+    private final ActiveUserLookup userAuthenticationService;
+    private final AccessSessionAuthority sessionAuthority;
+    private final AccessSessionGuard directGuard;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
-            UserAuthenticationService userAuthenticationService) {
+            ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, sessionAuthority, null);
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+            ActiveUserLookup userAuthenticationService, AccessSessionAuthority sessionAuthority,
+            AccessSessionGuard directGuard) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.errorResponseWriter = errorResponseWriter;
         this.userAuthenticationService = userAuthenticationService;
+        this.sessionAuthority = sessionAuthority;
+        this.directGuard = directGuard;
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, SecurityErrorResponseWriter errorResponseWriter,
+            ActiveUserLookup userAuthenticationService) {
+        this(jwtTokenProvider, errorResponseWriter, userAuthenticationService, null, null);
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String requestUri = request.getRequestURI();
+        String requestUri = AuthRequestPath.path(request);
         String method = request.getMethod();
-        return ("POST".equals(method)
+        boolean directRead = "GET".equals(method) && (requestUri.equals("/api/v1/auth/flow")
+                || requestUri.equals("/api/v1/auth/flow/current-operation")
+                || requestUri.matches("/api/v1/auth/login/operations/[^/]+")
+                || requestUri.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery/[^/]+"));
+        boolean directWrite = "POST".equals(method) && (requestUri.equals("/api/v1/auth/flows")
+                || requestUri.equals("/api/v1/auth/flow/rebootstrap")
+                || requestUri.matches("/api/v1/auth/login/operations/[^/]+/session-recovery")
+                || requestUri.matches("/api/v1/auth/token/refresh/operations/[^/]+/session-recovery"));
+        return directRead || directWrite || ("POST".equals(method)
                 && (LOGIN_PATH.equals(requestUri) || REFRESH_PATH.equals(requestUri) || LOGOUT_PATH.equals(requestUri)))
                 || ("GET".equals(method) && CSRF_PATH.equals(requestUri));
     }
@@ -63,6 +86,36 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             claims = jwtTokenProvider.parseAccessToken(authorization.substring(BEARER_PREFIX.length()));
             userAuthenticationService.findActiveUser(claims.userId());
+            if (sessionAuthority == null) {
+                SecurityContextHolder.clearContext();
+                errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+                response.setHeader("Retry-After", "1");
+                return;
+            } else {
+                if (claims.sessionId() == null) {
+                    writeUnauthorizedResponse(request, response);
+                    return;
+                }
+                AccessSessionAuthority.Decision decision = directGuard == null
+                        ? sessionAuthority.verifySession(claims.userId(), claims.sessionId())
+                        : directGuard.verifySession(claims.sessionId(),
+                                () -> sessionAuthority.verifySession(claims.userId(), claims.sessionId()));
+                if (decision == null || decision == AccessSessionAuthority.Decision.UNAVAILABLE) {
+                    SecurityContextHolder.clearContext();
+                    errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+                    response.setHeader("Retry-After", "1");
+                    return;
+                }
+                if (decision != AccessSessionAuthority.Decision.ACTIVE) {
+                    writeUnauthorizedResponse(request, response);
+                    return;
+                }
+            }
+        } catch (DataAccessException | AccessSessionGuard.Unavailable exception) {
+            SecurityContextHolder.clearContext();
+            errorResponseWriter.write(request, response, SecurityErrorCode.AUTH_STATE_UNAVAILABLE);
+            response.setHeader("Retry-After", "1");
+            return;
         } catch (AuthenticationFailedException exception) {
             writeUnauthorizedResponse(request, response);
             return;
@@ -72,6 +125,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 .map(role -> new SimpleGrantedAuthority("ROLE_" + role)).toList();
         UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken
                 .authenticated(claims.userId(), null, authorities);
+        authentication.setDetails(claims);
         SecurityContextHolder.getContext().setAuthentication(authentication);
         filterChain.doFilter(request, response);
     }

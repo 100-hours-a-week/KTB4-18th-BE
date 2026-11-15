@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,50 +14,97 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.auth.application.AuthFlowService.LogoutReceipt;
+import com.muse.meomuneum.auth.application.AuthService;
+import com.muse.meomuneum.auth.application.CsrfTokenService;
+import com.muse.meomuneum.auth.application.RefreshReplayCipher;
 import com.muse.meomuneum.auth.dto.CsrfTokenResponse;
 import com.muse.meomuneum.auth.dto.LoginRequest;
 import com.muse.meomuneum.auth.dto.TokenResponse;
 import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.auth.response.AuthSuccessCode;
-import com.muse.meomuneum.auth.service.AuthService;
-import com.muse.meomuneum.auth.service.CsrfTokenService;
 import com.muse.meomuneum.global.response.ApiResponse;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
 
+    public record LogoutResponse(LogoutReceipt logoutReceipt) {
+    }
+
     private final AuthService authService;
     private final CsrfTokenService csrfTokenService;
+    private final AuthFlowService authFlowService;
+    private final RefreshReplayCipher replayCipher;
 
-    public AuthController(AuthService authService, CsrfTokenService csrfTokenService) {
+    @Autowired(required = false)
+    private com.muse.meomuneum.auth.directv2.controller.DirectAuthOperationController directController;
+
+    @Autowired
+    public AuthController(AuthService authService, CsrfTokenService csrfTokenService,
+            AuthFlowService authFlowService, RefreshReplayCipher replayCipher) {
         this.authService = authService;
         this.csrfTokenService = csrfTokenService;
+        this.authFlowService = authFlowService;
+        this.replayCipher = replayCipher;
+
+    }
+
+    public AuthController(AuthService authService, CsrfTokenService csrfTokenService) {
+        this(authService, csrfTokenService, null, null);
     }
 
     @GetMapping("/token/csrf")
-    public ResponseEntity<ApiResponse<CsrfTokenResponse>> issueCsrfToken(HttpServletRequest request) {
-        CsrfTokenResponse response = new CsrfTokenResponse(csrfTokenService.issueToken(request));
+    public ResponseEntity<ApiResponse<CsrfTokenResponse>> issueCsrfToken(HttpServletRequest request,
+            HttpServletResponse servletResponse) {
+        CsrfTokenResponse response = new CsrfTokenResponse(csrfTokenService.issueToken(request, servletResponse));
         return ResponseEntity.ok(ApiResponse.of("csrf token issued", response));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody LoginRequest request,
-            HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
+    public ResponseEntity<ApiResponse<?>> login(@Valid @RequestBody LoginRequest request,
+            HttpServletRequest servletRequest) {
+        if ("direct-v2".equals(servletRequest.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.login(request, servletRequest);
+        }
         HttpHeaders headers = new HttpHeaders();
-        TokenResponse tokenResponse = authService.login(request, servletRequest, headers);
-        headers.getOrEmpty(HttpHeaders.SET_COOKIE)
-                .forEach(cookie -> servletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie));
-        headers.remove(HttpHeaders.SET_COOKIE);
-        return new ResponseEntity<>(ApiResponse.success(AuthSuccessCode.LOGIN_SUCCESS, tokenResponse), headers,
-                AuthSuccessCode.LOGIN_SUCCESS.status());
+        headers.setCacheControl("no-store");
+        return new ResponseEntity<>(ApiResponse.<Object>of("INVALID_LOGIN_PROTOCOL", null), headers,
+                HttpStatus.BAD_REQUEST);
     }
 
     @PostMapping("/token/refresh")
     public ResponseEntity<ApiResponse<?>> refresh(HttpServletRequest request) {
+        if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.refresh(request);
+        }
         HttpHeaders headers = new HttpHeaders();
+        headers.setCacheControl("no-store");
         try {
-            TokenResponse tokenResponse = authService.refresh(request, headers);
+            TokenResponse tokenResponse;
+            if (authFlowService == null) {
+                tokenResponse = authService.refresh(request, headers);
+            } else {
+                tokenResponse = authFlowService.withLockedFlow(request, flow -> {
+                    if (flow.activeSessionSid() == null || !flow.authenticated()) {
+                        throw new com.muse.meomuneum.auth.exception.AuthFlowException("AUTH_SESSION_INVALID");
+                    }
+                    authFlowService.assertCurrentSession(flow);
+                    String operationId = request.getHeader("X-Refresh-Operation-Id");
+                    String presentedRefreshToken = refreshCookie(request);
+                    String replayToken = authFlowService.replayCommittedRefresh(flow, operationId,
+                            presentedRefreshToken, replayCipher);
+                    if (replayToken != null) {
+                        authFlowService.writeTupleHeaders(headers, flow);
+                        return authService.replayCommittedRefresh(replayToken, headers);
+                    }
+                    authFlowService.assertCurrentRefreshToken(flow, operationId, presentedRefreshToken);
+                    TokenResponse refreshed = authService.refresh(request, headers);
+                    authFlowService.commitRefresh(request, flow, operationId, presentedRefreshToken,
+                            refreshCookie(headers), replayCipher, headers);
+                    return refreshed;
+                });
+            }
             return new ResponseEntity<>(ApiResponse.of("token refreshed", tokenResponse), headers, HttpStatus.OK);
         } catch (AuthenticationFailedException exception) {
             return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
@@ -66,13 +114,47 @@ public class AuthController {
 
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request) {
+        if ("direct-v2".equals(request.getHeader("X-Auth-Login-Protocol"))) {
+            return directController.logout(request);
+        }
         HttpHeaders headers = new HttpHeaders();
+        headers.setCacheControl("no-store");
         try {
-            authService.logout(request, headers);
-            return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);
+            if (authFlowService == null) {
+                authService.logout(request, headers);
+                return new ResponseEntity<>(headers, HttpStatus.NO_CONTENT);
+            }
+            LogoutReceipt receipt = authFlowService.commitLogout(request, headers,
+                    request.getHeader("Idempotency-Key"));
+            try {
+                authService.logout(request, headers);
+            } catch (RuntimeException cleanupDeferred) {
+            }
+            authFlowService.expireAnonymousCookies(headers);
+            return new ResponseEntity<>(ApiResponse.of("logout committed", new LogoutResponse(receipt)), headers,
+                    HttpStatus.OK);
         } catch (AuthenticationFailedException exception) {
             return new ResponseEntity<>(ApiResponse.failure(exception.getErrorCode().message()), headers,
                     exception.getErrorCode().status());
         }
+    }
+
+    private String refreshCookie(HttpHeaders headers) {
+        return headers.getOrEmpty(HttpHeaders.SET_COOKIE).stream()
+                .filter(value -> value.startsWith("refresh_token="))
+                .map(value -> value.substring("refresh_token=".length()).split(";", 2)[0])
+                .findFirst().orElse(null);
+    }
+
+    private String refreshCookie(HttpServletRequest request) {
+        if (request.getCookies() == null) {
+            return null;
+        }
+        for (var cookie : request.getCookies()) {
+            if ("refresh_token".equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
     }
 }

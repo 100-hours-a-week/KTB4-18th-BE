@@ -9,12 +9,16 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.hazelcast.core.HazelcastException;
 import com.muse.meomuneum.auth.controller.AuthController;
 import com.muse.meomuneum.global.exception.ErrorCode;
 import com.muse.meomuneum.global.response.ApiResponse;
@@ -48,6 +52,42 @@ public class AuthExceptionHandler {
                 errorCode.code(), errorCode.status().value(), request.getMethod(), request.getRequestURI(),
                 MDC.get(REQUEST_ID_KEY), exception.getClass().getSimpleName());
         return toErrorResponse(errorCode);
+    }
+
+    @ExceptionHandler({AuthStateUnavailableException.class, AuthStateBusyException.class})
+    public ResponseEntity<ApiResponse<Void>> handleAuthStateUnavailable(RuntimeException exception) {
+        String code = exception instanceof AuthStateBusyException ? "AUTH_STATE_BUSY" : "AUTH_STATE_UNAVAILABLE";
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).cacheControl(CacheControl.noStore())
+                .header(HttpHeaders.RETRY_AFTER, "1").body(ApiResponse.failure(code));
+    }
+
+    @ExceptionHandler(HazelcastException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHazelcastFailure() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).cacheControl(CacheControl.noStore())
+                .header(HttpHeaders.RETRY_AFTER, "1")
+                .body(ApiResponse.failure("AUTH_STATE_UNAVAILABLE"));
+    }
+
+    @ExceptionHandler(AuthStateConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConflict(AuthStateConflictException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).cacheControl(CacheControl.noStore())
+                .body(ApiResponse.failure(exception.code()));
+    }
+
+    @ExceptionHandler(AuthFlowException.class)
+    public ResponseEntity<ApiResponse<Void>> handleFlowFailure(AuthFlowException exception) {
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(exception.status())
+                .cacheControl(CacheControl.noStore());
+        if (exception.status() == HttpStatus.SERVICE_UNAVAILABLE) {
+            response.header(HttpHeaders.RETRY_AFTER, "1");
+        }
+        return response.body(ApiResponse.failure(exception.code()));
+    }
+
+    @ExceptionHandler(AuthStateNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotFound(AuthStateNotFoundException exception) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).cacheControl(CacheControl.noStore())
+                .body(ApiResponse.failure(exception.code()));
     }
 
     private String invalidFields(Exception exception) {

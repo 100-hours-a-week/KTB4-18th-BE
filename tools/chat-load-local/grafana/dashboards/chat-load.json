@@ -1,0 +1,425 @@
+{
+  "uid": "chat-local-load",
+  "title": "Chat Local — Messaging Load",
+  "schemaVersion": 39,
+  "version": 3,
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "run_id",
+        "label": "Run",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "chat-local-prometheus"
+        },
+        "query": "label_values(k6_chat_sent_total, run_id)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Ready connections",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_ready_connections{run_id=~\"$run_id\"}",
+          "refId": "A"
+        },
+        {
+          "refId": "B",
+          "expr": "k6_chat_target_connections{run_id=~\"$run_id\"}",
+          "legendFormat": "target {{target}} / {{phase}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "description": "Ready means CONNECTED + both subscription receipts + view ready. Gauges are split by phase/target: do not add their values. Select exactly one run."
+    },
+    {
+      "id": 2,
+      "title": "Open WebSocket connections",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_ws_open{run_id=~\"$run_id\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Room-wide sends/sec",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (run_id, phase, target) (rate(k6_chat_sent_total{run_id=~\"$run_id\"}[30s]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10.5
+              }
+            ]
+          }
+        }
+      },
+      "description": "30-second rolling rate; target 10 messages/s for the whole room, not each user. Boundaries can distort the rate. Exact attempts are in result.json."
+    },
+    {
+      "id": 4,
+      "title": "Receive p95 — exact cumulative / legacy quantile",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_receive_exact_p95_ms{run_id=~\"$run_id\",phase=\"measure\"} or (1000 * k6_chat_receive_ms_p95{run_id=~\"$run_id\",phase=\"measure\"})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      },
+      "description": "New histogram mode: exact nearest-rank p95 of all received samples accumulated in this phase, milliseconds. Legacy points mode: k6 quantile converted from seconds. Final report includes the full 5-second drain."
+    },
+    {
+      "id": 5,
+      "title": "ACK p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "1000 * k6_chat_ack_ms_p95{run_id=~\"$run_id\",phase=\"measure\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Missed schedule slots",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_scheduled_missed_total{run_id=~\"$run_id\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Missing accepted deliveries",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_missing_total{run_id=~\"$run_id\",phase=\"measure\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "description": "Count is finalized only after each measurement + 5-second drain. No series does not prove zero loss."
+    },
+    {
+      "id": 8,
+      "title": "Rejected messages",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_rejected_total{run_id=~\"$run_id\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Reconnect attempts",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "k6_chat_reconnect_attempts_total{run_id=~\"$run_id\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Event loop lag p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "1000 * k6_chat_event_loop_lag_ms_p95{run_id=~\"$run_id\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Unexpected connection closes",
+      "description": "Real failures; intentional smoke probe and normal cleanup excluded.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_chat_unexpected_closes_total{run_id=~\"$run_id\"}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Normal connection closes",
+      "description": "Normal cleanup closes, distinct from failures.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_chat_normal_closes_total{run_id=~\"$run_id\"}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Unconfirmed sends",
+      "description": "No acceptance evidence: report separately from delivery loss.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_chat_unconfirmed_total{run_id=~\"$run_id\"}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Accepted sends without ACK",
+      "description": "Broadcast may confirm acceptance but cannot replace ACK checks.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chat-local-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_chat_ack_missing_total{run_id=~\"$run_id\"}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    }
+  ]
+}

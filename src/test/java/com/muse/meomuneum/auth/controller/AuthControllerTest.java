@@ -1,9 +1,11 @@
 package com.muse.meomuneum.auth.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -12,21 +14,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import com.muse.meomuneum.auth.dto.TokenResponse;
-import com.muse.meomuneum.auth.exception.AuthErrorCode;
+import com.muse.meomuneum.auth.application.AuthFlowService;
+import com.muse.meomuneum.auth.application.AuthService;
+import com.muse.meomuneum.auth.application.CsrfTokenService;
 import com.muse.meomuneum.auth.exception.AuthExceptionHandler;
-import com.muse.meomuneum.auth.exception.AuthenticationFailedException;
-import com.muse.meomuneum.auth.service.AuthService;
-import com.muse.meomuneum.auth.service.CsrfTokenService;
+import com.muse.meomuneum.auth.exception.AuthFlowException;
+import com.muse.meomuneum.auth.exception.AuthFlowExceptionHandler;
 import com.muse.meomuneum.global.exception.GlobalExceptionHandler;
 
 class AuthControllerTest {
@@ -44,19 +46,15 @@ class AuthControllerTest {
     }
 
     @Test
-    void loginReturnsSpecifiedResponseAndRefreshCookie() throws Exception {
-        doAnswer(invocation -> {
-            HttpHeaders headers = invocation.getArgument(2);
-            headers.add(HttpHeaders.SET_COOKIE, "refresh_token=refresh-token; Path=/api/v1/auth");
-            return new TokenResponse("access-token", 3600);
-        }).when(authService).login(any(), any(HttpServletRequest.class), any(HttpHeaders.class));
-
+    void markerlessLoginIsRejectedWithoutCallingLegacyAuthentication() throws Exception {
         mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"user@example.com\",\"password\":\"password\"}")).andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, "refresh_token=refresh-token; Path=/api/v1/auth"))
-                .andExpect(jsonPath("$.message").value("login success"))
-                .andExpect(jsonPath("$.data.access_token").value("access-token"))
-                .andExpect(jsonPath("$.data.expires_in").value(3600));
+                .content("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
+                .andExpect(jsonPath("$.message").value("INVALID_LOGIN_PROTOCOL"))
+                .andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
+        verifyNoInteractions(authService);
     }
 
     @Test
@@ -74,31 +72,9 @@ class AuthControllerTest {
     }
 
     @Test
-    void loginWithInvalidCredentialsReturnsSpecifiedError() throws Exception {
-        when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
-                .thenThrow(new AuthenticationFailedException(AuthErrorCode.INVALID_CREDENTIALS));
-
-        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"user@example.com\",\"password\":\"incorrect-password\"}"))
-                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("invalid credentials"))
-                .andExpect(jsonPath("$.data").doesNotExist());
-    }
-
-    @Test
-    void loginWithUnexpectedFailureReturnsGlobalInternalServerError() throws Exception {
-        when(authService.login(any(), any(HttpServletRequest.class), any(HttpHeaders.class)))
-                .thenThrow(new IllegalStateException("unexpected failure"));
-
-        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.message").value("internal server error"))
-                .andExpect(jsonPath("$.data").doesNotExist());
-    }
-
-    @Test
     void csrfIssueReturnsSpecifiedResponse() throws Exception {
-        when(csrfTokenService.issueToken(any(HttpServletRequest.class))).thenReturn("csrf-token");
+        when(csrfTokenService.issueToken(any(HttpServletRequest.class), any(HttpServletResponse.class)))
+                .thenReturn("csrf-token");
 
         mockMvc.perform(get("/api/v1/auth/token/csrf")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("csrf token issued"))
@@ -107,10 +83,37 @@ class AuthControllerTest {
 
     @Test
     void logoutPassesRequestAndReturnsNoContent() throws Exception {
-        MockHttpSession session = new MockHttpSession();
-
-        mockMvc.perform(post("/api/v1/auth/logout").session(session)).andExpect(status().isNoContent());
+        mockMvc.perform(post("/api/v1/auth/logout")).andExpect(status().isNoContent());
 
         verify(authService).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
+    }
+
+    @Test
+    void supersededLogoutDoesNotExpireCookiesOrRunLocalCleanup() throws Exception {
+        AuthFlowService flowService = mock(AuthFlowService.class);
+        when(flowService.commitLogout(any(HttpServletRequest.class), any(HttpHeaders.class), any()))
+                .thenThrow(new AuthFlowException("AUTH_FLOW_EPOCH_STALE"));
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, csrfTokenService, flowService,
+                mock(com.muse.meomuneum.auth.application.RefreshReplayCipher.class)))
+                .setControllerAdvice(new AuthExceptionHandler(), new AuthFlowExceptionHandler(),
+                        new GlobalExceptionHandler())
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/logout").header("Idempotency-Key",
+                "123e4567-e89b-42d3-a456-426614174000"))
+                .andExpect(status().isConflict())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+
+        verify(authService, never()).logout(any(HttpServletRequest.class), any(HttpHeaders.class));
+        verify(flowService, never()).expireAnonymousCookies(any(HttpHeaders.class));
+    }
+
+    @Test
+    void legacyLoginRecoveryRouteIsNotRegistered() throws Exception {
+        assertThat(java.util.Arrays.stream(AuthController.class.getDeclaredMethods())
+                .filter(method -> method.isAnnotationPresent(org.springframework.web.bind.annotation.PostMapping.class))
+                .map(method -> method.getAnnotation(org.springframework.web.bind.annotation.PostMapping.class))
+                .flatMap(mapping -> java.util.Arrays.stream(mapping.value()))
+                .noneMatch("/login/recovery"::equals)).isTrue();
     }
 }

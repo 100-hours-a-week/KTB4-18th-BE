@@ -4,6 +4,21 @@ speech:
     ai:
       base-url: ${SPEECH_TRANSCRIPTION_AI_BASE_URL}
 
+auth:
+  direct-v2:
+    enabled: ${AUTH_DIRECT_V2_ENABLED:true}
+    refresh-verified: ${AUTH_DIRECT_V2_REFRESH_VERIFIED:true}
+    refresh-recovery-verified: ${AUTH_DIRECT_V2_REFRESH_RECOVERY_VERIFIED:false}
+    rebootstrap-verified: ${AUTH_DIRECT_V2_REBOOTSTRAP_VERIFIED:false}
+  cors:
+    allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS}
+  state:
+    hazelcast:
+      enabled: ${PROD_AUTH_STATE_HAZELCAST_ENABLED:${AUTH_STATE_HAZELCAST_ENABLED:true}}
+      members: ${PROD_AUTH_STATE_HAZELCAST_MEMBERS:${AUTH_STATE_HAZELCAST_MEMBERS:}}
+      cluster-name: ${PROD_AUTH_STATE_HAZELCAST_CLUSTER_NAME:meomuneum-auth-prod}
+    expected-hazelcast-members: ${PROD_AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:${AUTH_STATE_HAZELCAST_EXPECTED_MEMBER_COUNT:3}}
+
 spring:
   datasource:
     url: ${PROD_DB_URL}

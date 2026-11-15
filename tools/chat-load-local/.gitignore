@@ -1,0 +1,11 @@
+.env
+.runtime/
+results/
+__pycache__/
+*.pyc
+
+# Keep local preparation history and one-off auth diagnostics off Git.
+*.md
+!README.md
+!BASELINE-2026-10-26.md
+diagnostics/

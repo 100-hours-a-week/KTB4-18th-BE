@@ -36,7 +36,14 @@ public class RecommendationController {
     public ResponseEntity<ApiResponse<RecommendationAcceptedResponse>> create(
             @Valid @RequestBody RecommendationRequest body,
             HttpServletRequest request, Authentication authentication) {
-        var result = service.accept(body, request.getSession().getId(), users.resolve(authentication));
+        var userId = users.resolve(authentication);
+        String sid = authentication != null
+                && authentication.getDetails() instanceof com.muse.meomuneum.global.security.TokenClaims claims
+                        ? claims.sessionId()
+                        : null;
+        var result = body.location_resolution_token() == null
+                ? service.accept(body, request.getSession().getId(), userId)
+                : service.accept(body, request.getSession().getId(), userId, sid);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ApiResponse<>("recommendation processing", result));
     }
 

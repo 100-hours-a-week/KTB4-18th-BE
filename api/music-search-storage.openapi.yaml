@@ -1,21 +1,38 @@
 openapi: 3.0.3
 info:
-  title: Music search storage recovery
+  title: Music search storage and recovery
   version: 1.0.0
 paths:
   /api/v1/music/search:
     get:
-      summary: 음악 검색과 검색 결과의 영속 접수
-      description: 검색 성공 응답 전 Outbox 접수 커밋을 확인하며 음악 저장 완료는 기다리지 않는다.
+      summary: 음악 검색과 외부 후보 영속 접수
+      description: 외부 API에서 새로 받은 전체 후보는 응답 페이지를 자르기 전에 저장 작업으로 접수된다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string }
+        - name: provider
+          in: query
+          schema: { type: string, enum: [ITUNES], default: ITUNES }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20 }
       responses:
         '200':
-          description: 기존 음악 검색 및 cursor paging 응답
+          description: 기존 음악 검색 페이지 응답
         '503':
-          description: 검색 결과 영속 접수 커밋을 확인하지 못함
+          description: 검색 후보 저장 작업을 접수하지 못함
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              example: { message: music search storage unavailable, data: null }
   /api/v1/admin/music-search-storage/{jobId}/requeue:
     post:
       operationId: requeueDeadMusicSearchJob
@@ -24,8 +41,7 @@ paths:
         음악 검색 결과 저장 작업 중 DEAD 상태인 작업만 즉시 QUEUED로 되돌린다.
         attempt_count는 0으로 초기화되고 다음 worker poll에서 다시 처리될 수 있다.
         ROLE_ADMIN 권한이 필요하며 기존 JWT, 요청 출처 및 CSRF 보호를 적용한다.
-        현재 최신 payload의 identity, 관찰 시각과 version은 보존한다.
-        해당 DLQ 실패 이력에 replay 시각을 기록하며 과거 실패 payload는 보존한다.
+        현재 최신 payload의 관찰 시각과 version은 보존하며 DLQ 실패 이력에는 replay 시각만 기록한다.
         검색 metadata나 원본 payload는 응답에 포함하지 않는다.
       security:
         - bearerAuth: []
@@ -69,12 +85,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: 작업 상태가 DEAD가 아님
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '503':
-          description: 재투입 트랜잭션을 완료하지 못함
           content:
             application/json:
               schema:
