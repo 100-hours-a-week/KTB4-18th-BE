@@ -158,9 +158,9 @@ class SongRegistrationMySqlIntegrationTest {
         assertThat(page.items()).extracting(MusicItem::releaseEpochSecond).containsExactly(12L, 10L);
         long highWatermark = repository.highestMusicId();
         repository.upsertMusic(releaseItem(2, 18L));
-        assertThat(repository.findMusic("ITUNES", "2").orElseThrow().releaseEpochSecond()).isEqualTo(10L);
+        assertThat(repository.findMusic("ITUNES", "2").orElseThrow().releaseEpochSecond()).isEqualTo(18L);
         repository.upsertMusic(releaseItem(22, 7L));
-        assertThat(repository.findMusic("ITUNES", "22").orElseThrow().releaseEpochSecond()).isNull();
+        assertThat(repository.findMusic("ITUNES", "22").orElseThrow().releaseEpochSecond()).isEqualTo(7L);
         repository.insertSelectedMusic(releaseItem(23, 1L));
 
         var remaining = new ArrayList<String>();
@@ -169,8 +169,8 @@ class SongRegistrationMySqlIntegrationTest {
             assertThat(page.source()).isEqualTo("DB");
             remaining.addAll(page.items().stream().map(MusicItem::external_music_id).toList());
         }
-        var expected = new ArrayList<>(List.of("1", "5", "3"));
-        for (int externalId = 22; externalId >= 6; externalId--) {
+        var expected = new ArrayList<>(List.of("1", "5", "3", "22"));
+        for (int externalId = 21; externalId >= 6; externalId--) {
             expected.add(Integer.toString(externalId));
         }
         assertThat(remaining).containsExactlyElementsOf(expected);
