@@ -42,7 +42,11 @@ class MusicVideoCandidateLimitMySqlTest {
                 .hasMessageContaining("ck_music_video_candidate_numbers");
         var before = jdbc.queryForList("SELECT * FROM music_video_candidates WHERE music_id=?", music);
         var flyway = Flyway.configure().dataSource(source).load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
+        assertThat(jdbc.queryForList("SELECT version FROM flyway_schema_history "
+                + "WHERE success=TRUE AND version>'20261111131732' ORDER BY installed_rank", String.class))
+                .containsExactly("20261112212227", "20261115190842", "20261115204849", "20261115233805",
+                        "20261115233818");
         flyway.validate();
         assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForList("SELECT * FROM music_video_candidates WHERE music_id=?", music)).isEqualTo(before);

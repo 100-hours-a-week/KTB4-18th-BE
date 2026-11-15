@@ -215,11 +215,11 @@ public class MusicRecordRepository {
     }
 
     public void upsertSearchMusic(MusicItem music, LocalDateTime observedAt, long version) {
+        MusicMetadataPolicy.validate(music.title(), music.artist_name());
         writeSearchMusic(music, observedAt, version, false);
     }
 
     private void writeSearchMusic(MusicItem music, LocalDateTime observedAt, long version, boolean direct) {
-        MusicMetadataPolicy.validate(music.title(), music.artist_name());
         var names = music.storefrontNames();
         String fresh = direct
                 ? "incoming.metadata_observed_at>=music.metadata_observed_at"
@@ -262,6 +262,7 @@ public class MusicRecordRepository {
     }
 
     public long upsertMusic(MusicItem music) {
+        MusicMetadataPolicy.validate(music.title(), music.artist_name());
         LocalDateTime observed = jdbc.queryForObject("SELECT CURRENT_TIMESTAMP(6)", LocalDateTime.class);
         writeSearchMusic(music, observed, 1, true);
         Long id = jdbc.queryForObject("SELECT id FROM music WHERE provider=? AND external_music_id=?",
